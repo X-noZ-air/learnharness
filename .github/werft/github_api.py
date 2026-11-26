@@ -87,10 +87,11 @@ class GitHub:
 
     def checked_jobs(self, run_id, attempt, names):
         jobs = list(self.pages(f"actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs"))
+        required = [job for job in jobs if job["name"] in names]
         return (
-            len(jobs) == len(names)
-            and {job["name"] for job in jobs} == names
-            and all(job["conclusion"] == "success" for job in jobs)
+            len(required) == len(names)
+            and {job["name"] for job in required} == names
+            and all(job["conclusion"] == "success" for job in required)
         )
 
 

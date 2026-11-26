@@ -447,7 +447,10 @@ def integrate(api, upstream, repo, journal, release, base, replay, retry):
     repo.upstream_tag(journal.data["accepted"])
     repo.upstream_tag(release)
     classify(repo, base_sha, journal.data["accepted"], release, replay)
-    if not repo.ancestor(journal.data["last_successful_base_sha"], base_sha):
+    if not (
+        repo.ancestor(journal.data["last_successful_base_sha"], base_sha)
+        and repo.ancestor(journal.data["accepted"]["sha"], base_sha)
+    ):
         raise Refusal("non_descendant", "check_base_history")
     strict_guard(api, base)
     branch = candidate_branch(base, release["tag"])
