@@ -121,9 +121,12 @@ Additional runtime gates have prerequisites:
 | Check | Prerequisite / purpose |
 | --- | --- |
 | `node scripts/smoke-provider-runtime.mjs` | Fresh build; traced provider payload/runtime paths with fixtures. Also used during packaging. |
+| `node scripts/smoke-narrow-viewports.mjs` | Requires a fresh build and Chrome on Linux or macOS. Checks mobile widths and desktop with a temporary local profile and a synthetic model endpoint. Pass `--out /tmp/viewport-screenshots` to save screenshots. |
 | `node scripts/smoke-web-subscriptions.mjs` | Build, no dev server running; isolated synthetic connection checks, external traffic blocked. Briefly changes/restores a source mtime to exercise reload. |
 | `node scripts/build-plugin-types.mjs` | Builds the portable type-only plugin SDK under `dist/plugin-sdk`. |
 | `node scripts/build-server.mjs` then `node scripts/smoke-server.mjs --isolated --browser` | Fresh build; assemble/verify a source-free standalone copy, installed plugin backends and browser UI. Add `--electron` for Electron's bundled Node; browser checks require local Chrome/Chromium. |
 | Other `scripts/smoke-*.mjs` | Standalone/native renderers, image workers, demo helper, compression, file paths, opening. Read each script and the [release guide](desktop-release.md) before running. |
 
 Run checks proportionate to the change. Offline gates prove exercised contracts, not live entitlements or model-authored lesson quality.
+
+The viewport smoke uses Chromium emulation. Physical Android Chrome and iPhone Safari still need checks for browser bars, notch insets, rotation, pinch zoom, and the on-screen keyboard while reading, typing, and sending.
