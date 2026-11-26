@@ -1,3 +1,4 @@
+import { mutation } from "../core/maintenance.ts";
 import { isPluginHostError } from "./plugin-host.ts";
 import { apiRequestRefusal } from "./desktop-access.ts";
 import type { PluginFrontendContext, PluginInfo } from "../core/plugins.ts";
@@ -72,7 +73,7 @@ export function createPluginDocumentRoute(transport: Pick<ReturnType<typeof crea
 		async POST(request: Request, context: { params: Promise<{ id: string }> }) {
 			const denied = refusal(request);
 			if (denied) return denied;
-			return transport.convertDocument((await context.params).id, request);
+			return mutation(async () => transport.convertDocument((await context.params).id, request), "upload")();
 		},
 		OPTIONS: (request: Request) => refusal(request) ?? new Response(null, { status: 204, headers: { Allow: "OPTIONS, POST" } }),
 		GET: unsupported, HEAD: unsupported, PUT: unsupported, PATCH: unsupported, DELETE: unsupported,

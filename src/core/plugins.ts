@@ -134,6 +134,8 @@ export interface PluginTools {
 /** Backend activation scope, once per enabled plugin per server, not per window.
  * Trusted Node code must cooperate with cancellation; no forced process isolation. */
 export interface PluginBackendContext {
+	/** Register a detached writer before handing it off; settle after its last write. */
+	trackWork?<T>(fn: () => Promise<T>): Promise<T>;
 	readonly manifest: PluginManifest;
 	/** Absolute code directory: app core-plugins/<id> or community plugins/<id>/dist. */
 	readonly directory: string;

@@ -1,3 +1,4 @@
+import { canStartWork, beginWork, MaintenanceError, tracked } from "../core/maintenance.ts";
 /** Persistent Node web/dev owner. Never imported by client code. Desktop keeps
  * its existing main-process owner; a broken desktop IPC channel cannot fall
  * back to these files. One server process must own each configured auth dir. */
@@ -52,22 +53,27 @@ export function createWebSubscriptionOwner(options: {
 		if (!captured || new URL(target).protocol !== "https:") throw new Error("No browser action is pending.");
 		captured.push(target);
 	};
+	const trackRefresh = <T>(fn: () => Promise<T>) => tracked("token-refresh", fn);
 	const chatgpt = createChatGPT({
+		trackRefresh,
+		claimSignIn: () => { const lease = beginWork("sign-in"); return () => lease.end(); },
 		store: options.chatgptStore ?? fileStore(path.join(options.directory, "chatgpt-credentials.json")),
 		openExternal,
 		onChange: (packet?: Packet) => { if (packet) notify("lh:chatgpt", packet); },
 	});
 	const native = createSubscriptions({
-		directory: options.directory, sdk: options.sdk, loadSDK, openExternal,
+		directory: options.directory, sdk: options.sdk, loadSDK, openExternal, trackRefresh,
+		trackStartup: <T>(fn: () => Promise<T>) => tracked("startup", fn),
 		onChange: (snapshot: NativeSubscriptionSnapshot) => notify("lh:subscriptions", { channel: "lh:subscriptions", op: "changed", snapshot }),
 	});
 	return {
 		chatgpt, native,
 		async control(providerId: string, command: Record<string, unknown>, origin: string) {
 			const targets: string[] = [];
-			const value = await launches.run(targets, () => providerId === "chatgpt"
+			const dispatch = () => launches.run(targets, () => providerId === "chatgpt"
 				? chatGPTControl(command, chatgpt)
 				: subscriptionControl({ ...command, providerId }, native));
+			const value = command.op === "login" && providerId !== "chatgpt" ? await tracked("sign-in", dispatch) : await dispatch();
 			let browserAction: string | undefined;
 			const target = targets[0];
 			if (target) {
@@ -97,6 +103,7 @@ export function webSubscriptionOwner() {
 	if (!webSubscriptionsEnabled()) throw new Error("Web subscription controls are unavailable in desktop-owned mode.");
 	const state = registry();
 	if (!state.owner) {
+		if (!canStartWork()) throw new MaintenanceError();
 		state.owner = createWebSubscriptionOwner({ directory: path.dirname(AUTH_FILE), onPacket: publish });
 		process.once("exit", () => state.owner?.close());
 	}
@@ -104,6 +111,9 @@ export function webSubscriptionOwner() {
 }
 /** Private runtime calls only: no HTTP lease/token operation exists. */
 export async function webSubscriptionRequest<T>(channel: Channel, op: string, fields: Record<string, unknown>): Promise<T> {
+	return tracked("write-request", () => dispatch<T>(channel, op, fields));
+}
+async function dispatch<T>(channel: Channel, op: string, fields: Record<string, unknown>): Promise<T> {
 	const owner = webSubscriptionOwner();
 	let value: unknown;
 	if (channel === "lh:chatgpt") {
@@ -120,8 +130,10 @@ export async function webSubscriptionRequest<T>(channel: Channel, op: string, fi
 }
 configureWebSubscriptionRuntime(webSubscriptionRequest);
 
-export async function webSubscriptionStatus(): Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionSnapshot["statuses"] }> {
+export async function webSubscriptionStatus(readOnly = false): Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionSnapshot["statuses"] }> {
 	const owner = webSubscriptionOwner();
-	const [chatgpt, native] = await Promise.all([owner.chatgpt.status(), owner.native.status()]);
+	// A bound device challenge remains visible during a drain. Reading its
+	// public state must not initialize an unrelated credential store.
+	const [chatgpt, native] = await Promise.all([readOnly ? owner.chatgpt.currentStatus() : owner.chatgpt.status(), owner.native.status()]);
 	return { chatgpt, native };
 }

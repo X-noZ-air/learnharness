@@ -11,9 +11,9 @@
 // registry copy survives a question termination or abort and rides the
 // chat's next run.
 import { ChatInputError, parseUserSteerInput } from "@/src/core";
-import { getChat, prepareAndSteerChat } from "@/src/server";
+import { mutation, getChat, prepareAndSteerChat } from "@/src/server";
 
-export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+async function handlePost(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
 	if (!getChat(id)) return Response.json({ error: "unknown chat" }, { status: 404 });
 	let input;
@@ -34,3 +34,5 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 		throw err;
 	}
 }
+
+export const POST = mutation(handlePost);

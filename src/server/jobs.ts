@@ -1,3 +1,4 @@
+import { admissionClosed, beginWork, tracked } from "../core/maintenance.ts";
 /**
  * THE WAKE PIPELINE (contracts.ts "THE ASYNC PROTOCOL" §4) — server-side
  * steer delivery for finished sub-agent jobs. Wave C (2026-09-26):
@@ -90,6 +91,7 @@ export function setPluginJobRecovery(recover: PluginJobRecovery): void {
 }
 
 interface QueuedSteer {
+	lease: ReturnType<typeof beginWork>;
 	steer: SteerMessage;
 	promise: Promise<void>;
 	/** Wake cargo remains owned here, but must not steer into its own run. */
@@ -242,7 +244,11 @@ function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
 	const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
 	// Recovery/registration may own an entry with no waiting caller.
 	void promise.catch(() => undefined);
-	const entry: QueuedSteer = { steer, promise, resolve, reject };
+	const lease = beginWork("delivery");
+	const entry: QueuedSteer = { steer, promise, lease,
+		resolve: () => { lease.end(); resolve(); },
+		reject: error => { lease.end(); reject(error); },
+	};
 	queue.push(entry);
 	state().queues.set(chatId, queue);
 	return entry;
@@ -486,10 +492,13 @@ function chatIdOf(steer: SteerMessage): string {
  * more to do here until settlement re-pumps); otherwise the IDLE WAKE
  * fires ONE turn carrying every pending marker as its input appends.
  */
-async function pump(chatId: string): Promise<void> {
-	if (!chatId) return;
+function pump(chatId: string): Promise<void> {
+	const entry = state().queues.get(chatId)?.[0];
+	if (!entry || !chatId || state().pumping.has(chatId)) return Promise.resolve();
+	return entry.lease.run(() => tracked("delivery", () => pumpQueue(chatId)));
+}
+async function pumpQueue(chatId: string): Promise<void> {
 	const s = state();
-	if (s.pumping.has(chatId)) return;
 	s.pumping.add(chatId);
 	let parked = false;
 	try {
@@ -756,6 +765,7 @@ const SWEEP_THROTTLE_MS = 30_000;
 /** Re-run a job's sub-agent loop — exposed for the sweep's tests (the
  *  /api/jobs poll is its only production caller, disabled under NODE_ENV=test). */
 export function recoverStaleJobs(): void {
+	if (admissionClosed()) return;
 	const s = state();
 	const now = Date.now();
 	if (now - s.lastSweepAt < SWEEP_THROTTLE_MS) return;
@@ -773,12 +783,12 @@ export function recoverStaleJobs(): void {
 				} else if (job.status === "running" && !job.result) {
 					if (job.kind === "plugin") {
 						// Canonical task reads only; never respawn plugin tools/code.
-						if (s.recoverPlugin) void s.recoverPlugin(job).catch((error: unknown) => {
+						if (s.recoverPlugin) void tracked("job", () => s.recoverPlugin!(job).catch((error: unknown) => {
 							if (stores.jobStore.getJob(job.id)?.status !== "running") return;
 							const failure = `Plugin job recovery failed: ${String(error)}`;
 							stores.jobStore.updateJob(job.id, { status: "error", error: failure, activity: "recovery failed", delivery: { kind: "failure", status: "pending" } });
 							void deliverJobResult(buildJobFailureSteer(job, failure));
-						});
+						}));
 						continue;
 					}
 					// The sub-agent loop itself died with the process: re-spawn.

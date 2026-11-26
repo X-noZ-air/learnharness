@@ -12,7 +12,7 @@
  * Every body is passed through sanitizeRenderSettings (src/core) before
  * touching disk: garbage clamps or falls back to defaults, never throws.
  */
-import { readRenderSettings, writeRenderSettings } from "@/src/server";
+import { mutation, readRenderSettings, writeRenderSettings } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,7 @@ export async function GET() {
 	return Response.json(readRenderSettings());
 }
 
-export async function PUT(request: Request) {
+async function handlePut(request: Request) {
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -29,3 +29,5 @@ export async function PUT(request: Request) {
 	}
 	return Response.json(writeRenderSettings(body));
 }
+
+export const PUT = mutation(handlePut);

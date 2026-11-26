@@ -1,3 +1,4 @@
+import { tracked } from "../core/maintenance.ts";
 import { randomUUID } from "node:crypto";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, JsonValue, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
@@ -145,7 +146,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 				throw new Error("Plugin agent run cancelled or unavailable");
 			}
 		};
-		void (async () => {
+		void tracked("plugin-task", async () => {
 			try {
 				const engine = await deps.engineFor(clone(d.model), purpose);
 				active();
@@ -256,7 +257,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 				if (s.run === run) s.run = undefined;
 				if (!disposed) { s.partial = undefined; notify(s); }
 			}
-		})();
+		});
 	};
 	const accept = (s: Session, options: PluginAgentInputOptions) => {
 		open();

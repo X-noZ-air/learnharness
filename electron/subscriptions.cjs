@@ -93,7 +93,7 @@ function createSubscriptions(options) {
 		try { await updateEndpoint(entry); catalog(entry); } catch { storageFailed(entry); throw failure("storage"); }
 		changed(entry);
 	}
-	const ready = (async () => {
+	const initialize = async () => {
 		try { sdk = options.sdk ?? await options.loadSDK(); }
 		catch { for (const entry of entries.values()) { entry.error = MESSAGES.unavailable; entry.fatal = true; changed(entry); } return; }
 		await Promise.all([...entries.values()].map(async (entry) => {
@@ -126,7 +126,8 @@ function createSubscriptions(options) {
 				await updateEndpoint(entry); entry.ready = true; catalog(entry); changed(entry);
 			} catch { entry.fatal = true; entry.error = MESSAGES.storage; changed(entry); }
 		}));
-	})();
+	};
+	const ready = options.trackStartup ? options.trackStartup(initialize) : initialize();
 	function current(entry, scope) {
 		return statusOf(entry).connected && scope?.providerId === entry.providerId && scope.connectionId === entry.state.connectionId && scope.epoch === entry.epoch && scope.authorityRevision === entry.authorityRevision && entry.catalog.some((m) => m.id === scope.selectedModelId);
 	}
@@ -192,7 +193,8 @@ function createSubscriptions(options) {
 		try {
 			const model = entry.provider.getModels().find((m) => m.id === modelId);
 			if (!model) throw failure("stale");
-			const resolved = await entry.models.getAuth(model);
+			const getAuth = () => entry.models.getAuth(model);
+			const resolved = await (options.trackRefresh ? options.trackRefresh(getAuth) : getAuth());
 			if (!unchanged()) throw failure("stale");
 			if (!validEndpoint(entry.providerId, resolved?.auth, entry.state.credential)) throw failure("unavailable");
 			return {

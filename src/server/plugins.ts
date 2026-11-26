@@ -1,3 +1,4 @@
+import { beginWork } from "../core/maintenance.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PATHS, GRAPH_FORMAT_FILE, RENDER_SETTINGS_FILE } from "../../config.ts";
@@ -40,6 +41,7 @@ interface PluginGlobal { __lhPlugins?: Runtime }
 function runtime(): Runtime {
 	const global = globalThis as typeof globalThis & PluginGlobal;
 	if (global.__lhPlugins) return global.__lhPlugins;
+	const startup = beginWork("startup");
 	const learning = createPluginLearningData({
 		directory: PATHS.data, chatStore: stores.chatStore, graphStore: stores.graphStore,
 		isBusy: isTurnRunning, isCompacting: compactionInFlight,
@@ -86,7 +88,7 @@ function runtime(): Runtime {
 		onNotification: (notification) => emit("plugin-message", notification),
 	});
 	// Defer recovery/activation until the process-wide holder is published.
-	const ready = Promise.resolve().then(async () => {
+	const ready = startup.run(() => Promise.resolve().then(async () => {
 		setPluginJobRecovery(job => recoverPluginBackgroundJob(job, {
 			jobStore: stores.jobStore, deliver: deliverJobResult,
 			readTask: (pluginId, taskId, requestId) => readPluginTaskRecord(pluginDirectory, pluginId, taskId, requestId, coreData),
@@ -98,7 +100,7 @@ function runtime(): Runtime {
 			installationErrors[id] = `Task recovery failed: ${error}`;
 		}
 		await host.initialize();
-	});
+	})).finally(() => startup.end());
 	global.__lhPlugins = { host, ready };
 	return global.__lhPlugins;
 }

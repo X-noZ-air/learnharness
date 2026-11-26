@@ -1,3 +1,4 @@
+import { tracked } from "../core/maintenance.ts";
 /**
  * THE COMPACTION SERVICE (owner round 14, 2026-10-05): the trigger
  * plumbing around core/compaction's pure cuts and markers.
@@ -323,7 +324,7 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 		await admitted;
 		return;
 	}
-	const run = compact(deps, chatId);
+	const run = tracked("compaction", () => compact(deps, chatId));
 	state().inFlight.set(chatId, run);
 	try {
 		await run;
@@ -347,7 +348,7 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
 	if (projectedContextTokens(record.messages, deps.systemPromptTokens, deps.includeReasoning ? deps.engine.model : undefined) <= deps.thresholdTokens) return;
-	const run = compact(deps, chatId);
+	const run = tracked("compaction", () => compact(deps, chatId));
 	state().inFlight.set(chatId, run);
 	void run.finally(() => {
 		if (state().inFlight.get(chatId) === run) state().inFlight.delete(chatId);

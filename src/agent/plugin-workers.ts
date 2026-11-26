@@ -1,3 +1,4 @@
+import { beginWork } from "../core/maintenance.ts";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
@@ -270,8 +271,9 @@ export function createPluginWorkerService(deps: PluginWorkerServiceDeps): Plugin
 			const record: PluginTaskRecord = { ...options, version: 1, id: randomUUID(), definitionId, createdAt: now, updatedAt: now, status: "queued", messages: [{ role: "user", content: options.prompt, timestamp: Date.now() }], turns: 0 };
 			// A post-rename fsync failure has an uncertain durable outcome. Stop
 			// further acceptance rather than risking duplicate request identities.
+			const lease = beginWork("plugin-task");
 			try { deps.store.save(clone(record)); }
-			catch (error) { acceptanceError = new Error(`Plugin task acceptance storage failed: ${text(error)}`); throw acceptanceError; }
+			catch (error) { lease.end(); acceptanceError = new Error(`Plugin task acceptance storage failed: ${text(error)}`); throw acceptanceError; }
 			const t: Task = { record, controller: new AbortController(), listeners: new Set(), waiters: new Set() }; tasks.set(record.id, t);
 			if (options.timeoutMs !== undefined) {
 				const schedule = () => {
@@ -285,7 +287,7 @@ export function createPluginWorkerService(deps: PluginWorkerServiceDeps): Plugin
 				};
 				schedule();
 			}
-			notify(t); queueMicrotask(() => { void execute(t, d); });
+			notify(t); queueMicrotask(() => { void lease.run(() => execute(t, d)).finally(() => lease.end()); });
 			return snapshot(t);
 		},
 		list() { return [...tasks.values()].map(snapshot); },

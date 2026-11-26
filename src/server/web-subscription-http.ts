@@ -1,3 +1,4 @@
+import { admissionClosed, MaintenanceError, maintenanceRefusal, mutation } from "../core/maintenance.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
 import { subscriptionRequestOrigin } from "./desktop-access.ts";
 import { webSubscriptionOwner, webSubscriptionsEnabled, webSubscriptionStatus } from "./web-subscriptions.ts";
@@ -18,8 +19,12 @@ function error(message: string, status: number) { return Response.json({ error: 
 export async function subscriptionControlsResponse(request: Request): Promise<Response> {
 	if (!webSubscriptionsEnabled()) return error("Web subscription controls are unavailable in desktop-owned mode.", 404);
 	if (!authorized(request)) return error("Subscription controls require a same-origin LearnHarness request.", 403);
+	if (admissionClosed()) return parseControl(request, true);
+	return mutation(() => parseControl(request, false))();
+}
+async function parseControl(request: Request, continuationOnly: boolean): Promise<Response> {
 	try {
-		if (request.method === "GET") return Response.json(await webSubscriptionStatus(), { headers: HEADERS });
+		if (request.method === "GET") return Response.json(await webSubscriptionStatus(continuationOnly), { headers: HEADERS });
 		if (request.method !== "POST") return error("Unsupported method.", 405);
 		if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error("Expected JSON.", 415);
 		// Bound both advertised and streamed input before parsing commands.
@@ -39,11 +44,18 @@ export async function subscriptionControlsResponse(request: Request): Promise<Re
 		if (!command || typeof command !== "object" || Array.isArray(command)) return error("Invalid command.", 400);
 		const fields = command as Record<string, unknown>;
 		const providerId = fields.providerId;
-		if (providerId !== "chatgpt" && !NATIVE_SUBSCRIPTIONS.some((provider) => provider.providerId === providerId)) return error("Unsupported connection.", 400);
+		if (typeof providerId !== "string" || (providerId !== "chatgpt" && !NATIVE_SUBSCRIPTIONS.some((provider) => provider.providerId === providerId))) return error("Unsupported connection.", 400);
 		const allowed = providerId === "chatgpt" ? ["login", "cancel", "select", "disconnect", "logout", "consent"] : ["login", "cancel", "respond", "open", "retry", "disconnect", "consent"];
 		if (typeof fields.op !== "string" || !allowed.includes(fields.op)) return error("Unsupported control.", 400);
-		return Response.json(await webSubscriptionOwner().control(providerId as string, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
-	} catch {
+		const dispatch = async () => Response.json(await webSubscriptionOwner().control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
+		// The controller validates the attempt and its exact one-use prompt/action.
+		if (continuationOnly) {
+			if ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt") return await dispatch();
+			return maintenanceRefusal();
+		}
+		return await dispatch();
+	} catch (err) {
+		if (err instanceof MaintenanceError) return maintenanceRefusal();
 		return error("The subscription connection could not be changed. Retry or reconnect in Providers.", 400);
 	}
 }
@@ -55,7 +67,9 @@ export async function subscriptionBrowserResponse(request: Request): Promise<Res
 	if (!origin || (request.method === "POST" ? !authorized(request) : request.headers.get("sec-fetch-site") !== "same-origin")) return error("Open sign-in from LearnHarness.", 403);
 	const id = new URL(request.url).searchParams.get("id");
 	if (!id || !/^[0-9a-f-]{36}$/.test(id)) return error("This sign-in action is no longer available.", 410);
-	const target = await webSubscriptionOwner().takeBrowserAction(id, origin);
+	let target;
+	try { target = await webSubscriptionOwner().takeBrowserAction(id, origin); }
+	catch (error) { if (error instanceof MaintenanceError) return maintenanceRefusal(); throw error; }
 	if (!target) return error("This sign-in action is no longer available.", 410);
 	return new Response(null, { status: 303, headers: { ...HEADERS, Location: target } });
 }

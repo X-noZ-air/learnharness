@@ -1,5 +1,7 @@
 import { clearOpeningPrompt, OPENING_PROMPT_FAILURE, stashOpeningPrompt } from "./opening-prompt";
 
+export class SessionMaintenanceError extends Error {}
+
 interface SessionCreation {
 	title: string;
 	kind?: "practice";
@@ -23,7 +25,13 @@ export class SessionStarter {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
 			});
-			if (!res.ok) throw new Error(OPENING_PROMPT_FAILURE);
+			if (!res.ok) {
+				if (res.status === 503) {
+					const error = await res.json().catch(() => undefined);
+					if (error?.code === "maintenance" && typeof error.error === "string") throw new SessionMaintenanceError(error.error);
+				}
+				throw new Error(OPENING_PROMPT_FAILURE);
+			}
 			const result = await res.json() as { id?: unknown };
 			if (typeof result.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(result.id)) throw new Error(OPENING_PROMPT_FAILURE);
 			this.created = { identity, id: result.id };

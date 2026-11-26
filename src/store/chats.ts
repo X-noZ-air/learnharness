@@ -1,3 +1,4 @@
+import { admissionClosed } from "../core/maintenance.ts";
 /**
  * ChatStore — the fs JSON adapter (one file per chat in data/chats/).
  *
@@ -80,7 +81,7 @@ function getChat(id: string): ChatRecord | null {
 
 function listChats(): ChatSummary[] {
 	try {
-		fs.mkdirSync(PATHS.chats, { recursive: true });
+		if (!admissionClosed()) fs.mkdirSync(PATHS.chats, { recursive: true });
 		return fs
 			.readdirSync(/* turbopackIgnore: true */ PATHS.chats)
 			.filter((f) => f.endsWith(".json"))

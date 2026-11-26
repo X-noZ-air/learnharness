@@ -95,7 +95,7 @@ function allowedAuthEndpoint(value) {
 	} catch { return false; }
 }
 
-function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch, onChange = () => {}, timeoutMs = 180000 }) {
+function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch, onChange = () => {}, claimSignIn = () => () => {}, trackRefresh = fn => fn(), timeoutMs = 180000 }) {
 	let state;
 	let init;
 	let queue = Promise.resolve();
@@ -262,6 +262,7 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 		let finish;
 		const completion = new Promise((resolve) => { finish = resolve; });
 		const listener = http.createServer();
+		const endSignIn = claimSignIn();
 		let timer;
 		let consumed = false;
 		const cleanup = () => { clearTimeout(timer); listener.close(); listener.closeAllConnections(); };
@@ -271,6 +272,7 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 			if (pending?.abort === abort) pending = null;
 			lastError = publicError(fail(code));
 			finish();
+			if (!consumed) endSignIn();
 			notify();
 		};
 		pending = { abort, cancel };
@@ -330,7 +332,7 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 					});
 					lastError = planScopes(tokens) ? null : publicError(fail("scope"));
 				} catch (err) { if (!abort.signal.aborted) lastError = publicError(err); }
-				finally { if (pending?.abort === abort) pending = null; finish(); notify(); }
+				finally { if (pending?.abort === abort) pending = null; finish(); notify(); endSignIn(); }
 			});
 			timer = setTimeout(() => cancel("timeout"), timeoutMs);
 			const url = new URL(AUTHORIZE);
@@ -359,7 +361,10 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 		if (background && !backgroundAllowed()) throw fail("background");
 		return account;
 	}
-	async function credential(background, expected) {
+	function credential(background, expected) {
+		return trackRefresh(() => resolveCredential(background, expected));
+	}
+	async function resolveCredential(background, expected) {
 		await ready();
 		return serial(async () => {
 			const requestEpoch = epoch;
@@ -536,7 +541,7 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 	function close() { closed = true; pending?.cancel(); stop(); }
 	function pause() { paused = true; pending?.cancel(); stop(); notify(); }
 	function resume() { paused = false; if (!storageDenied) suspended = false; notify(); }
-	return { status, login, cancelLogin, lease, models, select, consent, disconnect, logout, close, pause, resume, stamp };
+	return { status, currentStatus: snapshot, login, cancelLogin, lease, models, select, consent, disconnect, logout, close, pause, resume, stamp };
 }
 
 module.exports = { createChatGPT, fileStore, publicError, allowedAuthEndpoint, SCOPES, validateState };

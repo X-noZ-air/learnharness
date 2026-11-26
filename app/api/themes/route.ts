@@ -10,7 +10,7 @@
  */
 
 import { BUILTIN_THEMES, isBuiltinThemeId, isThemeId, parseThemeFile, themeIdFromName } from "@/src/core";
-import { themeStore } from "@/src/server";
+import { mutation, themeStore } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ export async function GET() {
 	return Response.json({ themes: [...BUILTIN_THEMES, ...themeStore.listThemes()] });
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
 	const body = await request.json().catch(() => undefined);
 	if (body === undefined) return Response.json({ error: "body must be JSON" }, { status: 400 });
 	const parsed = parseThemeFile(body);
@@ -34,3 +34,5 @@ export async function POST(request: Request) {
 	themeStore.writeTheme(id, parsed.theme);
 	return Response.json({ theme: { ...parsed.theme, id, builtin: false } }, { status: 201 });
 }
+
+export const POST = mutation(handlePost);

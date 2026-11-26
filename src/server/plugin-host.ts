@@ -1,3 +1,4 @@
+import { tracked, unknownPluginLoaded } from "../core/maintenance.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -247,6 +248,7 @@ export function createPluginHost(deps: PluginHostDependencies) {
 				cleanup(() => services.workers.dispose());
 				const ctx: PluginBackendContext = {
 					manifest, directory: pkg.directory, dataDirectory, signal: activation.controller.signal, cleanup, ...services,
+					trackWork: fn => tracked("plugin-writer", fn),
 					createBackgroundTool(context, definition) { requireLive(); return services.createBackgroundTool(context, definition); },
 					registerInstructions(contribution: PluginInstructions) {
 						requireLive();
@@ -310,7 +312,7 @@ export function createPluginHost(deps: PluginHostDependencies) {
 							let subscribed = true;
 							const unsubscribe = deps.subscribeEvents?.(event => {
 								if (!subscribed || !live(pkg, activation)) return;
-								try { Promise.resolve(listener(event)).catch(() => {}); } catch { /* Isolate plugin listeners. */ }
+								void tracked("plugin-writer", () => listener(event)).catch(() => {});
 							});
 							const off = () => { if (subscribed) { subscribed = false; unsubscribe?.(); } };
 							cleanup(off); return off;
@@ -329,6 +331,7 @@ export function createPluginHost(deps: PluginHostDependencies) {
 					const sidecar = path.join(process.cwd(), "scripts", "plugin-loader.cjs");
 					const nativeRequire = createRequire(sidecar);
 					const loader = nativeRequire(sidecar) as { load(filename: string): PluginBackendModule };
+					if (pkg.info.origin !== "core" || !["flashcards", "drawing-pad", "coding-questions", "rich-code-blocks"].includes(manifest.id)) unknownPluginLoaded();
 					pkg.backend = loader.load(entry);
 					if (!pkg.backend || typeof pkg.backend.activate !== "function") throw new Error("Plugin backend must export activate(context)");
 				}

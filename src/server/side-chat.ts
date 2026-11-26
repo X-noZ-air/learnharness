@@ -1,3 +1,4 @@
+import { tracked } from "../core/maintenance.ts";
 /** Combined side-question service: #487's durable, server-owned lifecycle
  * behind #451's floating companion. One thread per explanation/check segment.
  * Every main request captures new raw activity across all threads. Delivery
@@ -193,7 +194,7 @@ export function createSideChatService(deps: SideChatDeps): SideChatService {
 			for (const listener of [...run.listeners]) { try { listener(event); } catch { /* detached view */ } }
 		};
 		announce(chatId);
-		run.settled = (async () => {
+		run.settled = tracked("side-chat", async () => {
 			let settledThread: SideChatThread | undefined;
 			try {
 				const result = await streamSideAnswer({ engine, instructions, turns, signal: run.controller.signal, chatId, runId: run.answerId,
@@ -229,7 +230,7 @@ export function createSideChatService(deps: SideChatDeps): SideChatService {
 				if (settledThread) broadcast({ type: "done", thread: settledThread });
 				run.listeners.clear();
 			}
-		})();
+		});
 		return responseFor(chatId, thread, run);
 	}
 

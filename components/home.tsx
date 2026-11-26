@@ -18,7 +18,7 @@ import { StatsBar } from "@/components/stats-bar";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { PathInput } from "@/components/path-input";
 import { AttachFilesButton } from "@/components/attach-files-button";
-import { SessionStarter } from "@/components/start-session";
+import { SessionMaintenanceError, SessionStarter } from "@/components/start-session";
 import type { TurnUsage } from "@/src/core";
 
 /**
@@ -84,7 +84,7 @@ export function Home({
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
-	const [startError, setStartError] = useState(false);
+	const [startError, setStartError] = useState("");
 	/* Run end focuses the topic input (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop. Falling edge only; this surface's only
 	 * dictation target IS this textarea, so no case-split is needed. */
@@ -159,7 +159,7 @@ export function Home({
 		}
 		startingRef.current = true;
 		setBusy(true);
-		setStartError(false);
+		setStartError("");
 		try {
 			// The map context (owner, 2026-10-04): picks in EITHER mode ride
 			// the CREATION as graphContext — the server writes a
@@ -172,10 +172,10 @@ export function Home({
 				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
 			}, fetch, JSON.stringify(catalog?.slots.strong));
 			router.push(target);
-		} catch {
+		} catch (error) {
 			startingRef.current = false;
 			setBusy(false);
-			setStartError(true);
+			setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
 		}
 	};
 
@@ -259,7 +259,7 @@ export function Home({
 									)
 								)}
 							/>
-							{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+							{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:leading-4">{startError}</p>}
 						</div>
 					</div>
 					<form
