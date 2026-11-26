@@ -1,32 +1,125 @@
 name: CI
+run-name: ${{ inputs.candidate_sha && format('Werft CI {0} on {1} for https://github.com/X-noZ-air/learnharness/pull/{2}', inputs.candidate_sha, inputs.base_sha, inputs.pr) || 'CI' }}
 
 on:
   push:
-    branches: [main]
+    branches: [main, werft]
   pull_request:
   workflow_dispatch:
+    inputs:
+      replay_base:
+        description: Isolated replay branch
+        type: string
+      replay_start:
+        description: Replay seed
+        type: string
+      replay_end:
+        description: Replay stop tag
+        type: string
+      fixture:
+        description: Prepare or advance a replay fixture
+        type: choice
+        options: [poll, clean, conflict, move]
+        default: poll
+      candidate_sha:
+        description: Exact Werft integration commit
+        type: string
+      base_sha:
+        description: Base commit used to build the candidate
+        type: string
+      pr:
+        description: Fork pull request number
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ (inputs.candidate_sha || inputs.replay_base) && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
+  replay:
+    if: github.ref_name == 'fm/lh-m21-updatekette' && inputs.replay_base && inputs.fixture == 'poll'
+    uses: ./.github/workflows/werft-updates.yml
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    with:
+      replay_base: ${{ inputs.replay_base }}
+      replay_start: ${{ inputs.replay_start }}
+      replay_end: ${{ inputs.replay_end }}
+
+  replay-fixture:
+    if: github.repository_id == '1473691789' && github.ref_name == 'fm/lh-m21-updatekette' && inputs.replay_base && inputs.fixture != 'poll'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPLAY_BASE: ${{ inputs.replay_base }}
+          REPLAY_START: ${{ inputs.replay_start }}
+          FIXTURE: ${{ inputs.fixture }}
+        run: python3 -B .github/werft/replay_fixture.py
+
+  validate-candidate:
+    name: Validate Werft candidate
+    if: inputs.candidate_sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Verify the exact PR head and base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY_ID" == 1473691789 ]]
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PR" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" | jq -e \
+            --arg candidate "$CANDIDATE_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and (.draft | not) and
+              .user.login == "github-actions[bot]" and
+              .head.repo.id == 1473691789 and .base.repo.id == 1473691789 and
+              .head.sha == $candidate and .base.sha == $base and
+              (.head.ref | startswith("werft-updates/integrate/"))
+            '
+
   quality:
+    needs: validate-candidate
+    if: always() && !inputs.replay_base && (!inputs.candidate_sha || needs.validate-candidate.result == 'success')
     name: Typecheck, tests, lint
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
+          cache: ${{ !inputs.candidate_sha && 'npm' || '' }}
+          package-manager-cache: ${{ !inputs.candidate_sha }}
       - run: npm ci
       - run: npm run plugins:setup
       - run: npm run typecheck
@@ -34,6 +127,8 @@ jobs:
       - run: npm run lint
 
   standalone:
+    needs: validate-candidate
+    if: always() && !inputs.replay_base && (!inputs.candidate_sha || needs.validate-candidate.result == 'success')
     name: Standalone (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -53,10 +148,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
+          cache: ${{ !inputs.candidate_sha && 'npm' || '' }}
+          package-manager-cache: ${{ !inputs.candidate_sha }}
       - run: npm ci
       - run: npm run plugins:setup
       - name: Native renderer tests on this OS

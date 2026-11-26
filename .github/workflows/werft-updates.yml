@@ -1,0 +1,61 @@
+name: Werft upstream updates
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      replay_base:
+        description: Isolated werft-replay-* base (empty for production)
+        type: string
+      replay_start:
+        description: Published stable tag already contained in the replay base
+        type: string
+      replay_end:
+        description: Last published stable tag to consider in replay
+        type: string
+      retry_failed:
+        description: Start a new CI attempt for an unchanged candidate with red checks
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      replay_base:
+        type: string
+        required: true
+      replay_start:
+        type: string
+        required: true
+      replay_end:
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: werft-updates-${{ inputs.replay_base || 'werft' }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository_id == '1473691789'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Poll, verify, and integrate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BASE: ${{ inputs.replay_base }}
+          REPLAY_START: ${{ inputs.replay_start }}
+          REPLAY_END: ${{ inputs.replay_end }}
+          RETRY_FAILED: ${{ inputs.retry_failed || false }}
+        run: python3 -B .github/werft/update.py
