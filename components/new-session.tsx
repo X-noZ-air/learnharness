@@ -174,8 +174,8 @@ export function DraftShell({
 					{/* The pointer-events pattern (953b22b): the sticky wrapper is
 					    pointer-events-none so nothing here blocks the empty-state
 					    area; the blob and the stats row re-enable it themselves. */}
-					<div className="pointer-events-none sticky bottom-0 mt-auto w-full">
-						<Conversation className="h-full min-w-0 flex-1" initial="instant">
+					<div className="pointer-events-none sticky bottom-0 mt-auto w-full narrow:short:flex narrow:short:h-full narrow:short:flex-col">
+						<Conversation className="h-full min-w-0 flex-1 narrow:short:h-auto narrow:short:min-h-0" initial="instant">
 							<ConversationContent className="min-h-full gap-0 p-0">
 								<ConversationEmptyState
 									title={mode === "practice" ? "New practice session" : "New session"}
@@ -187,8 +187,8 @@ export function DraftShell({
 								/>
 							</ConversationContent>
 						</Conversation>
-						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
-						<div className="bg-background pb-4">
+						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:h-4 narrow:short:shrink-0" />
+						<div className="bg-background pb-4 narrow:short:shrink-0">
 							<div className={DOCK}>
 								<ComposerActions
 									picker={(picks.length > 0 || mode === "practice") && (

@@ -279,7 +279,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
-					className="narrow:min-h-11 narrow:min-w-11"
+					className="narrow:min-h-11 narrow:min-w-11 narrow:[&>span:first-child]:min-w-0 narrow:[&>span:first-child]:truncate"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
 				>{effectiveId ? prettyModel(effectiveId) : "—"}</ModelPickerPill>
