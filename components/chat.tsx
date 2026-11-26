@@ -2908,7 +2908,7 @@ export function DockOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
+			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:via-10% narrow:short:to-30%" />
 			<div ref={blockRef} className="relative bg-background pb-5">
 				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
