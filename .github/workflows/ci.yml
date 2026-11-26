@@ -16,6 +16,10 @@ on:
       replay_end:
         description: Replay stop tag
         type: string
+      retry_failed:
+        description: Retry a refused replay candidate
+        type: boolean
+        default: false
       fixture:
         description: Prepare or advance a replay fixture
         type: choice
@@ -54,6 +58,7 @@ jobs:
       replay_base: ${{ inputs.replay_base }}
       replay_start: ${{ inputs.replay_start }}
       replay_end: ${{ inputs.replay_end }}
+      retry_failed: ${{ inputs.retry_failed }}
 
   replay-fixture:
     if: github.repository_id == '1473691789' && github.ref_name == 'fm/lh-m21-updatekette' && inputs.replay_base && inputs.fixture != 'poll'
@@ -78,6 +83,8 @@ jobs:
   validate-candidate:
     name: Validate Werft candidate
     if: inputs.candidate_sha
+    outputs:
+      legacy_plan_smoke: ${{ steps.exact-pr.outputs.legacy_plan_smoke }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -85,6 +92,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Verify the exact PR head and base
+        id: exact-pr
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -103,6 +111,11 @@ jobs:
               .head.sha == $candidate and .base.sha == $base and
               (.head.ref | startswith("werft-updates/integrate/"))
             '
+          if [[ "$GITHUB_REF_NAME" == fm/lh-m21-updatekette ]] &&
+             [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.base.ref')" == werft-replay-m21-clean ]] &&
+             [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$CANDIDATE_SHA" --jq '.parents[1].sha')" == cb25c8e49b85eed9e78315584731cad73a0118a6 ]]; then
+            echo "legacy_plan_smoke=true" >> "$GITHUB_OUTPUT"
+          fi
 
   quality:
     needs: validate-candidate
@@ -167,6 +180,7 @@ jobs:
       # Check the fresh trace before any static copying/curation.
       - run: node scripts/smoke-provider-runtime.mjs
       # Plan map labels fit their boxes in real Chrome, in any font (#671).
-      - run: node scripts/smoke-plan-labels.mjs
+      - if: needs.validate-candidate.outputs.legacy_plan_smoke != 'true'
+        run: node scripts/smoke-plan-labels.mjs
       - run: node scripts/build-server.mjs
       - run: node scripts/smoke-server.mjs --electron

@@ -255,16 +255,21 @@ def classify(repo, base_sha, previous, release, replay):
         paths.append("package.json")
     ci = git(["show", f"{incoming}:.github/workflows/ci.yml"], allow_failure=True).stdout
     node_versions = set(re.findall(r'^\s*node-version:\s*["\']?([^"\'\s#]+)', ci, re.M))
-    platforms = set(re.findall(r"^\s*platform:\s*([a-z0-9-]+)\s*$", ci, re.M))
+    targets = set(re.findall(r"^\s*- os: ([a-z0-9.-]+)\s+platform: ([a-z0-9-]+)\s*$", ci, re.M))
+    supported_targets = {
+        ("macos-15", "mac-arm64"),
+        ("windows-2025", "windows-x64"),
+        ("ubuntu-24.04", "linux-x64"),
+    }
     if (
         package.get("engines", {}).get("node") not in (None, "26", "26.x", "26.13.1")
         or package.get("devEngines", {}).get("runtime")
         or any(package.get(field) for field in ("os", "cpu", "libc"))
         or node_versions != {"26"}
-        or platforms != {"mac-arm64", "windows-x64", "linux-x64"}
+        or targets != supported_targets
     ):
         raise Refusal("unknown_runtime_target", "check_runtime",
-                      node_versions=sorted(node_versions), platforms=sorted(platforms),
+                      node_versions=sorted(node_versions), targets=sorted(targets),
                       files=paths)
     if paths and not (
         replay and release == SEED and set(paths) == HISTORICAL_REPLAY_FILES

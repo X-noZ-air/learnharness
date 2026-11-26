@@ -29,6 +29,9 @@ on:
       replay_end:
         type: string
         required: true
+      retry_failed:
+        type: boolean
+        required: false
 
 permissions: {}
 

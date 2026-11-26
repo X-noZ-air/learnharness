@@ -70,8 +70,9 @@ The Git history of the state branch retains prior outcomes.
 Use **Run workflow** on `werft` to run the poll immediately. An unchanged red
 candidate stays stopped unless you select `retry_failed`, which dispatches new
 checks on the same candidate and pull request. Repair conflicts or review
-automation/runtime changes through the normal feature review process. Keep the
-state branch as the source of the pinned upstream identities.
+automation/runtime changes through a feature pull request that updates the
+poller's protected-file or runtime policy for the exact reviewed release. Keep
+the state branch as the source of the pinned upstream identities.
 
 ## Isolated replay
 
