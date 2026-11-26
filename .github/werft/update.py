@@ -36,6 +36,7 @@ SEED = {
 HISTORICAL_REPLAY_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/notify-website-announcement.yml",
+    "scripts/smoke-plan-labels.mjs",
 }
 CI_VALIDATE_JOB = "Validate Werft candidate"
 
@@ -88,6 +89,19 @@ class Repository:
     def fork_branch(self, branch, sha):
         if self.fetch(self.url, f"refs/heads/{branch}") != sha:
             raise Refusal("base_moved", "fetch_base")
+
+    def advertised_tags(self):
+        remote = f"https://github.com/{UPSTREAM}.git"
+        refs = {}
+        for line in git(["ls-remote", "--tags", remote]).stdout.splitlines():
+            sha, ref = line.split("\t", 1)
+            refs[ref] = sha
+        prefix = "refs/tags/"
+        return {
+            ref.removeprefix(prefix): refs.get(ref + "^{}", sha)
+            for ref, sha in refs.items()
+            if ref.startswith(prefix) and not ref.endswith("^{}")
+        }
 
     def upstream_tag(self, release):
         remote = f"https://github.com/{UPSTREAM}.git"
@@ -196,8 +210,9 @@ def resolve_release(upstream, tag, release_id):
     raise Refusal("unsupported_tag", "resolve_tag", upstream_tag=tag)
 
 
-def observe(upstream, journal, releases, through, refresh=False):
+def observe(upstream, repo, journal, releases, through, refresh=False):
     seen = journal.data["seen"]
+    advertised = repo.advertised_tags()
     accepted = journal.data["accepted"]["tag"]
     for tag in sorted(seen.keys() | releases.keys(), key=version):
         if tag not in seen and (version(tag) <= version(accepted) or version(tag) > through):
@@ -207,15 +222,18 @@ def observe(upstream, journal, releases, through, refresh=False):
         previous = seen.get(tag)
         if previous and previous["release_id"] != releases[tag]:
             raise Refusal("vanished_release", "list_releases", upstream_tag=tag)
-        # Historical releases have already been integrated. Continue to pin the
-        # current accepted tag and anything still queued.
-        if previous and version(tag) < version(accepted):
-            continue
-        release = resolve_release(upstream, tag, releases[tag])
-        if previous and previous["sha"] != release["sha"]:
-            raise Refusal("moved_tag", "resolve_tag", upstream_tag=tag,
-                          expected=previous["sha"], observed=release["sha"])
-        if tag not in seen:
+        observed_sha = advertised.get(tag)
+        if observed_sha is None:
+            raise Refusal("vanished_tag", "advertised_tags", upstream_tag=tag)
+        if previous:
+            if previous["sha"] != observed_sha:
+                raise Refusal("moved_tag", "advertised_tags", upstream_tag=tag,
+                              expected=previous["sha"], observed=observed_sha)
+        else:
+            release = resolve_release(upstream, tag, releases[tag])
+            if release["sha"] != observed_sha:
+                raise Refusal("moved_tag", "resolve_tag", upstream_tag=tag,
+                              expected=observed_sha, observed=release["sha"])
             seen[tag] = release
             # Pin tag identity before doing any write to the candidate or PR.
             journal.save()
@@ -230,6 +248,11 @@ def classify(repo, base_sha, previous, release, replay):
     if not repo.ancestor(old, incoming):
         raise Refusal("non_descendant", "check_ancestry")
     package = json.loads(git(["show", f"{incoming}:package.json"]).stdout)
+    old_package = json.loads(git(["show", f"{old}:package.json"]).stdout)
+    diff = git(["diff", "--name-only", "--no-renames", "-z", old, incoming]).stdout
+    paths = sorted(path for path in diff.split("\0") if protected_automation(path))
+    if old_package.get("scripts") != package.get("scripts"):
+        paths.append("package.json")
     ci = git(["show", f"{incoming}:.github/workflows/ci.yml"], allow_failure=True).stdout
     node_versions = set(re.findall(r'^\s*node-version:\s*["\']?([^"\'\s#]+)', ci, re.M))
     platforms = set(re.findall(r"^\s*platform:\s*([a-z0-9-]+)\s*$", ci, re.M))
@@ -241,9 +264,8 @@ def classify(repo, base_sha, previous, release, replay):
         or platforms != {"mac-arm64", "windows-x64", "linux-x64"}
     ):
         raise Refusal("unknown_runtime_target", "check_runtime",
-                      node_versions=sorted(node_versions), platforms=sorted(platforms))
-    diff = git(["diff", "--name-only", "--no-renames", "-z", old, incoming]).stdout
-    paths = sorted(path for path in diff.split("\0") if protected_automation(path))
+                      node_versions=sorted(node_versions), platforms=sorted(platforms),
+                      files=paths)
     if paths and not (
         replay and release == SEED and set(paths) == HISTORICAL_REPLAY_FILES
         and not git(["diff", "--name-only", base_sha, incoming, "--", *paths]).stdout
@@ -285,11 +307,10 @@ def matching_pr(api, branch, base):
     return matches[0] if matches else None
 
 
-def open_pr(api, branch, base, release, sha):
+def open_pr(api, branch, base, release):
     title = f"Merge upstream {release['tag']} into {base}"
     body = (
         f"Published upstream release ID `{release['release_id']}` at `{release['sha']}`.\n\n"
-        f"Current integration candidate: `{sha}`.\n"
         "The Werft update workflow validates the full CI matrix before merging."
     )
     pr = api.request("pulls", "POST", {"title": title, "body": body, "head": branch, "base": base})
@@ -372,7 +393,7 @@ def publish_candidate(api, repo, journal, candidate, branch, base, release, pr):
             raise Refusal("candidate_changed", "rebuild_candidate")
         repo.push(sha, branch, live_sha)
     if not pr:
-        pr = open_pr(api, branch, base, release, candidate["sha"])
+        pr = open_pr(api, branch, base, release)
     # The API may briefly report the previous PR head after a ref update.
     for _ in range(6):
         pr = api.request(f"pulls/{pr['number']}")
@@ -479,21 +500,41 @@ def integrate(api, upstream, repo, journal, release, base, replay, retry):
         run_url = f"https://github.com/{FORK}/actions/runs/{candidate['run_id']}"
         api.status(candidate["sha"], "pending", "Werft candidate CI dispatched", run_url)
     run = wait_for_ci(api, candidate, base, candidate["controller"])
-    observe(upstream, journal, stable_releases(upstream), version(release["tag"]))
+    observe(upstream, repo, journal, stable_releases(upstream), version(release["tag"]))
+    earlier = sorted(
+        (tag for tag in journal.data["seen"]
+         if version(journal.data["accepted"]["tag"]) < version(tag) < version(release["tag"])),
+        key=version,
+    )
+    if earlier:
+        raise Refusal("earlier_release_found", "verify_release_order", earlier_tag=earlier[0])
     assert_pr(api.request(f"pulls/{pr['number']}"), candidate, base)
     strict_guard(api, base)
     api.status(candidate["sha"], "success", "Werft candidate CI passed", run["html_url"])
-    assert_pr(api.request(f"pulls/{pr['number']}"), candidate, base)
-    try:
-        response = api.request(f"pulls/{pr['number']}/merge", "PUT",
-                               {"merge_method": "merge", "sha": candidate["sha"]})
-    except APIError:
-        if api.branch_sha(base) != base_sha:
-            raise Refusal("base_moved", "merge_pull_request") from None
-        raise
-    if not response["merged"]:
-        raise Refusal("merge_rejected", "merge_pull_request")
+    merge_candidate(api, candidate, base)
     complete(api, repo, journal, candidate, release, base, replay)
+
+
+def merge_candidate(api, candidate, base):
+    pr = candidate["pr"]
+    for attempt in range(6):
+        assert_pr(api.request(f"pulls/{pr}"), candidate, base)
+        try:
+            result = api.request(f"pulls/{pr}/merge", "PUT", {
+                "merge_method": "merge",
+                "sha": candidate["sha"],
+            })
+        except APIError as error:
+            if api.branch_sha(base) != candidate["base_sha"]:
+                raise Refusal("base_moved", "merge_pull_request") from error
+            if error.status not in {405, 409} or attempt == 5:
+                raise
+            # GitHub can take a moment to reevaluate a newly posted status.
+            time.sleep(3)
+            continue
+        if not result["merged"]:
+            raise Refusal("merge_rejected", "merge_pull_request")
+        return
 
 
 def record_refusal(api, journal, failure, current_tag):
@@ -555,11 +596,19 @@ def main():
         if active and (active["merge_sha"] or get_merge(api, active, base)):
             current_tag = active["tag"]
             complete(api, repo, journal, active, journal.data["seen"][current_tag], base, replay)
-        observe(upstream, journal, stable_releases(upstream), through, refresh=True)
+        observe(upstream, repo, journal, stable_releases(upstream), through, refresh=True)
         for tag in sorted(journal.data["seen"], key=version):
-            if version(journal.data["accepted"]["tag"]) < version(tag) <= through:
-                current_tag = tag
-                integrate(api, upstream, repo, journal, journal.data["seen"][tag], base, replay, retry)
+            if not version(journal.data["accepted"]["tag"]) < version(tag) <= through:
+                continue
+            current_tag = tag
+            active = journal.data["candidate"]
+            if not active or active["tag"] != tag:
+                postponed = journal.data.setdefault("postponed_candidates", {})
+                if active:
+                    postponed[active["tag"]] = active
+                journal.data["candidate"] = postponed.pop(tag, None)
+                journal.save()
+            integrate(api, upstream, repo, journal, journal.data["seen"][tag], base, replay, retry)
     except Refusal as failure:
         record_refusal(api, journal, failure, current_tag)
         if str(failure) != "checks_pending":

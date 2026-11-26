@@ -38,9 +38,6 @@ def main():
             path: git(["show", f"{SEED['sha']}:{path}"]).stdout
             for path in HISTORICAL_REPLAY_FILES
         }
-        if start == "v0.6.0":
-            path = "scripts/smoke-plan-labels.mjs"
-            contents[path] = git(["show", f"{SEED['sha']}:{path}"]).stdout
         if fixture == "conflict":
             path = "package.json"
             text = git(["show", f"{seed['sha']}:{path}"]).stdout

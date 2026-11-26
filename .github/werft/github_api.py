@@ -103,6 +103,6 @@ def fork_api():
 
 def protected_automation(path):
     return (
-        path.startswith((".github/", "scripts/werft-", "ops/"))
+        path.startswith((".github/", "scripts/", "ops/"))
         or path in {"AGENTS.md", "CLAUDE.md", "electron-builder.yml"}
     )
