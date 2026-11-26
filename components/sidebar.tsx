@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
+import { HostDialog } from "@/components/host-dialog";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
 import { DumbbellIcon, FolderPlusIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
@@ -35,10 +36,8 @@ import { InteractionLayersProvider, useInteractionLayers, useOptionalInteraction
 import { StartupMessage, type StartupMessageOffer } from "@/components/startup-message";
 
 /**
- * Toggleable sidebar — NOT a modal drawer: no backdrop, no focus theft. It
- * sits inline next to the content and can stay open while working in a
- * session. Open state persists across pages (provider lives in the root
- * layout) and across reloads (localStorage).
+ * The desktop sidebar sits inline and remembers its preference across reloads.
+ * The narrow browser drawer has independent, transient open state.
  */
 
 const STORAGE_KEY = "lh:sidebar-open";
@@ -63,6 +62,7 @@ import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/sr
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
 const SIDEBAR_AUTOCLOSE = 928;
+const NARROW_QUERY = "(width < 40rem)";
 
 // Module scope, guarded for SSR (the server has no navigator).
 const IS_ELECTRON = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
@@ -102,9 +102,16 @@ declare global {
 	}
 }
 
-const SidebarContext = createContext<{ open: boolean; toggle: () => void }>({
+const SidebarContext = createContext<{
+	open: boolean;
+	toggle: () => void;
+	narrowViewport: boolean;
+	closeDrawer: () => void;
+}>({
 	open: false,
 	toggle: () => {},
+	narrowViewport: false,
+	closeDrawer: () => {},
 });
 
 export function useSidebar() {
@@ -124,6 +131,21 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [open, setOpen] = useState(false);
 	const [narrow, setNarrow] = useState(false);
 	const [mounted, setMounted] = useState(false);
+	const [narrowViewport, setNarrowViewport] = useState(false);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
+	useEffect(() => {
+		if (typeof window.matchMedia !== "function") return;
+		const query = window.matchMedia(NARROW_QUERY);
+		const apply = () => {
+			setNarrowViewport(query.matches);
+			if (!query.matches) closeDrawer();
+		};
+		apply();
+		query.addEventListener("change", apply);
+		return () => query.removeEventListener("change", apply);
+	}, [closeDrawer]);
 
 	useEffect(() => {
 		// Electron shell detection (merged chrome, 2026-09-17): keys the
@@ -166,6 +188,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, []);
 
 	const toggle = useCallback(() => {
+		if (narrowViewport) {
+			setDrawerOpen((value) => !value);
+			return;
+		}
 		// Opening while narrow (auto-closed, or the user's own closed-at-
 		// narrow): ask the shell to widen to the threshold — the resize
 		// listener flips `narrow` and the sidebar appears. The preference
@@ -181,7 +207,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 			localStorage.setItem(STORAGE_KEY, v ? "0" : "1");
 			return !v;
 		});
-	}, [narrow, open]);
+	}, [narrow, narrowViewport, open]);
 
 	// ⌘B: the global shortcut dispatches kbdEventForAction("toggle-sidebar")
 	// and the context answers on exactly that name — the shared spelling
@@ -197,7 +223,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open: open && !narrow, toggle }}>
+		<SidebarContext.Provider value={{ open: narrowViewport ? drawerOpen : open && !narrow, toggle, narrowViewport, closeDrawer }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -217,11 +243,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  The icon fades with the slot and is clipped by it as it collapses —
  *  no popping in either direction. */
 export function SidebarToggle() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrowViewport } = useSidebar();
 	return (
 		<span
 			className={cn(
-				"sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200",
+				"sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200 narrow:mr-0 narrow:h-11 narrow:w-11",
 				open ? "w-0 -mr-3" : "w-9 mr-0 lh-closed-toggle",
 			)}
 		>
@@ -230,10 +256,15 @@ export function SidebarToggle() {
 				variant="ghost"
 				size="icon"
 				aria-label="Open sidebar"
-				aria-hidden={open}
-				tabIndex={open ? -1 : 0}
-				onClick={toggle}
-				className={cn("sidebar-motion duration-200", open ? "pointer-events-none opacity-0" : "opacity-100")}
+				aria-expanded={open}
+				aria-hidden={open && !narrowViewport}
+				tabIndex={open && !narrowViewport ? -1 : 0}
+				onClick={(event) => {
+					// Touch browsers may activate a button without focusing it.
+					if (narrowViewport) event.currentTarget.focus({ preventScroll: true });
+					toggle();
+				}}
+				className={cn("sidebar-motion duration-200 narrow:size-11", open ? "pointer-events-none opacity-0" : "opacity-100")}
 			>
 				{/* Owner, round 6: size-4, SAME as the close glyph — the toggle
 				    must not grow when the sidebar is closed (it did: size-5 here).
@@ -332,7 +363,7 @@ export function SessionRow({
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			data-session-id={chat.id}
 			className={cn(
-				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent",
+				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent narrow:min-h-11",
 				compact ? SIDEBAR_COMPACT_ROW : "py-2",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
@@ -417,7 +448,8 @@ const KIND_FILTER_KEY = "lh:session-kind-filter";
 function SessionsSidebar() {
 	const { appearance: { compactSessionList } } = useAppearance();
 	const interactions = useInteractionLayers();
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrowViewport, closeDrawer } = useSidebar();
+	const drawerRef = useRef<HTMLElement>(null);
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -433,13 +465,18 @@ function SessionsSidebar() {
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
 
+	useEffect(() => {
+		closeDrawer();
+	}, [pathname, closeDrawer]);
+
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
 	   sessionless draft view; the session is created only when the first
 	   message is sent (and that message becomes its title). Search: a
 	   client-side filter over the poll snapshot — no server round trip. */
 	const newSession = useCallback(() => {
+		closeDrawer();
 		router.push("/chat/new");
-	}, [router]);
+	}, [router, closeDrawer]);
 
 	/* FUZZY (owner round 8, 2026-10-05): subsequence match ranked by
 	 * fuzzyScore — prefix beats word-boundary beats scattered. FOLDERS
@@ -774,6 +811,7 @@ function SessionsSidebar() {
 							kbdSelected={kbdId === c.id}
 							onOpen={() => {
 								setKbdIndex(null);
+								closeDrawer();
 								router.push(`/chat/${c.id}`);
 							}}
 							onContextMenu={(e) => openContext(e, c)}
@@ -819,12 +857,29 @@ function SessionsSidebar() {
 		);
 	});
 
-	return (
+	const sidebar = (
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			data-testid="sessions-sidebar"
+			ref={narrowViewport ? drawerRef : undefined}
+			tabIndex={narrowViewport ? -1 : undefined}
+			className={narrowViewport
+				? "h-full overflow-y-auto overscroll-contain outline-none"
+				: cn("sidebar-motion shrink-0 overflow-hidden duration-200 narrow:hidden", open ? "w-72" : "w-0")}
 			aria-hidden={!open}
+			inert={!open}
+			onKeyDown={narrowViewport ? (event) => {
+				if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+				if (!event.currentTarget.contains(event.target as Node)) return;
+				// The app captures Tab for composer shortcuts. Keep it inside the drawer.
+				const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("a[href], button, input, [tabindex]"))
+					.filter(control => control.tabIndex >= 0 && interactions.isElementEligible(control));
+				const current = controls.indexOf(event.target as HTMLElement);
+				const next = event.shiftKey ? (current <= 0 ? controls.length - 1 : current - 1) : (current + 1) % controls.length;
+				event.stopPropagation();
+				controls[next]?.focus();
+			} : undefined}
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-background">
+			<div className="flex h-full w-72 flex-col border-r bg-background narrow:h-auto narrow:min-h-full narrow:w-full">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
@@ -848,7 +903,8 @@ function SessionsSidebar() {
 						<Link
 							href="/"
 							aria-label="Home"
-							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50"
+							onClick={closeDrawer}
+							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground narrow:size-11 dark:hover:bg-accent/50"
 						>
 							<LhMark className="size-6" />
 						</Link>
@@ -859,7 +915,7 @@ function SessionsSidebar() {
 							size="icon"
 							aria-label="Close sidebar"
 							onClick={toggle}
-							className="lh-no-drag"
+							className="lh-no-drag narrow:size-11"
 						>
 							<PanelLeftCloseIcon className="size-4" />
 						</Button>
@@ -873,7 +929,7 @@ function SessionsSidebar() {
 						data-testid="new-session"
 						title="Teaching"
 						onClick={() => void newSession()}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 					>
 						<PlusIcon className="size-3 shrink-0" />
 						<span className="min-w-0 truncate">Teaching</span>
@@ -883,8 +939,8 @@ function SessionsSidebar() {
 						type="button"
 						data-testid="new-session-practice"
 						title="Practice"
-						onClick={() => router.push("/chat/new?mode=practice")}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						onClick={() => { closeDrawer(); router.push("/chat/new?mode=practice"); }}
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 					>
 						<DumbbellIcon className="size-3 shrink-0" />
 						<span className="min-w-0 truncate">Practice</span>
@@ -918,6 +974,7 @@ function SessionsSidebar() {
 							// doesn't also fire.
 							onKeyDown={(e) => {
 								if (e.key === "Escape") {
+									if (narrowViewport) return; // The drawer's modal layer owns Escape.
 									if (!interactions.isElementEligible(e.currentTarget)) return;
 									interactions.claimEscape(e);
 									e.stopPropagation();
@@ -941,6 +998,7 @@ function SessionsSidebar() {
 									const target = shown![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
 									if (!target) return;
 									e.preventDefault();
+									closeDrawer();
 									router.push(`/chat/${target.id}`);
 									setKbdIndex(null);
 									e.currentTarget.blur();
@@ -948,7 +1006,7 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60"
+							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60 narrow:h-11"
 						/>
 						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
@@ -960,7 +1018,7 @@ function SessionsSidebar() {
 								aria-label="Add folder"
 								data-testid="sidebar-add-folder"
 								onClick={() => setCreatingFolder({ parentId: null })}
-								className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:size-11"
 							>
 								<FolderPlusIcon className="size-3.5" />
 							</button>
@@ -984,7 +1042,7 @@ function SessionsSidebar() {
 							data-testid={`kind-filter-${f}`}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors",
+									"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors narrow:min-h-11",
 								kindFilter === f
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:text-foreground",
@@ -1005,7 +1063,7 @@ function SessionsSidebar() {
 
 				{/* The bar overlays the rows (owner polish round): rules and
 				    highlights run to the edge; it shows while scrolling/hovering. */}
-				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" className="flex flex-col" {...folderDrop.containerProps}>
+				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" areaClassName="narrow:flex-[1_0_auto]" className="flex flex-col" {...folderDrop.containerProps}>
 					{(creatingFolder?.parentId === null || (rows !== null && rows.length > 0)) && (
 						<div data-testid="session-rows">
 							{creatingFolder?.parentId === null && (
@@ -1046,7 +1104,7 @@ function SessionsSidebar() {
 								type="button"
 								onClick={() => openSettings()}
 								data-testid="settings-entry"
-								className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 							>
 								<SettingsIcon className="size-3" />
 								Settings
@@ -1182,6 +1240,20 @@ function SessionsSidebar() {
 					onDeleted={onFolderDeleted}
 				/>
 			</aside>
+	);
+
+	if (!narrowViewport) return sidebar;
+	return (
+		<HostDialog
+			open={open}
+			onClose={closeDrawer}
+			initialFocusRef={drawerRef}
+			aria-label="Sessions"
+			backdropProps={{ "data-testid": "sidebar-backdrop", className: "fixed inset-0 bg-black/40" }}
+			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background pt-[var(--lh-safe-top)] pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] shadow-xl" />}
+		>
+			{sidebar}
+		</HostDialog>
 	);
 }
 
