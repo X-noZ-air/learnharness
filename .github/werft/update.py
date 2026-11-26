@@ -415,7 +415,8 @@ def publish_candidate(api, repo, journal, candidate, branch, base, release, pr):
 def get_merge(api, candidate, base):
     if candidate["pr"] is None:
         return None
-    pr = api.request(f"pulls/{candidate['pr']}")
+    # The 2026 REST representation drops merge_commit_sha on merged PRs.
+    pr = api.request(f"pulls/{candidate['pr']}", version="2022-11-28")
     if not pr["merged"]:
         return None
     if (
@@ -424,14 +425,23 @@ def get_merge(api, candidate, base):
         or pr["merged_by"]["login"] != "github-actions[bot]"
     ):
         raise Refusal("unexpected_merge", "verify_merge")
-    commit = api.request(f"git/commits/{pr['merge_commit_sha']}")
+    return verify_merge_parents(api, candidate, pr.get("merge_commit_sha"))
+
+
+def verify_merge_parents(api, candidate, merge_sha):
+    if not SHA.fullmatch(merge_sha or ""):
+        raise Refusal("unexpected_merge", "verify_merge")
+    commit = api.request(f"git/commits/{merge_sha}")
     if [parent["sha"] for parent in commit["parents"]] != [candidate["base_sha"], candidate["sha"]]:
         raise Refusal("unexpected_merge", "verify_merge")
     return commit["sha"]
 
 
-def complete(api, repo, journal, candidate, release, base, replay):
-    merge_sha = candidate["merge_sha"] or get_merge(api, candidate, base)
+def complete(api, repo, journal, candidate, release, base, replay, merge_sha=None):
+    if merge_sha:
+        merge_sha = verify_merge_parents(api, candidate, merge_sha)
+    else:
+        merge_sha = candidate["merge_sha"] or get_merge(api, candidate, base)
     if not merge_sha:
         raise Refusal("unexpected_merge", "verify_merge")
     candidate["merge_sha"] = merge_sha
@@ -516,8 +526,8 @@ def integrate(api, upstream, repo, journal, release, base, replay, retry):
     assert_pr(api.request(f"pulls/{pr['number']}"), candidate, base)
     strict_guard(api, base)
     api.status(candidate["sha"], "success", "Werft candidate CI passed", run["html_url"])
-    merge_candidate(api, candidate, base)
-    complete(api, repo, journal, candidate, release, base, replay)
+    merge_sha = merge_candidate(api, candidate, base)
+    complete(api, repo, journal, candidate, release, base, replay, merge_sha)
 
 
 def merge_candidate(api, candidate, base):
@@ -539,7 +549,7 @@ def merge_candidate(api, candidate, base):
             continue
         if not result["merged"]:
             raise Refusal("merge_rejected", "merge_pull_request")
-        return
+        return result.get("sha")
 
 
 def record_refusal(api, journal, failure, current_tag):

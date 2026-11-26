@@ -18,6 +18,20 @@ on:
         description: Start a new CI attempt for an unchanged candidate with red checks
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      replay_base:
+        type: string
+        required: true
+      replay_start:
+        type: string
+        required: true
+      replay_end:
+        type: string
+        required: true
+      retry_failed:
+        type: boolean
+        required: false
 
 permissions: {}
 

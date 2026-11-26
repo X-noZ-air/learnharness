@@ -31,7 +31,7 @@ class GitHub:
         self.repo = repo
         self.token = token
 
-    def request(self, path="", method="GET", data=None, missing=False):
+    def request(self, path="", method="GET", data=None, missing=False, version="2026-03-10"):
         request = urllib.request.Request(
             f"https://api.github.com/repos/{self.repo}{'/' if path else ''}{path}",
             data=None if data is None else json.dumps(data).encode(),
@@ -39,7 +39,7 @@ class GitHub:
             headers={
                 "Accept": "application/vnd.github+json",
                 "Content-Type": "application/json",
-                "X-GitHub-Api-Version": "2026-03-10",
+                "X-GitHub-Api-Version": version,
                 "User-Agent": "learnharness-werft-updates",
             },
         )
