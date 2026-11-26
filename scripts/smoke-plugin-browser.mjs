@@ -146,7 +146,7 @@ export async function verifySessionHelperShortcutOwnership({ page, chord, openSu
 }
 
 /** @param {string} url An already-running disposable server's loopback origin.
- * @param {{executablePath?: string, scratchDirectory?: string, headers?: Record<string, string>, timeoutMs?: number}} [options]
+ * @param {{executablePath?: string, scratchDirectory?: string, headers?: Record<string, string>, timeoutMs?: number, sourceOffer?: string}} [options]
  * @returns {Promise<object>} Full console, network, RPC, and assertion evidence.
  */
 export async function verifyPluginBrowser(url, options = {}) {
@@ -586,6 +586,24 @@ export async function verifyPluginBrowser(url, options = {}) {
 		evidence.stage = "disabled discovery in Settings";
 		const documentResponse = await page.goto(base, { waitUntil: "domcontentloaded" });
 		assert.equal(documentResponse?.status(), 200, "The caller's live app must serve its home screen");
+		if (options.sourceOffer) {
+			const [tag, commit] = options.sourceOffer.split(":");
+			const expected = `https://github.com/X-noZ-air/learnharness/releases/download/${tag}/learnharness-source.tar.gz`;
+			const checkSource = async (selector, visibleCommit) => {
+				await page.waitForSelector(selector, { visible: true });
+				const link = await page.$eval(selector, element => ({
+					href: element.href, label: element.querySelector("span")?.textContent,
+					visibleCommit: element.querySelector("code")?.textContent, commit: element.querySelector("code")?.title,
+				}));
+				assert.deepEqual(link, { href: expected, label: "Source code of this version", visibleCommit, commit });
+			};
+			await checkSource('aside [data-testid="source-code-link"]', commit.slice(0, 12));
+			await page.locator('[data-testid="settings-entry"]').click();
+			await page.locator('[data-testid="settings-nav-about"]').click();
+			await checkSource('[data-testid="section-about"] [data-testid="source-code-link"]', commit);
+			await closeSettings();
+			evidence.assertions.push("Sidebar and About offer the source archive and report the exact packaged commit");
+		}
 		await openPlugins();
 		const warning = await page.$eval('[data-testid="section-plugins"]', element => element.textContent);
 		for (const copy of ["trusted local code", "broad file and network access", "not sandboxed", "restarting LearnHarness", "disabled by default"]) assert.ok(warning.includes(copy), `Missing trust/default-state warning: ${copy}`);
