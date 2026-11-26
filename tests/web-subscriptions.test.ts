@@ -138,3 +138,73 @@ test("web ChatGPT login supplies only an opaque browser action; cancel/replaceme
 		assert(target.searchParams.has("state")); assert(target.searchParams.has("code_challenge"));
 	} finally { owner.close(); await fs.rm(scratch, { recursive: true, force: true }); }
 });
+
+test("drain waits for a device sign-in through its bound browser action and durable credential save", async () => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "lh-device-drain-"));
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(scratch, "unit.sock");
+	const challenge = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<OAuthCredential>();
+	const owner = createWebSubscriptionOwner({ directory: scratch, sdk: fakeSDK(async (_id, interaction) => {
+		interaction.notify({ type: "device_code", userCode: "FIXTURE", verificationUri: "https://example.invalid/verify" });
+		challenge.resolve();
+		return finish.promise;
+	}) });
+	const origin = "http://localhost";
+	try {
+		const login = owner.control("xai", { op: "login" }, origin);
+		await challenge.promise;
+		const state = control("drain");
+		assert.equal(state.drained, false);
+		assert.equal(state.counts["sign-in"], 1);
+		await assert.rejects(owner.control("xai", { op: "login" }, origin), /maintenance/);
+		const pending = (await owner.native.status()).find((p: {providerId: string}) => p.providerId === "xai")!.interaction;
+		await assert.rejects(owner.control("xai", { op: "open", attemptId: "stale", actionId: pending.browser.id }, origin));
+		const action = await owner.control("xai", { op: "open", attemptId: pending.attemptId, actionId: pending.browser.id }, origin);
+		const id = new URL(action.browserAction!, origin).searchParams.get("id")!;
+		assert.equal(await owner.takeBrowserAction(id, origin), "https://example.invalid/verify");
+		finish.resolve(credentials("xai")); await login;
+		assert.equal(control("status", state.generation).drained, true);
+		assert.ok(JSON.parse(await fs.readFile(path.join(scratch, "xai-credentials.json"), "utf8")).credential);
+	} finally {
+		if (control("status").mode === "draining") control("resume");
+		owner.close();
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+		await fs.rm(scratch, { recursive: true, force: true });
+	}
+});
+
+test("a pending web sign-in remains visible and can finish through its local callback during drain", async () => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "unit.sock");
+	const origin = "http://localhost:3000";
+	try {
+		const response = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "login" }, origin));
+		assert.equal(response.status, 200);
+		const { browserAction } = await response.json();
+		const hold = control("drain");
+		assert.equal(hold.counts["sign-in"], 1);
+		const status = await subscriptionControlsResponse(request(undefined, origin));
+		assert.equal((await status.json()).chatgpt.pending, true);
+		const late = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "login" }, origin));
+		assert.equal(late.status, 503);
+		const launch = await subscriptionBrowserResponse(new Request(origin + browserAction, {
+			headers: { host: new URL(origin).host, "sec-fetch-site": "same-origin" },
+		}));
+		assert.equal(launch.status, 303);
+		const parameters = new URL(launch.headers.get("location")!).searchParams;
+		const callback = new URL(parameters.get("redirect_uri")!);
+		assert.equal(callback.hostname, "127.0.0.1");
+		callback.searchParams.set("state", parameters.get("state")!);
+		callback.searchParams.set("error", "access_denied");
+		assert.equal((await originalFetch(callback)).status, 200);
+		assert.equal(control("status", hold.generation).drained, true);
+	} finally {
+		if (control("status").mode === "draining") control("resume");
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	}
+});

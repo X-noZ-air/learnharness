@@ -78,6 +78,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
+      - run: node scripts/smoke-maintenance.mjs
 
   standalone:
     needs: validate-candidate
