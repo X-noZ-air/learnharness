@@ -62,7 +62,7 @@ import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/sr
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
 const SIDEBAR_AUTOCLOSE = 928;
-const NARROW_QUERY = "(width < 40rem)";
+const NARROW_QUERY = "(width < 640px)";
 
 // Module scope, guarded for SSR (the server has no navigator).
 const IS_ELECTRON = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
@@ -257,6 +257,7 @@ export function SidebarToggle() {
 				size="icon"
 				aria-label="Open sidebar"
 				aria-expanded={open}
+				aria-haspopup={narrowViewport ? "dialog" : undefined}
 				aria-hidden={open && !narrowViewport}
 				tabIndex={open && !narrowViewport ? -1 : 0}
 				onClick={(event) => {

@@ -1509,9 +1509,9 @@ export function GraphView({
 		<div className="relative h-full w-full">
 			{isEmpty ? (
 				// The empty graph keeps the first action clear without zero-valued statistics.
-				<div className="flex h-full w-full items-center justify-center px-4">
-					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
-						<WaypointsIcon className="size-10 opacity-40" strokeWidth={1.25} />
+				<div className="flex h-full w-full items-center justify-center px-4 narrow:[@media(max-height:27rem)]:pb-44 narrow:[@media(max-height:27rem)]:pt-12">
+					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground narrow:[@media(max-height:27rem)]:gap-1">
+						<WaypointsIcon className="size-10 opacity-40 narrow:[@media(max-height:27rem)]:hidden" strokeWidth={1.25} />
 						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
 						<div className="max-w-sm text-sm">
 							<p>Start a session to begin learning.</p>
