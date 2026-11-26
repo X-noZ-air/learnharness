@@ -43,6 +43,8 @@ class GitHub:
                 "User-Agent": "learnharness-werft-updates",
             },
         )
+        if self.repo == UPSTREAM and method != "GET":
+            raise RuntimeError("Upstream API is read-only")
         if self.token:
             request.add_unredirected_header("Authorization", f"Bearer {self.token}")
         try:

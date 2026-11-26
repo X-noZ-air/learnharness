@@ -421,7 +421,7 @@ def complete(api, repo, journal, candidate, release, base, replay):
             handoff = api.dispatch("werft-release.yml", PRODUCT_BASE, {
                 "merge_sha": merge_sha, "upstream_tag": release["tag"],
             })
-            outcome["release"] = handoff["html_url"]
+            outcome["release"] = f"https://github.com/{FORK}/actions/runs/{handoff['workflow_run_id']}"
 
     journal.data.update(accepted=release, candidate=None,
                         last_successful_base_sha=merge_sha, outcome=outcome)
@@ -436,6 +436,13 @@ def complete(api, repo, journal, candidate, release, base, replay):
 
 def integrate(api, upstream, repo, journal, release, base, replay, retry):
     base_sha = api.branch_sha(base)
+    active = journal.data["candidate"]
+    last_refusal = journal.data["last_refusal"]
+    if active and active["tag"] == release["tag"] and active["base_sha"] != base_sha and not (
+        last_refusal and last_refusal["candidate_commit"] == active["sha"]
+        and last_refusal["reason"] == "base_moved"
+    ):
+        raise Refusal("base_moved", "check_base", expected=active["base_sha"], observed=base_sha)
     repo.fork_branch(base, base_sha)
     repo.upstream_tag(journal.data["accepted"])
     repo.upstream_tag(release)
@@ -466,7 +473,8 @@ def integrate(api, upstream, repo, journal, release, base, replay, retry):
         })
         candidate.update(run_id=run["workflow_run_id"], controller=controller)
         journal.save()
-        api.status(candidate["sha"], "pending", "Werft candidate CI dispatched", run["html_url"])
+        run_url = f"https://github.com/{FORK}/actions/runs/{candidate['run_id']}"
+        api.status(candidate["sha"], "pending", "Werft candidate CI dispatched", run_url)
     run = wait_for_ci(api, candidate, base, candidate["controller"])
     observe(upstream, journal, stable_releases(upstream), version(release["tag"]))
     assert_pr(api.request(f"pulls/{pr['number']}"), candidate, base)
@@ -495,16 +503,22 @@ def record_refusal(api, journal, failure, current_tag):
         "upstream_tag": tag, "candidate_commit": sha, "details": failure.details,
         "recorded_at": now(), "run_url": target_url,
     }
+    previous = journal.data["last_refusal"]
+    if previous and all(previous[key] == refusal[key] for key in (
+        "reason", "step", "upstream_tag", "candidate_commit", "details",
+    )):
+        print(json.dumps(previous), flush=True)
+        return
     journal.data.update(last_refusal=refusal, outcome=refusal)
     journal.save()
-    if sha and str(failure) != "checks_pending":
+    if sha and active["pr"] and not active["merge_sha"] and str(failure) != "checks_pending":
         api.status(sha, "failure", f"Werft update refused: {failure}", target_url)
     print(json.dumps(refusal), flush=True)
 
 
 def main():
     api = fork_api()
-    upstream = GitHub(UPSTREAM)
+    upstream = GitHub(UPSTREAM, api.token)
     repo = Repository(api.token)
     if api.request()["id"] != FORK_ID:
         raise RuntimeError("Fork identity changed")
@@ -526,8 +540,8 @@ def main():
         through = (float("inf"),)
         seed = SEED
     base_sha = api.branch_sha(base)
-    releases = stable_releases(upstream)
     if replay:
+        releases = stable_releases(upstream)
         if start not in releases:
             raise RuntimeError("Replay seed must be a published stable release")
         seed = resolve_release(upstream, start, releases[start])
@@ -538,7 +552,7 @@ def main():
         if active and (active["merge_sha"] or get_merge(api, active, base)):
             current_tag = active["tag"]
             complete(api, repo, journal, active, journal.data["seen"][current_tag], base, replay)
-        observe(upstream, journal, releases, through, refresh=True)
+        observe(upstream, journal, stable_releases(upstream), through, refresh=True)
         for tag in sorted(journal.data["seen"], key=version):
             if version(journal.data["accepted"]["tag"]) < version(tag) <= through:
                 current_tag = tag

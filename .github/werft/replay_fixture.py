@@ -29,7 +29,7 @@ def main():
     if fixture in {"clean", "conflict"}:
         if current:
             raise RuntimeError("Choose a fresh test base")
-        upstream = GitHub(UPSTREAM)
+        upstream = GitHub(UPSTREAM, api.token)
         start = os.environ["REPLAY_START"]
         seed = resolve_release(upstream, start, stable_releases(upstream)[start])
         repo.upstream_tag(seed)
