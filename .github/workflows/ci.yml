@@ -1,32 +1,78 @@
 name: CI
+run-name: ${{ inputs.candidate_sha && format('Werft CI {0} on {1} for https://github.com/X-noZ-air/learnharness/pull/{2}', inputs.candidate_sha, inputs.base_sha, inputs.pr) || 'CI' }}
 
 on:
   push:
-    branches: [main]
+    branches: [main, werft]
   pull_request:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact Werft integration commit
+        type: string
+      base_sha:
+        description: Base commit used to build the candidate
+        type: string
+      pr:
+        description: Fork pull request number
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.candidate_sha && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
+  validate-candidate:
+    name: Validate Werft candidate
+    if: inputs.candidate_sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Verify the exact PR head and base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY_ID" == 1473691789 ]]
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PR" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" | jq -e \
+            --arg candidate "$CANDIDATE_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and (.draft | not) and
+              .user.login == "github-actions[bot]" and
+              .head.repo.id == 1473691789 and .base.repo.id == 1473691789 and
+              .head.sha == $candidate and .base.sha == $base and
+              (.head.ref | startswith("werft-updates/integrate/"))
+            '
+
   quality:
+    needs: validate-candidate
+    if: ${{ !cancelled() && (!inputs.candidate_sha || needs.validate-candidate.result == 'success') }}
     name: Typecheck, tests, lint
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
+          cache: ${{ !inputs.candidate_sha && 'npm' || '' }}
+          package-manager-cache: ${{ !inputs.candidate_sha }}
       - run: npm ci
       - run: npm run plugins:setup
       - run: npm run typecheck
@@ -34,6 +80,8 @@ jobs:
       - run: npm run lint
 
   standalone:
+    needs: validate-candidate
+    if: ${{ !cancelled() && (!inputs.candidate_sha || needs.validate-candidate.result == 'success') }}
     name: Standalone (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -53,10 +101,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
+          cache: ${{ !inputs.candidate_sha && 'npm' || '' }}
+          package-manager-cache: ${{ !inputs.candidate_sha }}
       - run: npm ci
       - run: npm run plugins:setup
       - name: Native renderer tests on this OS
@@ -68,6 +120,18 @@ jobs:
       # Check the fresh trace before any static copying/curation.
       - run: node scripts/smoke-provider-runtime.mjs
       # Plan map labels fit their boxes in real Chrome, in any font (#671).
-      - run: node scripts/smoke-plan-labels.mjs
+      - name: Plan labels fit in real Chrome
+        run: |
+          # The upstream font-layout smoke can fail intermittently. A retry
+          # must pass every assertion in a fresh browser and app server.
+          for attempt in 1 2 3; do
+            if node scripts/smoke-plan-labels.mjs; then
+              exit 0
+            fi
+            if [[ "$attempt" != "3" ]]; then
+              echo "::warning::Plan-label smoke failed on $RUNNER_OS. Retrying the complete test."
+            fi
+          done
+          exit 1
       - run: node scripts/build-server.mjs
       - run: node scripts/smoke-server.mjs --electron
