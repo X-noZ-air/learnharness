@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 class DrainTimeout extends Error {}
+class SocketTimeout extends Error {}
 
 async function request(socket, command, deadline = Infinity) {
 	const remaining = deadline - performance.now();
@@ -11,7 +12,7 @@ async function request(socket, command, deadline = Infinity) {
 		const peer = createConnection(socket);
 		let reply = "";
 		const timer = setTimeout(() => {
-			peer.destroy(remaining <= 5000 ? new DrainTimeout() : new Error("Maintenance socket timed out"));
+			peer.destroy(remaining <= 5000 ? new DrainTimeout() : new SocketTimeout("Maintenance socket timed out"));
 		}, Math.min(5000, Math.ceil(remaining)));
 		peer.once("close", () => clearTimeout(timer));
 		peer.setEncoding("utf8").on("error", reject);
@@ -32,16 +33,34 @@ async function request(socket, command, deadline = Infinity) {
 
 async function drain(socket, generation, holdMs, timeout) {
 	const deadline = performance.now() + timeout;
+	// The server starts the lease after receipt. Measuring from before send
+	// gives the caller a conservative deadline even for a buffered reply.
+	const period = holdMs ?? 60000;
+	let validUntil;
 	let status;
+	const renew = () => {
+		validUntil = performance.now() + period;
+		return request(socket, { op: "drain", generation, holdMs: period }, deadline);
+	};
 	try {
-		status = await request(socket, { op: "drain", generation, holdMs }, deadline);
-		while (!status.drained && !status.reasons.length && performance.now() < deadline) {
-			await delay(Math.min(100, Math.ceil(deadline - performance.now())));
-			status = await request(socket, { op: "drain", generation: status.generation, holdMs }, deadline);
+		status = await renew();
+		while (status.mode === "draining") {
+			generation = status.generation;
+			const remaining = Math.min(deadline, validUntil) - performance.now();
+			if (remaining <= 0) break;
+			if (status.drained) {
+				const reply = JSON.stringify(status);
+				if (performance.now() >= Math.min(deadline, validUntil)) break;
+				console.log(reply);
+				return;
+			}
+			if (status.reasons.length) break;
+			await delay(Math.min(100, period / 2, Math.ceil(remaining)));
+			if (performance.now() >= validUntil) break;
+			status = await renew();
 		}
-		if (status.drained && performance.now() < deadline) return status;
 	} catch (error) {
-		if (!(error instanceof DrainTimeout)) throw error;
+		if (!(error instanceof DrainTimeout) && !(error instanceof SocketTimeout && generation)) throw error;
 	}
 	process.exitCode = 2;
 	if (status?.mode === "draining") generation = status.generation;

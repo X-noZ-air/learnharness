@@ -7,13 +7,13 @@ import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { piModels } from "../src/agent/models.ts";
 import { toLlmMessages } from "../src/core/native-messages.ts";
-import { buildSubagentSteer } from "../src/core/contracts.ts";
+import { buildProbeHandoffSteer, buildSubagentSteer } from "../src/core/contracts.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../src/core/contracts/subscriptions.ts";
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lh-subscription-background-"));
 process.env.LH_DATA_DIR = path.join(directory, "data"); process.env.LH_AUTH_FILE = path.join(directory, "auth.json"); fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
 const { stores } = await import("../src/server/stores.ts");
 const { beginTurn, endTurn } = await import("../src/server/turn-liveness.ts");
-const { deliverJobResult, registerLiveAgent, unregisterLiveAgent, setTurnRunner, settleSteers, steerLiveChat, automaticFollowUpAllowed } = await import("../src/server/jobs.ts");
+const { deliverJobResult, discardChatDeliveries, registerLiveAgent, unregisterLiveAgent, setTurnRunner, settleSteers, steerLiveChat, automaticFollowUpAllowed } = await import("../src/server/jobs.ts");
 const { persistTurn } = await import("../src/server/turn-service.ts");
 const originalSend = Object.getOwnPropertyDescriptor(process, "send"), originalConnected = Object.getOwnPropertyDescriptor(process, "connected");
 const marker = process.env.LH_DESKTOP_SERVER, secret = process.env.LH_DESKTOP_API_SECRET;
@@ -37,9 +37,10 @@ after(() => {
 	if (marker === undefined) delete process.env.LH_DESKTOP_SERVER; else process.env.LH_DESKTOP_SERVER = marker;
 	if (secret === undefined) delete process.env.LH_DESKTOP_API_SECRET; else process.env.LH_DESKTOP_API_SECRET = secret;
 });
-for (const p of NATIVE_SUBSCRIPTIONS) for (const revokeAfterQueue of [false, true]) test(`${p.providerId}: foreground survives and automatic queue retains ownership with background ${revokeAfterQueue ? "revoked" : "off"}`, { timeout: 5000 }, async () => {
+for (const p of NATIVE_SUBSCRIPTIONS) for (const revokeAfterQueue of [false, true]) test(`${p.providerId}: foreground survives and automatic queue retains ownership with background ${revokeAfterQueue ? "revoked" : "off"}`, { timeout: 5000 }, async (t) => {
 	connection(p.providerId, revokeAfterQueue);
 	const chat = stores.chatStore.createChat("Fixture mixed queue"); const model = { ...piModels().getModels(p.providerId)[0]!, provider: p.logicalId };
+	t.after(() => discardChatDeliveries(chat.id));
 	stores.chatStore.saveSettings(chat.id, { model: { provider: p.logicalId, id: model.id } });
 	const job = stores.jobStore.createJob({ kind: "research", chatId: chat.id, toolCallId: "fixture-job-call" }); const result = { brief: "Fixture helper result", sources: [] };
 	stores.jobStore.updateJob(job.id, { status: "done", result, delivery: { kind: "result", status: "pending" } }); const steer = buildSubagentSteer(job, result); const contexts: string[] = [];
@@ -59,4 +60,37 @@ for (const p of NATIVE_SUBSCRIPTIONS) for (const revokeAfterQueue of [false, tru
 	unregisterLiveAgent(chat.id); endTurn(chat.id); settleSteers(chat.id, persisted); await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(wakes, 0); assert.equal(stores.jobStore.getJob(job.id)!.status, "done"); assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
 	connection(p.providerId, true); await delivered; assert.equal(wakes, 1); assert.equal(stores.jobStore.getJob(job.id)!.status, "done");
+});
+
+test("a probe handoff waiting for subscription consent postpones drain and reaches the teacher after resume", async (t) => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "fixture.sock");
+	t.after(() => {
+		if (control("status").mode === "draining") control("resume");
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	const provider = NATIVE_SUBSCRIPTIONS[0]!;
+	connection(provider.providerId, false);
+	const chat = stores.chatStore.createChat("Synthetic probe handoff");
+	t.after(() => discardChatDeliveries(chat.id));
+	const model = piModels().getModels(provider.providerId)[0]!;
+	stores.chatStore.saveSettings(chat.id, { model: { provider: provider.logicalId, id: model.id } });
+	const handoff = buildProbeHandoffSteer(chat.id);
+	setTurnRunner(async (id, input) => {
+		if (input.type === "steers") stores.chatStore.saveMessages(id, input.steers);
+		return 200;
+	});
+	const delivered = deliverJobResult(handoff);
+	await new Promise(resolve => setImmediate(resolve));
+	const held = control("drain");
+	assert.deepEqual(held.counts, {});
+	assert.equal(held.drained, false);
+	assert.deepEqual(held.reasons, ["parked-probe-handoff"]);
+	control("resume", held.generation);
+	connection(provider.providerId, true);
+	await delivered;
+	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, [handoff]);
+	assert.deepEqual(control("status").reasons, []);
 });

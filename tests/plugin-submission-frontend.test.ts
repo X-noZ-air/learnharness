@@ -181,3 +181,17 @@ test("model retry reuses accepted transformed history and never re-intercepts le
 	assert.deepEqual(posted, [{ chatId: "chat", input: { type: "text", text: "accepted transformed text" } }, { chatId: "chat", input: { type: "retry" } }]);
 	assert.equal(model.getState().nativeMessages[0]?.role, "user");
 });
+
+test("steer displays the maintenance explanation only for a matching 503 refusal", async () => {
+	for (const [status, code, expected] of [
+		[412, "submission-stale", "The steer failed (412)."],
+		[412, "maintenance", "The steer failed (412)."],
+		[503, "other", "The steer failed (503)."],
+		[503, "maintenance", "Retry after maintenance."],
+	] as const) {
+		const model = new SessionModel({ chatId: "fixture", initialMessages: [], fetch: async () =>
+			Response.json({ code, error: "Retry after maintenance." }, { status }) });
+		assert.equal(await model.steer("keep my draft"), false);
+		assert.equal(model.getState().error?.message, expected);
+	}
+});

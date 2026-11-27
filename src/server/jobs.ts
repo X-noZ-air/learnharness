@@ -128,7 +128,7 @@ interface WakeState {
 	 *  markers to this agent's follow-up queue. */
 	liveAgents: Map<string, Agent>;
 	/** Chats whose pump loop is currently active (serialization per chat). */
-	pumping: Set<string>;
+	pumping: Map<string, Lease>;
 	/** Throttle bookkeeping for the stale-job sweep. */
 	lastSweepAt: number;
 	stopConnectionWatch?: () => void;
@@ -141,7 +141,7 @@ interface LhWakeGlobal {
 
 function state(): WakeState {
 	const g = globalThis as typeof globalThis & LhWakeGlobal;
-	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Set(), lastSweepAt: 0, automaticDeferred: new WeakSet() });
+	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Map(), lastSweepAt: 0, automaticDeferred: new WeakSet() });
 }
 
 /** chat-handler wires this at module init: its adapter around handleChatRequest. */
@@ -497,7 +497,7 @@ function pump(chatId: string): Promise<void> {
 }
 async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 	const s = state();
-	s.pumping.add(chatId);
+	s.pumping.set(chatId, lease);
 	let parked = false;
 	try {
 		for (let attempt = 0; ; ) {
@@ -640,6 +640,17 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some((e) => e.handedTo === undefined && !e.waking && !e.deferred)) void pump(chatId);
 	}
 }
+
+// A job can restore its pending result from disk. A probe handoff has only
+// its queue entry until the teacher takes it. An active pump already counts
+// as work; a parked handoff needs its own reason to postpone a switch.
+refuseDrainWhile("parked-probe-handoff", () => {
+	const s = state();
+	for (const [chatId, queue] of s.queues) {
+		if (!s.pumping.get(chatId)?.active && queue.some(entry => entry.steer.customType === "probe-handoff")) return true;
+	}
+	return false;
+});
 
 // An accepted learner steer exists only in this process until a run saves it.
 // With no run to carry it, a stop would lose it.

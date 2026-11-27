@@ -123,6 +123,7 @@ export function control(op: string, generation?: string, holdMs: number = HOLD_M
 	const s = state();
 	if (generation !== undefined && generation !== s.generation) throw new Error("Stale maintenance generation");
 	if (op === "drain") {
+		if (s.mode === "startup-hold") throw new Error("Release the startup hold before draining");
 		if (!Number.isSafeInteger(holdMs) || holdMs < 1 || holdMs > MAX_HOLD_MS) throw new Error("Invalid hold period");
 		if (s.mode === "draining" && generation === undefined) throw new Error("Drain renewal requires its generation");
 		if (s.mode === "open") {
@@ -130,11 +131,9 @@ export function control(op: string, generation?: string, holdMs: number = HOLD_M
 			s.generation = randomUUID();
 		}
 		// Only its holder keeps a drain alive. A caller that dies cannot leave admission closed.
-		if (s.mode === "draining") {
-			clearTimeout(s.holdTimer);
-			s.holdTimer = setTimeout(() => { if (s.mode === "draining") open(s); }, holdMs);
-			s.holdTimer.unref();
-		}
+		clearTimeout(s.holdTimer);
+		s.holdTimer = setTimeout(() => { if (s.mode === "draining") open(s); }, holdMs);
+		s.holdTimer.unref();
 	} else if (op === "release" || op === "resume") {
 		if (s.mode !== (op === "release" ? "startup-hold" : "draining")) throw new Error("Command does not match the active hold");
 		open(s);

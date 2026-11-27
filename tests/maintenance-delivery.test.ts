@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
+import { createServer, type Socket } from "node:net";
 import path from "node:path";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -261,7 +262,7 @@ test("an admitted chat request reconciles its saved question after a hold begins
 	assert.equal(held.counts["write-request"], 1);
 	body.resolve();
 	assert.equal((await sending).status, 503, "the request reaches the unconfigured model gate");
-	assert.equal(stores.chatStore.getChat(owner.id)!.messages.find(message => message.role === "toolResult")?.details?.reason, "unreadable-protocol");
+	assert.partialDeepStrictEqual(stores.chatStore.getChat(owner.id)!.messages.find(message => message.role === "toolResult")?.details, { reason: "unreadable-protocol" });
 	assert.equal(control("status", held.generation).drained, true);
 });
 
@@ -284,4 +285,61 @@ test("a failed plugin runtime composition leaves no startup work behind", () => 
 		fs.rmSync(misplaced, { recursive: true, force: true });
 		if (!existed) fs.rmSync(code, { recursive: true, force: true });
 	}
+});
+
+test("the drain command cannot acquire a startup hold", () => {
+	const result = freshProcess(`
+		const { listenForMaintenance } = await import('./src/server/maintenance-socket.ts');
+		const { control } = await import('./src/core/maintenance.ts');
+		const { execFile } = await import('node:child_process');
+		await listenForMaintenance();
+		const before = control('status');
+		const code = await new Promise(resolve => execFile(process.execPath, ['scripts/maintenance.mjs', 'drain'], error => resolve(error?.code ?? 0)));
+		done({ code, mode: control('status', before.generation).mode, released: control('release', before.generation).mode });
+	`, { LH_DATA_DIR: process.env.LH_DATA_DIR!, LH_MAINTENANCE_STARTUP_HOLD: "1" });
+	assert.deepEqual(result, { code: 1, mode: "startup-hold", released: "open" });
+});
+
+type Command = { op: string; generation?: string; holdMs?: number };
+async function throughDelayedSocket(handle: (command: Command, socket: Socket) => void, args: string[]) {
+	const socket = path.join(directory, "delayed.sock");
+	const server = createServer(peer => {
+		let buffer = "";
+		peer.setEncoding("utf8").on("data", chunk => {
+			buffer += chunk;
+			if (buffer.includes("\n")) handle(JSON.parse(buffer), peer);
+		});
+	});
+	server.listen(socket);
+	await once(server, "listening");
+	try { return await cli("drain", "--socket", socket, ...args); }
+	finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}
+
+test("a ready reply delivered after its requested hold expired is refused", async () => {
+	const result = await throughDelayedSocket((command, peer) => {
+		try {
+			const status = control(command.op, command.generation, command.holdMs);
+			const reply = () => peer.end(JSON.stringify(status) + "\n");
+			if (command.op === "drain") setTimeout(reply, 100);
+			else reply();
+		} catch { peer.end(JSON.stringify({ error: "stale generation" }) + "\n"); }
+	}, ["--timeout-ms", "3000", "--hold-ms", "20"]);
+	assert.equal(result.code, 2);
+	assert.equal(result.status.mode, "open");
+});
+
+test("a stalled renewal releases the confirmed drain generation and exits with code 2", async () => {
+	const lesson = beginWork("main-turn");
+	const ops: string[] = [];
+	try {
+		const result = await throughDelayedSocket((command, peer) => {
+			ops.push(command.op);
+			const status = control(command.op, command.generation, command.holdMs);
+			if (ops.length !== 2) peer.end(JSON.stringify(status) + "\n");
+		}, ["--timeout-ms", "30000"]);
+		assert.equal(result.code, 2);
+		assert.deepEqual(ops, ["drain", "drain", "resume"]);
+		assert.equal(maintenanceStatus().mode, "open");
+	} finally { lesson.end(); }
 });

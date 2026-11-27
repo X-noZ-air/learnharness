@@ -266,12 +266,12 @@ export interface SessionModelOptions extends SessionModelDeps {
 }
 
 /** Keep structured setup errors available to their existing UI handlers. */
-function maintenanceMessage(text: string): string {
+function maintenanceMessage(text: string): string | undefined {
 	try {
 		const body = JSON.parse(text);
 		if (body?.code === "maintenance" && typeof body.error === "string") return body.error;
 	} catch { /* Other transports can return plain text. */ }
-	return text;
+	return undefined;
 }
 
 export class SessionModel {
@@ -1008,7 +1008,7 @@ export class SessionModel {
 						if (typeof refusal?.error === "string" && refusal.error.length > 0) message = refusal.error;
 					} catch { /* Non-envelope failures keep their original text. */ }
 				}
-				throw new Error(maintenanceMessage(message));
+				throw new Error(maintenanceMessage(message) ?? message);
 			}
 			accepted = true;
 			// Acceptance fences reads belonging to THIS action, but a delayed
@@ -1107,7 +1107,8 @@ export class SessionModel {
 			}
 			dropSteer();
 			settleDelivery();
-			this.setError(maintenanceMessage(await res.text()) || `The steer failed (${res.status}).`);
+			const explanation = res.status === 503 ? maintenanceMessage(await res.text()) : undefined;
+			this.setError(explanation || `The steer failed (${res.status}).`);
 		} catch (err) {
 			dropSteer(); settleDelivery();
 			this.setError((err as Error).message);
