@@ -1,0 +1,22 @@
+{
+  "accepted": {
+    "release_id": 453439314,
+    "sha": "0292b85bcce080cc685f85d174a8cb2cc553a0ad",
+    "tag": "v0.7.0"
+  },
+  "base_ref": "werft",
+  "candidate": null,
+  "last_refusal": null,
+  "last_successful_base_sha": "fc8d9a1dfd8f945e40ea2f9cfd4bcb78a748ba91",
+  "last_successful_poll_at": "2026-11-27T01:55:24+00:00",
+  "outcome": null,
+  "schema": 1,
+  "seen": {
+    "v0.7.0": {
+      "release_id": 453439314,
+      "sha": "0292b85bcce080cc685f85d174a8cb2cc553a0ad",
+      "tag": "v0.7.0"
+    }
+  },
+  "upstream_repository_id": 1422597771
+}
