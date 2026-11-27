@@ -16,7 +16,9 @@ Each release gets one integration branch and one pull request. The branch is
 built as a two-parent merge of the current base and the upstream tag. The poller
 dispatches **CI** on its own trusted ref with the exact candidate SHA, base SHA,
 and pull request. The quality job and all three platform jobs use that candidate
-with read-only permissions and no persisted checkout credentials. The trusted
+with read-only permissions, no persisted checkout credentials, and npm caching
+disabled. On macOS, CI retries the full plan-label browser smoke up to twice when
+it fails. Three failed attempts leave the job red. The trusted
 poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
 The separate **Werft feature CI status** reporter sets that context for ordinary
 pull requests. A maintainer review at the current head is required for changes
