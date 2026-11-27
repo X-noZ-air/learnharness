@@ -399,7 +399,7 @@ describe("desktop release workflow", () => {
 		}
 	});
 
-	it("pairs Icon Composer packaging with macOS 26 and Xcode selection, retaining macOS 15 CI", () => {
+	it("pairs Icon Composer packaging with macOS 26 and Xcode selection", () => {
 		const mac = packaging.strategy?.matrix.include.find(entry => entry.platform === "mac-arm64");
 		assert.equal(mac?.os, "macos-26", "actool's .icon compiler needs macOS 26 host frameworks, not just newer Xcode");
 		assert.equal(mac?.builder_args, "--mac --arm64");
@@ -411,10 +411,15 @@ describe("desktop release workflow", () => {
 		assert.equal(xcode?.with?.["xcode-version"], "latest-stable");
 		const buildIndex = packaging.steps.findIndex(step => step.run?.includes("electron-builder"));
 		assert.ok(buildIndex > xcodeIndex, "select Xcode before packaging compiles the icon");
+	});
 
+	it("requires Linux x64 and Windows x64 standalone jobs in CI", () => {
 		const ci = yaml.load(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-		const ciMac = ci.jobs.standalone?.strategy?.matrix.include.find(entry => entry.platform === "mac-arm64");
-		assert.equal(ciMac?.os, "macos-15", "ordinary CI keeps older macOS build/boot coverage");
+		const targets = ci.jobs.standalone?.strategy?.matrix.include;
+		assert.deepEqual(targets?.map(({ os, platform }) => [platform, os]).sort(), [
+			["linux-x64", "ubuntu-24.04"],
+			["windows-x64", "windows-2025"],
+		]);
 	});
 
 	it("creates exactly one unpublished draft when none matches", async () => {
