@@ -451,6 +451,7 @@ function SessionsSidebar() {
 	const interactions = useInteractionLayers();
 	const { open, toggle, narrowViewport, closeDrawer } = useSidebar();
 	const drawerRef = useRef<HTMLElement>(null);
+	const inlineCloseRef = useRef<HTMLButtonElement>(null);
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -912,6 +913,7 @@ function SessionsSidebar() {
 					</Hint>
 					<Hint label="Close sidebar" action="toggle-sidebar">
 						<Button
+							ref={narrowViewport ? undefined : inlineCloseRef}
 							variant="ghost"
 							size="icon"
 							aria-label="Close sidebar"
@@ -1249,6 +1251,7 @@ function SessionsSidebar() {
 			open={open}
 			onClose={closeDrawer}
 			initialFocusRef={drawerRef}
+			returnFocusFallback={inlineCloseRef}
 			aria-label="Sessions"
 			backdropProps={{ "data-testid": "sidebar-backdrop", className: "fixed inset-0 bg-black/40" }}
 			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background pt-[var(--lh-safe-top)] pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] shadow-xl" />}

@@ -92,7 +92,6 @@
 	   and fixed surfaces — the app shell itself stays inside the browser's
 	   own insets while viewport-fit=cover is not adopted. */
 	--lh-safe-top: env(safe-area-inset-top, 0px);
-	--lh-safe-right: env(safe-area-inset-right, 0px);
 	--lh-safe-bottom: env(safe-area-inset-bottom, 0px);
 	--lh-safe-left: env(safe-area-inset-left, 0px);
 }
