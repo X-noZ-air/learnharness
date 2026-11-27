@@ -965,6 +965,7 @@ export function observeNodeCardPosition(card: HTMLDivElement, container: HTMLDiv
 
 export function GraphView({
 	chainSelectOpen = false,
+	sessionStartFailed = false,
 	practiceSelection,
 	onPracticeSelectionChange,
 	onChainSelectClose,
@@ -979,6 +980,7 @@ export function GraphView({
 	 *  reflects it live. chainSelectOpen still drives the picker mode
 	 *  (Done instead of Delete). */
 	chainSelectOpen?: boolean;
+	sessionStartFailed?: boolean;
 	practiceSelection?: ReadonlySet<string>;
 	onPracticeSelectionChange?: (nodes: { id: string; name: string; statement: string }[]) => void;
 	onChainSelectClose?: () => void;
@@ -1513,7 +1515,8 @@ export function GraphView({
 					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground narrow:short:gap-1">
 						<WaypointsIcon className="size-10 opacity-40 narrow:short:hidden" strokeWidth={1.25} />
 						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
-						<div className="max-w-sm text-sm">
+						{/* The short home dock uses this space for the retry message. */}
+						<div className={`max-w-sm text-sm ${sessionStartFailed ? "narrow:short:invisible" : ""}`}>
 							<p>Start a session to begin learning.</p>
 							<p className="mt-1 text-xs">Attach your material with the paperclip or drag and drop.</p>
 						</div>

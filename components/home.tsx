@@ -191,6 +191,7 @@ export function Home({
 				{rendering ? (
 					<GraphView
 						folderFilterSlot={folderFilterSlot}
+						sessionStartFailed={startError}
 						chainSelectOpen={chainSelectOpen}
 						practiceSelection={pickedIds}
 						onPracticeSelectionChange={setPracticeProps}
@@ -211,8 +212,8 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)]">
-				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0">
+			<div className={`pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)] ${startError ? "narrow:short:pb-0" : ""}`}>
+				<div className={`pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0 ${startError ? "narrow:short:[&>:last-child]:pt-0" : ""}`}>
 					{/* The pick bar (owner vision, 2026-10-04): the chain
 					    table's selection is PERSISTENT — picked
 					    propositions show here as a count + Clear in EITHER
@@ -245,7 +246,7 @@ export function Home({
 							)}
 						/>
 					</div>
-					{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:shrink-0">{OPENING_PROMPT_FAILURE}</p>}
+					{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:shrink-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
 					<form
 						data-attachment-composer=""
 						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg narrow:short:min-h-[3.625rem]"

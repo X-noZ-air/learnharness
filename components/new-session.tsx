@@ -198,7 +198,8 @@ export function DraftShell({
 										setup={setupCta}
 									/>
 								</div>
-								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:shrink-0">{OPENING_PROMPT_FAILURE}</p>}
+								{/* A short draft can reach the floating sidebar toggle's row. */}
+								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:ml-12 narrow:short:shrink-0">{OPENING_PROMPT_FAILURE}</p>}
 								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)]">
 									<Composer
 										busy={busy}

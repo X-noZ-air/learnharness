@@ -374,11 +374,57 @@ async function submitDraftWithKeyboardOpen(page, text) {
 	await page.setViewport(phoneViewport);
 }
 
+const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+async function checkDraftRetryLayout(page) {
+	const alert = 'main [role="alert"]';
+	await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes("Try sending again"), {}, alert);
+	await page.waitForSelector(send + ":enabled");
+	const message = await bounds(page, alert);
+	assert.ok(!overlaps(message, await bounds(page, drawerOpener, 44)), "the retry alert overlaps the drawer button");
+	await checkVerticalHitTargets(page, alert);
+	await layout(page, keyboardViewport);
+	await checkVerticalHitTargets(page, input);
+	await checkVerticalHitTargets(page, send);
+	return message;
+}
+
+async function checkHomeDraftRetry(page) {
+	const attempts = [];
+	page.on("request", request => {
+		if (request.method() === "POST" && new URL(request.url()).pathname === "/api/chats") {
+			attempts.push(request.postData());
+			if (attempts.length === 1) return request.respond({ status: 503 });
+		}
+		return request.continue();
+	});
+	await page.setRequestInterception(true);
+	const draft = await typeDraftWithKeyboardOpen(page, opening("short viewport"));
+	await action(page, send, true);
+	const message = await checkDraftRetryLayout(page);
+	const guidance = await page.evaluate(() =>
+		Array.from(document.querySelectorAll("main p"))
+			.filter(p => p.textContent === "Start a session to begin learning." || p.textContent.startsWith("Attach your material"))
+			.filter(p => getComputedStyle(p).visibility === "visible")
+			.map(p => p.getBoundingClientRect().toJSON()));
+	assert.ok(guidance.every(rect => !overlaps(rect, message)), "graph guidance overlaps the retry alert");
+	await bounds(page, '[data-testid="home-mode-switch"]');
+	await action(page, modelButton, true);
+	await page.waitForSelector(modelButton + '[aria-expanded="true"]');
+	await page.keyboard.press("Escape");
+	await page.waitForSelector(modelButton + '[aria-expanded="false"]');
+	await action(page, send, true);
+	await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
+	assert.equal(attempts.length, 2);
+	assert.equal(JSON.parse(attempts[0]).title, draft);
+	assert.equal(attempts[1], attempts[0], "the retry sends the original home draft");
+}
+
 async function checkHomeAndChatWithKeyboardOpen(origin) {
 	const { context, page } = await newClient(origin, phoneViewport);
 	try {
-		await submitDraftWithKeyboardOpen(page, opening("short viewport"));
-		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
+		await checkHomeDraftRetry(page);
+		await page.setViewport(phoneViewport);
 		await readText(page, lesson);
 
 		await submitDraftWithKeyboardOpen(page, followUp("short viewport"));
@@ -430,13 +476,7 @@ async function checkDraftRetry(origin) {
 		await page.setRequestInterception(true);
 		const draft = await typeDraftWithKeyboardOpen(page, "Practice squares after retrying session creation.");
 		await action(page, send, true);
-		const alert = 'main [role="alert"]';
-		await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes("Try sending again"), {}, alert);
-		await page.waitForSelector(send + ":enabled");
-		await checkVerticalHitTargets(page, alert);
-		await layout(page, keyboardViewport);
-		await checkVerticalHitTargets(page, input);
-		await checkVerticalHitTargets(page, send);
+		await checkDraftRetryLayout(page);
 
 		await action(page, send, true);
 		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
