@@ -394,7 +394,7 @@ export function createInteractionLayers() {
 				// which happened to be active when the new portal finally mounted.
 				opener = opening.opener;
 			}
-			if (elementEligible(opener)) { opener!.focus({ preventScroll: true }); return true; }
+			if (opener && opener !== opener.ownerDocument.body && elementEligible(opener)) { opener.focus({ preventScroll: true }); return true; }
 			if (fallback && elementEligible(fallback)) { fallback.focus({ preventScroll: true }); return true; }
 			const active = activeModal();
 			active?.focusInitial?.();

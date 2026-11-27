@@ -32,6 +32,7 @@ const backdrop = '[data-testid="sidebar-backdrop"]';
 const teaching = '[data-testid="new-session"]';
 const content = "[data-session-surface]";
 const modelButton = '[data-testid="stats-model"]';
+const keyboardViewport = { ...phoneViewport, height: 200 };
 
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), "lh-viewport-"));
 let app;
@@ -273,7 +274,7 @@ async function enterSidebar(page, viewport) {
 }
 
 async function checkDrawerRotation(page) {
-	await openDrawer(page);
+	await waitForFocus(page, drawer + " aside");
 	await page.setViewport(rotatedPhoneViewport);
 	await page.waitForSelector(drawer, { hidden: true });
 	await waitForFocus(page, `${inlineSidebar} ${close}`);
@@ -281,17 +282,62 @@ async function checkDrawerRotation(page) {
 	await sidebarClosed(page);
 }
 
-async function submitDraftWithKeyboardOpen(page, text) {
+async function typeDraftWithKeyboardOpen(page, text) {
 	await action(page, input, true);
-	const viewport = { ...phoneViewport, height: 200 };
-	await page.setViewport(viewport);
-	await page.keyboard.sendCharacter([text, ...Array(20).fill("Draft line")].join("\n"));
+	await page.setViewport(keyboardViewport);
+	const draft = [text, ...Array(20).fill("Draft line")].join("\n");
+	await page.keyboard.sendCharacter(draft);
 	await page.waitForSelector(send + ":enabled");
 	assert.ok(await page.$eval(input, editor => editor.scrollHeight > editor.clientHeight),
 		"long draft scrolls within the editor");
-	await layout(page, viewport);
+	await layout(page, keyboardViewport);
+	return draft;
+}
+
+async function submitDraftWithKeyboardOpen(page, text) {
+	await typeDraftWithKeyboardOpen(page, text);
 	await action(page, send, true);
 	await page.setViewport(phoneViewport);
+}
+
+async function checkDraftRetry(origin) {
+	const { context, page } = await newClient(origin, phoneViewport);
+	try {
+		await openDrawer(page);
+		await action(page, '[data-testid="new-session-practice"]', true);
+		await page.waitForFunction(() => location.pathname === "/chat/new" && location.search === "?mode=practice");
+		await sidebarClosed(page);
+
+		const attempts = [];
+		page.on("request", request => {
+			if (request.method() === "POST" && new URL(request.url()).pathname === "/api/chats") {
+				attempts.push(request.postData());
+				if (attempts.length === 1) return request.respond({ status: 503 });
+			}
+			return request.continue();
+		});
+		await page.setRequestInterception(true);
+		const draft = await typeDraftWithKeyboardOpen(page, "Practice squares after retrying session creation.");
+		await action(page, send, true);
+		await page.waitForFunction(() => document.querySelector('main [role="alert"]')?.textContent.includes("Try sending again"));
+		await page.waitForSelector(send + ":enabled");
+		await layout(page, keyboardViewport);
+		for (const selector of [input, send]) {
+			assert.ok(await page.$eval(selector, target => {
+				const { left, width, top, bottom } = target.getBoundingClientRect();
+				const x = left + width / 2;
+				return [top + 2, bottom - 2].every(y => target.contains(document.elementFromPoint(x, y)));
+			}), `${selector} is clipped after a failed start`);
+		}
+
+		await action(page, send, true);
+		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
+		assert.equal(attempts.length, 2);
+		assert.deepEqual(JSON.parse(attempts[0]), { title: draft, kind: "practice" });
+		assert.equal(attempts[1], attempts[0], "the retry sends the original practice draft");
+	} finally {
+		await context.close();
+	}
 }
 
 async function verifyDesktopPreference(page, viewport) {
@@ -323,7 +369,10 @@ async function checkLesson(origin, viewport) {
 	const { context, page } = await newClient(origin, viewport);
 	try {
 		if (narrow) await checkDrawer(page);
-		if (viewport === phoneViewport) await checkDrawerRotation(page);
+		if (viewport === phoneViewport) {
+			await openDrawer(page);
+			await checkDrawerRotation(page);
+		}
 		await enterSidebar(page, viewport);
 		await action(page, teaching, touch);
 		await page.waitForFunction(() => location.pathname === "/chat/new");
@@ -347,10 +396,20 @@ async function checkLesson(origin, viewport) {
 		assert.ok(modelRequests.some(body => body?.includes(opening(name))));
 		assert.ok(modelRequests.some(body => body?.includes(followUp(name))));
 
+		if (viewport === phoneViewport) {
+			await page.evaluate(() => document.activeElement.blur());
+			await waitForFocus(page, "body");
+			const modifier = await page.evaluate(() => /mac/i.test(navigator.platform || navigator.userAgent) ? "Meta" : "Control");
+			await page.keyboard.down(modifier);
+			await page.keyboard.press("b");
+			await page.keyboard.up(modifier);
+			await checkDrawerRotation(page);
+		}
+
 		if (narrow) await openDrawer(page);
 		await page.reload({ waitUntil: "domcontentloaded" });
 		if (narrow) await sidebarClosed(page);
-	else await waitForInlineSidebar(page);
+		else await waitForInlineSidebar(page);
 		await readText(page, lesson);
 		await readText(page, answer);
 		await layout(page, viewport);
@@ -418,6 +477,8 @@ try {
 		await checkLesson(origin, viewport);
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
 	}
+	await checkDraftRetry(origin);
+	console.log("412x200: practice draft retry passed");
 	assert.deepEqual(pageErrors, [], "uncaught errors in Chromium");
 } catch (error) {
 	console.error(appLogs);
