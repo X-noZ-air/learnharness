@@ -38,9 +38,8 @@ with read-only permissions, no persisted checkout credentials, and npm caching
 disabled. CI retries the full plan-label browser smoke up to twice on each
 platform. Three failed attempts leave the affected job red. The trusted
 poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
-The separate **Werft feature CI status** reporter posts the CI result to that
-context for the matching head of an ordinary pull request into `werft`, including
-changes to workflows and scripts.
+The separate **Werft feature CI status** reporter sets that context for ordinary
+pull requests, including changes to workflows and scripts, when CI succeeds.
 Firstmate reviews delivery automation before merging those pull requests. The
 upstream poller refuses upstream releases that change protected automation files.
 

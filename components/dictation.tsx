@@ -825,11 +825,20 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 					}}
 					disabled={disabled || blocked}
 					aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
+					data-dictation-error={error ? "" : undefined}
 					data-testid="dictation-toggle"
-					className="flex h-7 w-full min-w-11 items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground narrow:size-11 narrow:shrink-0"
+					className={
+						"flex h-7 w-full min-w-11 items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground " +
+						(error ? "narrow:h-auto narrow:min-h-11 narrow:p-1" : "narrow:size-11 narrow:shrink-0")
+					}
 				>
-					<MicIcon aria-hidden="true" className="size-3.5 shrink-0 narrow:size-4" />
-					<span className="min-w-0 truncate narrow:hidden">{error ?? "Dictate"}</span>
+					<MicIcon aria-hidden="true" className={error ? "size-3.5 shrink-0 narrow:hidden" : "size-3.5 shrink-0 narrow:size-4"} />
+					<span className={error
+						? "min-w-0 truncate narrow:overflow-visible narrow:wrap-anywhere narrow:whitespace-normal"
+						: "min-w-0 truncate narrow:hidden"}
+					>
+						{error ?? "Dictate"}
+					</span>
 				</button>
 			</Hint>
 		);
