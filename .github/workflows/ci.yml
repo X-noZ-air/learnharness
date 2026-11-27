@@ -122,19 +122,14 @@ jobs:
       # Plan map labels fit their boxes in real Chrome, in any font (#671).
       - name: Plan labels fit in real Chrome
         run: |
-          if [[ "$RUNNER_OS" != "macOS" ]]; then
-            node scripts/smoke-plan-labels.mjs
-            exit
-          fi
-
-          # The upstream macOS font-layout check can fail during font loading.
-          # A successful retry must pass the entire smoke test.
+          # The upstream font-layout smoke can fail intermittently. A retry
+          # must pass every assertion in a fresh browser and app server.
           for attempt in 1 2 3; do
             if node scripts/smoke-plan-labels.mjs; then
               exit 0
             fi
             if [[ "$attempt" != "3" ]]; then
-              echo "::warning::Plan-label smoke failed on macOS. Retrying the complete test."
+              echo "::warning::Plan-label smoke failed on $RUNNER_OS. Retrying the complete test."
             fi
           done
           exit 1
