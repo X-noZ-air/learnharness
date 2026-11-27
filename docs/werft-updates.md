@@ -1,15 +1,15 @@
 # Werft upstream updates
 
-`werft` is the fork's production and default branch. `main` mirrors upstream.
+`werft` is the fork's production branch. `main` mirrors upstream.
 Feature branches target `werft` through a pull request and the normal CI matrix.
 The upstream notification jobs are restricted to the original repository.
 
 ## Trigger contract
 
 The Werft host updater owns the production polling timer. Each tick sends an
-authenticated `workflow_dispatch` request to **Werft upstream updates** on the
-default branch `werft`. Use an identity with Actions write access to the fork
-and omit the replay inputs.
+authenticated `workflow_dispatch` request to **Werft upstream updates** on
+`werft`. Use an identity with Actions write access to the fork and omit the
+replay inputs.
 
 ```text
 POST /repos/X-noZ-air/learnharness/actions/workflows/werft-updates.yml/dispatches
@@ -57,11 +57,11 @@ ruleset and query the effective branch rules before the first production replay.
 workflow permissions can be managed through GitHub's API.
 
 The poller rechecks the base and head before requesting a merge with the
-expected head SHA. It verifies the merge parents before dispatching
-`werft-release.yml` with `merge_sha` and `upstream_tag`. The journal records
-`release workflow not present` if the merged commit has no such workflow.
-Release dispatch can be retried if GitHub disconnects before returning a run ID;
-the release workflow should deduplicate by merge SHA.
+expected head SHA. It verifies the merge parents before handing off to the
+[release workflow](werft-release.md#release-triggers). The journal records the
+release run URL or `release workflow not present` if the merged commit has no
+such workflow. A later poll can retry the handoff if GitHub disconnects before
+returning a run ID.
 
 To turn off the update automation, disable **Werft upstream updates** on its
 Actions page, or send `PUT /repos/X-noZ-air/learnharness/actions/workflows/werft-updates.yml/disable`.
