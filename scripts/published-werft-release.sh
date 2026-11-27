@@ -3,7 +3,7 @@ set -euo pipefail
 
 commit=$1
 prefix=$2
-commit_tags=$(git tag --contains "$commit" --list "$prefix*" --sort=-version:refname)
+commit_tags=$(git tag --contains "$commit" --list "$prefix*")
 if [[ -z "$commit_tags" ]]; then
   exit 0
 fi
