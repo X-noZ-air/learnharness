@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
@@ -107,11 +107,13 @@ const SidebarContext = createContext<{
 	toggle: () => void;
 	narrowViewport: boolean;
 	closeDrawer: () => void;
+	openerRef: RefObject<HTMLButtonElement | null> | null;
 }>({
 	open: false,
 	toggle: () => {},
 	narrowViewport: false,
 	closeDrawer: () => {},
+	openerRef: null,
 });
 
 export function useSidebar() {
@@ -133,6 +135,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [mounted, setMounted] = useState(false);
 	const [narrowViewport, setNarrowViewport] = useState(false);
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const openerRef = useRef<HTMLButtonElement>(null);
 	const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
 	useEffect(() => {
@@ -223,7 +226,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open: narrowViewport ? drawerOpen : open && !narrow, toggle, narrowViewport, closeDrawer }}>
+		<SidebarContext.Provider value={{ open: narrowViewport ? drawerOpen : open && !narrow, toggle, narrowViewport, closeDrawer, openerRef }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -243,7 +246,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  The icon fades with the slot and is clipped by it as it collapses —
  *  no popping in either direction. */
 export function SidebarToggle() {
-	const { open, toggle, narrowViewport } = useSidebar();
+	const { open, toggle, narrowViewport, openerRef } = useSidebar();
 	return (
 		<span
 			className={cn(
@@ -253,6 +256,7 @@ export function SidebarToggle() {
 		>
 			<Hint label="Open sidebar" action="toggle-sidebar">
 			<Button
+				ref={openerRef}
 				variant="ghost"
 				size="icon"
 				aria-label="Open sidebar"
@@ -449,9 +453,10 @@ const KIND_FILTER_KEY = "lh:session-kind-filter";
 function SessionsSidebar() {
 	const { appearance: { compactSessionList } } = useAppearance();
 	const interactions = useInteractionLayers();
-	const { open, toggle, narrowViewport, closeDrawer } = useSidebar();
+	const { open, toggle, narrowViewport, closeDrawer, openerRef } = useSidebar();
 	const drawerRef = useRef<HTMLElement>(null);
 	const inlineCloseRef = useRef<HTMLButtonElement>(null);
+	const getDrawerFocusFallback = useCallback(() => inlineCloseRef.current ?? openerRef?.current ?? null, [openerRef]);
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -913,7 +918,7 @@ function SessionsSidebar() {
 					</Hint>
 					<Hint label="Close sidebar" action="toggle-sidebar">
 						<Button
-							ref={narrowViewport ? undefined : inlineCloseRef}
+							ref={!narrowViewport && open ? inlineCloseRef : undefined}
 							variant="ghost"
 							size="icon"
 							aria-label="Close sidebar"
@@ -1251,7 +1256,7 @@ function SessionsSidebar() {
 			open={open}
 			onClose={closeDrawer}
 			initialFocusRef={drawerRef}
-			returnFocusFallback={inlineCloseRef}
+			returnFocusFallback={getDrawerFocusFallback}
 			aria-label="Sessions"
 			backdropProps={{ "data-testid": "sidebar-backdrop", className: "fixed inset-0 bg-black/40" }}
 			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background pt-[var(--lh-safe-top)] pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] shadow-xl" />}

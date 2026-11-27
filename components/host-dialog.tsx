@@ -25,7 +25,7 @@ export interface HostDialogProps {
 	openingLease?: OpeningLease;
 	initialFocusRef?: RefObject<HTMLElement | null>;
 	/** Context to focus if the original opener is no longer eligible. */
-	returnFocusFallback?: HTMLElement | RefObject<HTMLElement | null>;
+	returnFocusFallback?: HTMLElement | (() => HTMLElement | null);
 	headingRef?: RefObject<HTMLElement | null>;
 	/** Existing visual root: classes, styles, ref and test IDs are retained. */
 	frame?: ReactElement<FrameProps>;
@@ -119,7 +119,7 @@ function OpenHostDialog({
 		const focusRevision = controller.getFocusRevision();
 		const opener = openerRef.current;
 		setTimeout(() => {
-			const fallback = returnFocusFallback instanceof HTMLElement ? returnFocusFallback : returnFocusFallback?.current;
+			const fallback = typeof returnFocusFallback === "function" ? returnFocusFallback() : returnFocusFallback;
 			controller.restoreFocus(opener, generation, focusRevision, openingLease, fallback ?? undefined);
 		}, 0);
 	}, [controller, openingLease, returnFocusFallback]);

@@ -273,11 +273,21 @@ async function enterSidebar(page, viewport) {
 	else await waitForInlineSidebar(page);
 }
 
-async function checkDrawerRotation(page) {
+async function openDrawerWithShortcut(page) {
+	await page.evaluate(() => document.activeElement.blur());
+	await waitForFocus(page, "body");
+	const modifier = await page.evaluate(() => /mac/i.test(navigator.platform || navigator.userAgent) ? "Meta" : "Control");
+	await page.keyboard.down(modifier);
+	await page.keyboard.press("b");
+	await page.keyboard.up(modifier);
+	await waitForFocus(page, drawer + " aside");
+}
+
+async function checkDrawerRotation(page, focusTarget = `${inlineSidebar} ${close}`) {
 	await waitForFocus(page, drawer + " aside");
 	await page.setViewport(rotatedPhoneViewport);
 	await page.waitForSelector(drawer, { hidden: true });
-	await waitForFocus(page, `${inlineSidebar} ${close}`);
+	await waitForFocus(page, focusTarget);
 	await page.setViewport(phoneViewport);
 	await sidebarClosed(page);
 }
@@ -298,6 +308,17 @@ async function submitDraftWithKeyboardOpen(page, text) {
 	await typeDraftWithKeyboardOpen(page, text);
 	await action(page, send, true);
 	await page.setViewport(phoneViewport);
+}
+
+async function checkPracticeRename(page) {
+	await page.setViewport({ ...phoneViewport, width: 360 });
+	await action(page, 'header button[data-plugin-chrome-title]', true);
+	const title = 'header input[aria-label="Session title"]';
+	await waitForFocus(page, title);
+	const field = await bounds(page, title);
+	const chip = await bounds(page, 'header [data-phase="practice"]');
+	assert.ok(Math.abs(chip.left - field.right - 12) < 1, "the rename field fills the space before the practice chip");
+	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 360);
 }
 
 async function checkDraftRetry(origin) {
@@ -335,6 +356,7 @@ async function checkDraftRetry(origin) {
 		assert.equal(attempts.length, 2);
 		assert.deepEqual(JSON.parse(attempts[0]), { title: draft, kind: "practice" });
 		assert.equal(attempts[1], attempts[0], "the retry sends the original practice draft");
+		await checkPracticeRename(page);
 	} finally {
 		await context.close();
 	}
@@ -397,13 +419,20 @@ async function checkLesson(origin, viewport) {
 		assert.ok(modelRequests.some(body => body?.includes(followUp(name))));
 
 		if (viewport === phoneViewport) {
-			await page.evaluate(() => document.activeElement.blur());
-			await waitForFocus(page, "body");
-			const modifier = await page.evaluate(() => /mac/i.test(navigator.platform || navigator.userAgent) ? "Meta" : "Control");
-			await page.keyboard.down(modifier);
-			await page.keyboard.press("b");
-			await page.keyboard.up(modifier);
+			await openDrawerWithShortcut(page);
+			await page.keyboard.press("Escape");
+			await sidebarClosed(page);
+			await waitForFocus(page, drawerOpener);
+			await openDrawerWithShortcut(page);
 			await checkDrawerRotation(page);
+			await page.setViewport(rotatedPhoneViewport);
+			await waitForInlineSidebar(page);
+			await action(page, close, true);
+			await sidebarClosed(page, false);
+			await page.setViewport(phoneViewport);
+			await sidebarClosed(page);
+			await openDrawerWithShortcut(page);
+			await checkDrawerRotation(page, open);
 		}
 
 		if (narrow) await openDrawer(page);
@@ -478,7 +507,7 @@ try {
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
 	}
 	await checkDraftRetry(origin);
-	console.log("412x200: practice draft retry passed");
+	console.log("Practice draft retry at 412x200 and session rename at 360px passed");
 	assert.deepEqual(pageErrors, [], "uncaught errors in Chromium");
 } catch (error) {
 	console.error(appLogs);
