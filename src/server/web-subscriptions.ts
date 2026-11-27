@@ -1,4 +1,4 @@
-import { canStartWork, beginWork, MaintenanceError, tracked } from "../core/maintenance.ts";
+import { beginWork, tracked } from "../core/maintenance.ts";
 /** Persistent Node web/dev owner. Never imported by client code. Desktop keeps
  * its existing main-process owner; a broken desktop IPC channel cannot fall
  * back to these files. One server process must own each configured auth dir. */
@@ -12,7 +12,7 @@ import { chatGPTControl } from "../../electron/chatgpt-ipc.cjs";
 import { subscriptionControl } from "../../electron/subscription-ipc.cjs";
 import { emit } from "../core/events.ts";
 import type { ChatGPTStatus } from "../core/contracts/chatgpt.ts";
-import { NATIVE_SUBSCRIPTIONS, type NativeSubscriptionSnapshot } from "../core/contracts/subscriptions.ts";
+import type { NativeSubscriptionSnapshot } from "../core/contracts/subscriptions.ts";
 import { configureWebSubscriptionRuntime, publishWebSubscriptionPacket, webSubscriptionsEnabled, type SubscriptionRuntimeChannel as Channel, type SubscriptionRuntimePacket as Packet } from "../agent/subscription-runtime.ts";
 export { webSubscriptionsEnabled } from "../agent/subscription-runtime.ts";
 interface BrowserAction { target: string; origin: string; scope: string; expires: number; current(): Promise<boolean> }
@@ -63,7 +63,6 @@ export function createWebSubscriptionOwner(options: {
 	});
 	const native = createSubscriptions({
 		directory: options.directory, sdk: options.sdk, loadSDK, openExternal, trackRefresh,
-		trackStartup: <T>(fn: () => Promise<T>) => tracked("startup", fn),
 		onChange: (snapshot: NativeSubscriptionSnapshot) => notify("lh:subscriptions", { channel: "lh:subscriptions", op: "changed", snapshot }),
 	});
 	return {
@@ -105,7 +104,6 @@ export function webSubscriptionOwner() {
 	if (!webSubscriptionsEnabled()) throw new Error("Web subscription controls are unavailable in desktop-owned mode.");
 	const state = registry();
 	if (!state.owner) {
-		if (!canStartWork()) throw new MaintenanceError();
 		state.owner = createWebSubscriptionOwner({ directory: path.dirname(AUTH_FILE), onPacket: publish });
 		process.once("exit", () => state.owner?.close());
 	}
@@ -133,16 +131,7 @@ async function dispatch<T>(channel: Channel, op: string, fields: Record<string, 
 configureWebSubscriptionRuntime(webSubscriptionRequest);
 
 export async function webSubscriptionStatus(readOnly = false): Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionSnapshot["statuses"] }> {
-	const owner = readOnly ? currentWebSubscriptionOwner() : webSubscriptionOwner();
-	if (!owner) return {
-		chatgpt: { available: false, pending: false, allowBackgroundUse: false, activeId: null, accounts: [], error: null },
-		native: NATIVE_SUBSCRIPTIONS.map(({ providerId }) => ({
-			providerId, available: false, connected: false, pending: false, allowBackgroundUse: false,
-			connectionId: null, epoch: 0, authorityRevision: 0, revision: 0,
-		})),
-	};
-	// A bound device challenge remains visible during a drain. Reading its
-	// public state must not initialize an unrelated credential store.
-	const [chatgpt, native] = await Promise.all([readOnly ? owner.chatgpt.currentStatus() : owner.chatgpt.status(), owner.native.status()]);
+	const owner = webSubscriptionOwner();
+	const [chatgpt, native] = await Promise.all([readOnly ? owner.chatgpt.readStatus() : owner.chatgpt.status(), owner.native.status()]);
 	return { chatgpt, native };
 }

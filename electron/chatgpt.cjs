@@ -124,15 +124,15 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 	const active = () => !storageDenied && !suspended && !closed && !paused ? state?.registrations.find((r) => r.id === state.activeId && r.tokens && !r.reconnectRequired) : undefined;
 	// These fields are validated/verified before storage. Email is never identity.
 	const sameAccount = (a, b) => a.issuer === b.issuer && a.subject === b.subject;
-	function accountGroups() {
+	function accountGroups(recordState) {
 		const groups = [];
-		for (const record of state?.registrations || []) {
+		for (const record of recordState?.registrations || []) {
 			const group = groups.find((members) => sameAccount(members[0], record));
 			if (group) group.push(record); else groups.push([record]);
 		}
 		return groups;
 	}
-	const backgroundAllowed = () => state?.allowBackgroundUse !== false && backgroundIntent?.enabled !== false;
+	const backgroundAllowed = (record = state) => record?.allowBackgroundUse !== false && backgroundIntent?.enabled !== false;
 	const notify = (invalidate = "none") => { revision++; onChange({ channel: "lh:chatgpt", kind: "state", stamp: stamp(), status: snapshot(), invalidate }); };
 	function stop(backgroundOnly = false) {
 		if (backgroundOnly) {
@@ -151,11 +151,14 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 		catalogError = null;
 		notify("all");
 	}
+	async function readState() {
+		const loaded = await store.read();
+		return loaded ? validateState(loaded) : null;
+	}
 	async function ready() {
 		if (closed) throw fail("disconnected");
 		if (!init) init = (async () => {
-			const loaded = await store.read();
-			state = loaded ? validateState(loaded) : null;
+			state = await readState();
 			if (!state) {
 				const first = { version: 1, hostId: `urn:uuid:${crypto.randomUUID()}`, activeId: null, registrations: [] };
 				await store.write(first);
@@ -177,17 +180,17 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 		}
 		state = next;
 	}
-	function snapshot() {
+	function snapshot(record = state) {
 		return {
-			available: !!state && !closed && !paused,
+			available: !!record && !closed && !paused,
 			pending: !!pending,
-			allowBackgroundUse: backgroundAllowed(),
-			activeId: state?.activeId ?? null,
-			accounts: accountGroups().map((members) => {
+			allowBackgroundUse: backgroundAllowed(record),
+			activeId: record?.activeId ?? null,
+			accounts: accountGroups(record).map((members) => {
 				// Preserve the actual active registration ID at the private transport
 				// boundary; inactive groups prefer a usable registration, then a
 				// remembered one. No credential/client records are merged or deleted.
-				const r = members.find((r) => r.id === state.activeId) ?? members.find((r) => !r.reconnectRequired && planScopes(r.tokens)) ?? members[0];
+				const r = members.find((r) => r.id === record.activeId) ?? members.find((r) => !r.reconnectRequired && planScopes(r.tokens)) ?? members[0];
 				return {
 					id: r.id,
 					email: r.email || "ChatGPT account",
@@ -206,6 +209,11 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 	async function status() {
 		try { await ready(); } catch (err) { return { ...snapshot(), available: false, error: publicError(err) }; }
 		return snapshot();
+	}
+	async function readStatus() {
+		if (init || closed) return status();
+		try { return snapshot(await readState()); }
+		catch (err) { return { ...snapshot(null), available: false, error: publicError(err) }; }
 	}
 	async function json(url, options = {}) {
 		try {
@@ -541,7 +549,7 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 	function close() { closed = true; pending?.cancel(); stop(); }
 	function pause() { paused = true; pending?.cancel(); stop(); notify(); }
 	function resume() { paused = false; if (!storageDenied) suspended = false; notify(); }
-	return { status, currentStatus: snapshot, login, cancelLogin, lease, models, select, consent, disconnect, logout, close, pause, resume, stamp };
+	return { status, readStatus, login, cancelLogin, lease, models, select, consent, disconnect, logout, close, pause, resume, stamp };
 }
 
 module.exports = { createChatGPT, fileStore, publicError, allowedAuthEndpoint, SCOPES, validateState };

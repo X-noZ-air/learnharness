@@ -25,6 +25,7 @@ function createState() {
 		mode: (process.env.LH_MAINTENANCE_STARTUP_HOLD === "1" ? "startup-hold" : "open") as Mode,
 		generation: randomUUID(),
 		counts: new Map<Work, number>(),
+		readinessReported: false,
 		unknownPlugin: false,
 		refusals: new Map<string, () => boolean>(),
 		holdTimer: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -39,6 +40,7 @@ function state() {
 }
 export function maintenanceEnabled() { return Boolean(process.env.LH_MAINTENANCE_SOCKET); }
 export function admissionClosed() { return maintenanceEnabled() && state().mode !== "open"; }
+export function drainReadinessReported() { return admissionClosed() && state().readinessReported; }
 export function canStartWork() { return !admissionClosed() || !!state().context.getStore()?.active; }
 export class MaintenanceError extends Error {
 	constructor() { super("Server maintenance is in progress. Your request was not accepted. Try again after maintenance."); }
@@ -109,13 +111,15 @@ export function maintenanceStatus() {
 	const s = state();
 	const reasons = s.unknownPlugin ? ["unknown-plugin-lifecycle"] : [];
 	for (const [reason, present] of s.refusals) if (present()) reasons.push(reason);
+	const drained = s.mode !== "open" && !s.counts.size && !reasons.length;
+	if (drained) s.readinessReported = true;
 	return {
 		version: 1,
 		generation: s.generation,
 		mode: s.mode,
 		counts: Object.fromEntries(s.counts),
 		reasons,
-		drained: s.mode !== "open" && !s.counts.size && !reasons.length,
+		drained,
 	};
 }
 function open(s: ReturnType<typeof state>) {
@@ -123,6 +127,7 @@ function open(s: ReturnType<typeof state>) {
 	s.holdTimer = undefined;
 	s.drainAttemptId = undefined;
 	s.mode = "open";
+	s.readinessReported = false;
 	s.generation = randomUUID();
 	const callbacks = [...s.onOpen];
 	s.onOpen.clear();

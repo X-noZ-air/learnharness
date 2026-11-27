@@ -1,4 +1,4 @@
-import { admissionClosed, maintenanceRefusal, mutation, trackedCancellation } from "../core/maintenance.ts";
+import { admissionClosed, drainReadinessReported, maintenanceRefusal, mutation, trackedCancellation } from "../core/maintenance.ts";
 import { isPluginHostError } from "./plugin-host.ts";
 import { apiRequestRefusal } from "./desktop-access.ts";
 import type { PluginFrontendContext, PluginInfo } from "../core/plugins.ts";
@@ -15,7 +15,7 @@ export interface PluginTransportHost {
 }
 class InputError extends Error {}
 const coreReads: Readonly<Record<string, readonly string[]>> = {
-	flashcards: ["get-state", "get-catalog"],
+	flashcards: ["get-state", "get-catalog", "open-file-deck"],
 	"drawing-pad": ["get-settings", "get-session-poses"],
 	"rich-code-blocks": ["get-settings"],
 };
@@ -67,6 +67,7 @@ export function createPluginTransport(deps: {
 				const host = deps.getActiveHost?.();
 				if (!host?.list().some(plugin => plugin.id === id && plugin.origin === "core" && plugin.status === "active"))
 					return json({ error: "Plugin is disabled or unavailable" }, 409);
+				if (cancel && drainReadinessReported()) return json({ result: (await host.call(id, "get-state", undefined)) ?? null });
 				const invoke = () => host.call(id, operation, input);
 				return json({ result: ((cancel ? await trackedCancellation(invoke) : await invoke()) ?? null) });
 			});

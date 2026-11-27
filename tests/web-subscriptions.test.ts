@@ -15,7 +15,7 @@ process.env.LH_DATA_DIR = path.join(directory, "data");
 delete process.env.LH_DESKTOP_SERVER; delete process.env.LH_DESKTOP_API_SECRET;
 await fs.writeFile(process.env.LH_AUTH_FILE, "{}", { mode: 0o600 });
 const require = createRequire(import.meta.url);
-const { SCOPES } = require("../electron/chatgpt.cjs");
+const { SCOPES, createChatGPT, fileStore } = require("../electron/chatgpt.cjs");
 const { createWebSubscriptionOwner, webSubscriptionOwner, webSubscriptionsEnabled } = await import("../src/server/web-subscriptions.ts");
 const { subscriptionControlsResponse, subscriptionBrowserResponse } = await import("../src/server/web-subscription-http.ts");
 const chat = await import("../src/agent/chatgpt-bridge.ts");
@@ -37,14 +37,13 @@ function request(command?: Record<string, unknown>, origin = "http://192.168.1.1
 }
 after(async () => { webSubscriptionOwner().close(); globalThis.fetch = originalFetch; await fs.rm(directory, { recursive: true, force: true }); });
 
-test("cancelling a sign-in during drain does not initialize an absent owner", async t => {
+test("cold subscription reads and cancellation preserve their public contracts during drain", async t => {
 	const { control } = await import("../src/core/maintenance.ts");
 	const key = Symbol.for("lh.webSubscriptions");
 	const global = globalThis as typeof globalThis & { [key]?: { owner?: unknown } };
 	const previous = global[key];
 	const previousSocket = process.env.LH_MAINTENANCE_SOCKET;
-	const empty = {};
-	global[key] = empty;
+	global[key] = {};
 	process.env.LH_MAINTENANCE_SOCKET = "fixture";
 	const hold = control("drain", undefined, undefined, newDrainAttempt());
 	t.after(() => {
@@ -53,16 +52,30 @@ test("cancelling a sign-in during drain does not initialize an absent owner", as
 		if (previousSocket === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previousSocket;
 	});
-	for (const providerId of ["chatgpt", "github-copilot", "xai"]) {
-		assert.equal((await subscriptionControlsResponse(request({ providerId, op: "cancel" }))).status, 200);
-	}
+	assert.equal(hold.drained, true);
+	const credentialFile = path.join(directory, "chatgpt-credentials.json");
+	const credentialsBefore = await fs.readFile(credentialFile);
+	const upstream = createChatGPT({ store: fileStore(credentialFile), openExternal: async () => {} });
+	const cancel = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "cancel" }));
+	assert.equal(cancel.status, 200);
+	assert.deepEqual(await cancel.json(), { value: upstream.cancelLogin() });
 	const status = await subscriptionControlsResponse(request());
 	assert.equal(status.status, 200);
 	const payload = await status.json();
-	assert.equal(payload.chatgpt.pending, false);
-	assert.deepEqual(payload.native.map((provider: { providerId: string; pending: boolean }) => [provider.providerId, provider.pending]),
-		[["github-copilot", false], ["xai", false]]);
-	assert.deepEqual(global[key], {});
+	assert.deepEqual(payload.chatgpt, await upstream.status());
+	assert.equal(payload.chatgpt.activeId, "fixture-account");
+	assert.deepEqual(payload.native.map((provider: { providerId: string; connected: boolean }) => [provider.providerId, provider.connected]),
+		[["github-copilot", true], ["xai", true]]);
+	assert.deepEqual(await fs.readFile(credentialFile), credentialsBefore);
+	await fs.rename(credentialFile, credentialFile + ".saved");
+	try {
+		const withoutCredentials = await subscriptionControlsResponse(request());
+		assert.equal(withoutCredentials.status, 200);
+		assert.equal((await withoutCredentials.json()).chatgpt.available, false);
+		await assert.rejects(fs.stat(credentialFile), { code: "ENOENT" });
+	} finally {
+		await fs.rename(credentialFile + ".saved", credentialFile);
+	}
 	assert.equal(control("status", hold.generation).drained, true);
 });
 

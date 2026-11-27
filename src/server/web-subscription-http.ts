@@ -47,11 +47,8 @@ async function parseControl(request: Request, continuationOnly: boolean): Promis
 		if (typeof providerId !== "string" || (providerId !== "chatgpt" && !NATIVE_SUBSCRIPTIONS.some((provider) => provider.providerId === providerId))) return error("Unsupported connection.", 400);
 		const allowed = providerId === "chatgpt" ? ["login", "cancel", "select", "disconnect", "logout", "consent"] : ["login", "cancel", "respond", "open", "retry", "disconnect", "consent"];
 		if (typeof fields.op !== "string" || !allowed.includes(fields.op)) return error("Unsupported control.", 400);
-		const dispatch = async (owner = webSubscriptionOwner()) => Response.json(await owner.control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
-		if (fields.op === "cancel") {
-			const owner = currentWebSubscriptionOwner();
-			return owner ? await dispatch(owner) : Response.json({ value: null }, { headers: HEADERS });
-		}
+		const dispatch = async () => Response.json(await webSubscriptionOwner().control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
+		if (fields.op === "cancel") return await dispatch();
 		// The controller validates the attempt and its exact one-use prompt/action.
 		if (continuationOnly) {
 			if ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt") return await dispatch();

@@ -140,10 +140,19 @@ try {
 	await stopDrained(ready); await f.start();
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
 	const dismissHold = await f.cli("drain");
-	await f.api("chats/" + parked + "/dismiss", { input: { type: "dismiss", toolCallId: "parked-call",
-		answer: { kind: "quiz", questionText: quiz.question, dontKnow: false, answers: [], dismissed: true, answeredAt: new Date().toISOString() } } });
-	assert.ok((await f.api("chats/" + parked)).messages.some(message => message.toolCallId === "parked-call" && message.details?.dismissed));
+	const dismissPath = "chats/" + parked + "/dismiss";
+	const dismissal = { input: { type: "dismiss", toolCallId: "parked-call",
+		answer: { kind: "quiz", questionText: quiz.question, dontKnow: false, answers: [], dismissed: true, answeredAt: new Date().toISOString() } } };
+	const beforeDismissal = (await f.api("chats/" + parked)).messages;
+	const lateDismissal = await fetch(f.origin + "/api/" + dismissPath, {
+		method: "POST", headers: { origin: f.origin, "content-type": "application/json" }, body: JSON.stringify(dismissal),
+	});
+	assert.equal(lateDismissal.status, 409);
+	assert.deepEqual((await f.api("chats/" + parked)).messages, beforeDismissal);
+	assert.equal((await f.cli("status", ["--generation", dismissHold.generation])).drained, true);
 	await f.cli("resume", ["--generation", dismissHold.generation]);
+	await f.api(dismissPath, dismissal);
+	assert.ok((await f.api("chats/" + parked)).messages.some(message => message.toolCallId === "parked-call" && message.details?.dismissed));
 	await send(parked, "continue after the question"); await settled(parked, "turn after the question");
 	assert.ok(JSON.stringify((await f.api("chats/" + parked)).messages).includes("steer_" + parkedJob.id));
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "delivered");

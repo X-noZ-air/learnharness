@@ -62,6 +62,7 @@ test("Flashcards state and cancellation remain available during drain with cance
 			ctx.cleanup(() => { owner.resolve(); allowWrite.resolve(); });
 			ctx.handle('start-fixture', () => { void ctx.trackWork(() => owner.promise); });
 			ctx.handle('get-state', () => ({ batch: { id: 'batch', status: 'running' } }));
+			ctx.handle('open-file-deck', ({ sourceId }) => ({ deckId: sourceId === 'file-source' ? 'saved-deck' : null }));
 			ctx.handle('cancel-generation', async ({ batchId }) => {
 				owner.resolve();
 				await allowWrite.promise;
@@ -106,8 +107,17 @@ test("Flashcards state and cancellation remain available during drain with cance
 	assert.deepEqual(maintenanceStatus().counts, { "write-request": 1 });
 	await host.call("flashcards", "allow-write");
 	assert.deepEqual(await (await cancellation).json(), { result: "batch" });
-	assert.equal(fs.readFileSync(path.join(dataDirectory, "flashcards", "cancelled"), "utf8"), "batch");
-	assert.deepEqual(maintenanceStatus().counts, {});
+	const cancelledFile = path.join(dataDirectory, "flashcards", "cancelled");
+	assert.equal(fs.readFileSync(cancelledFile, "utf8"), "batch");
+	assert.equal(control("status", hold.generation).drained, true);
+	const opened = await call("open-file-deck", { sourceId: "file-source" });
+	assert.equal(opened.status, 200);
+	assert.deepEqual(await opened.json(), { result: { deckId: "saved-deck" } });
+	const lateCancellation = await call("cancel-generation", { batchId: "late-batch" });
+	assert.equal(lateCancellation.status, 200);
+	assert.deepEqual(await lateCancellation.json(), { result: { batch: { id: "batch", status: "running" } } });
+	assert.equal(fs.readFileSync(cancelledFile, "utf8"), "batch");
+	assert.equal(control("status", hold.generation).drained, true);
 });
 
 test("host error brand is process-stable, shape-checked and rejects arbitrary numeric status", () => {
