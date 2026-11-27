@@ -27,6 +27,7 @@ export function claimPreparingTurn(chatId: string): TurnPreparation | null {
 	const waiting = new Set<() => void>();
 
 	const outer: PiTurnHandle = {
+		dismissalHistory: () => real?.dismissalHistory?.(),
 		subscribe() {
 			let cancelled = false;
 			let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;

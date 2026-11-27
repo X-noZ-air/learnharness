@@ -213,17 +213,16 @@ for (const busy of [false, true]) test(`malformed unreadable plugin map permits 
 	assert.deepEqual((f.saved().messages.at(-1) as any).details, { kind: "plugin-question-cancelled", occurrence: f.input.occurrence, reason: "dismissed" });
 });
 
-for (const kind of ["question", "problem"] as const) test(`builtin busy ${kind} parks before aborting its owner`, async t => {
+for (const kind of ["question", "problem"] as const) test(`builtin busy ${kind} rejects a target the owner never posed`, async t => {
 	const id = chatStore.createChat("Builtin busy dismissal").id, owner = claim(t, id);
 	t.after(() => takeParkedDismissal(id));
 	const input = kind === "question" ? { type: "dismiss", toolCallId: "future-quiz", answer: dismissedAnswer("quiz", "What?") }
 		: { type: "dismiss-problem", problemCallId: "future-problem" };
 	const response = await post(id, input);
-	assert.equal(response.status, 202);
-	assert.deepEqual(await response.json(), { ok: true, parked: true });
-	assert.equal(owner.signal.aborted, true);
+	assert.equal(response.status, 400);
+	assert.equal(owner.signal.aborted, false);
 	assert.equal(isTurnRunning(id), true);
-	assert.deepEqual(takeParkedDismissal(id), input);
+	assert.equal(takeParkedDismissal(id), null);
 	assert.equal(chatStore.getChat(id)!.messages.length, 0);
 });
 
@@ -262,7 +261,6 @@ test("an admitted dismissal aborts only its original turn even when its browser 
 	t.after(request.release);
 	await request.started;
 	const hold = control("drain", undefined, undefined, newDrainAttempt());
-	assert.equal(hold.counts["write-request"], 1);
 	request.release();
 	assert.equal((await serverReply.promise).status, 202);
 	assert.equal(original.signal.aborted, true);
@@ -278,6 +276,32 @@ test("an admitted dismissal aborts only its original turn even when its browser 
 	assert.equal(successor.signal.aborted, false);
 	assert.equal(isTurnRunning(id), true);
 	assert.deepEqual(requests, [`/api/chats/${id}/dismiss`]);
+});
+
+test("an idle dismissal waits out the hold before writing its marker", async t => {
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const id = chatStore.createChat("Idle dismissal during a hold").id;
+	const quiz = { question: "What?", options: [{ label: "Yes" }, { label: "No" }], correctAnswer: "Yes", explanation: "Because" };
+	const message = { ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: "quiz-fixture" })], { stopReason: "toolUse" }), id: "quiz-pose" } as LhMessage;
+	chatStore.saveMessages(id, [message]);
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	t.after(() => {
+		if (control("status").mode === "draining") control("resume", hold.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	const pending = delayedPost(id, { type: "dismiss", toolCallId: "quiz-fixture", answer: dismissedAnswer("quiz", "What?") });
+	t.after(pending.release);
+	await pending.started;
+	pending.release();
+	const noResponse = Symbol();
+	assert.equal(await Promise.race([pending.response, new Promise(resolve => setImmediate(() => resolve(noResponse)))]), noResponse);
+	assert.deepEqual(chatStore.getChat(id)?.messages, [message]);
+	assert.equal(control("status", hold.generation).drained, true);
+	control("resume", hold.generation);
+	assert.equal((await pending.response).status, 200);
+	assert.equal(danglingQuestionOf(chatStore.getChat(id)!.messages), null);
 });
 
 for (const kind of ["question", "problem"] as const) test(`builtin idle ${kind} still writes its native dismissal`, async () => {

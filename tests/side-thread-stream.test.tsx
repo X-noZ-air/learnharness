@@ -18,8 +18,9 @@ test("a delayed GET cannot rewind newer streamed text; selected quote retains it
 	let getCount = 0; let requestBody: Record<string, unknown> | undefined;
 	let release!: (response: Response) => void;
 	const delayed = new Promise<Response>((resolve) => { release = resolve; });
+	let stopRequests = 0;
 	const fakeFetch: typeof fetch = async (url, options) => {
-		if (String(url).endsWith("/stop")) return Response.json({ code: "maintenance", error: "Try again after maintenance." }, { status: 503 });
+		if (String(url).endsWith("/stop")) { stopRequests++; return Response.json({ ok: true }); }
 		if (options?.method === "POST") { requestBody = JSON.parse(String(options.body)); return new Response(stream); }
 		return ++getCount === 1 ? Response.json({ threads: [], answering: {} }) : delayed;
 	};
@@ -57,8 +58,8 @@ test("a delayed GET cannot rewind newer streamed text; selected quote retains it
 		await act(async () => release(Response.json({ threads: [thread], answering: { side_work: "Older partial" } })));
 		assert.equal(side.state!.streamText, "New streamed tail"); assert.equal(side.state!.answering, true);
 		await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Stop side answer"]')!.click());
-		assert.equal(side.state!.error, "Try again after maintenance.");
-		assert.equal(document.querySelector('[role="alert"]')?.textContent, "Try again after maintenance.");
+		assert.equal(stopRequests, 1);
+		assert.equal(document.querySelector('[role="alert"]'), null);
 		assert.equal(side.state!.answering, true);
 		assert.equal(side.state!.streamText, "New streamed tail");
 		await act(async () => frame({ type: "text", text: "Continued after refusal" }));

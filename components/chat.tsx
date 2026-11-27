@@ -470,9 +470,16 @@ export function Chat({
 	const abortAskRef = useRef<AbortMode | null>(null);
 	abortAskRef.current = abortAsk;
 	const pluginAbortTarget = useRef<PluginQuestionDismissalTarget | null>(null);
+	const questionAbortTarget = useRef<ReturnType<typeof pendingQuestionOf>>(null);
+	const problemAbortTarget = useRef<ReturnType<typeof activeProblemOf>>(null);
 	const pluginDismissal = useRef({ canonicalMessages, reconciliation, stop, dismissPluginQuestion });
 	pluginDismissal.current = { canonicalMessages, reconciliation, stop, dismissPluginQuestion };
-	const closeAbortAsk = useCallback(() => { pluginAbortTarget.current = null; setAbortAsk(null); }, []);
+	const closeAbortAsk = useCallback(() => {
+		pluginAbortTarget.current = null;
+		questionAbortTarget.current = null;
+		problemAbortTarget.current = null;
+		setAbortAsk(null);
+	}, []);
 	useEffect(() => {
 		const onAbort = () => {
 			if (!isInteractionScopeEligible(sessionFindScopeRef.current, controller)) return;
@@ -488,8 +495,15 @@ export function Chat({
 				busy: busyRef.current,
 			});
 			if (target === "side-thread") closeSideThreadRef.current();
-			else if (target === "question") { pluginAbortTarget.current = pluginQuestion; setAbortAsk("question"); }
-			else if (target === "problem") setAbortAsk("problem");
+			else if (target === "question") {
+				pluginAbortTarget.current = pluginQuestion;
+				questionAbortTarget.current = pendingRef.current;
+				setAbortAsk("question");
+			}
+			else if (target === "problem") {
+				problemAbortTarget.current = activeProblemRef.current;
+				setAbortAsk("problem");
+			}
 			else if (target === "turn") setAbortAsk("turn");
 			else if (target === "mermaid") setMermaidFocus(null);
 			else if (target === "plan") setPlanOpen(false);
@@ -501,6 +515,8 @@ export function Chat({
 	const confirmAbort = useCallback(
 		(mode: AbortMode) => {
 			const pluginQuestion = pluginAbortTarget.current;
+			const questionTarget = questionAbortTarget.current;
+			const problemTarget = problemAbortTarget.current;
 			closeAbortAsk();
 			if (mode === "question" && pluginQuestion) {
 				confirmPluginQuestionDismissal(pluginQuestion, pluginDismissal.current);
@@ -516,8 +532,8 @@ export function Chat({
 			// 2026-10-04 — the GLM loop): the question can only dangle because a
 			// turn is STILL RUNNING, so the discard ALSO kills that turn; the
 			// route parks the dismissal (202) and the settle applies it.
-			const p = pendingRef.current;
-			if (p) {
+			const p = questionTarget;
+			if (mode === "question" && p && pendingRef.current?.key === p.key) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
@@ -533,8 +549,8 @@ export function Chat({
 			// The practice discard (owner, 2026-10-04): ask-style — the
 			// silent marker route; the conclude synthesis rides the user's
 			// next input. Mid-turn the discard also kills the running turn.
-			const problem = activeProblemRef.current;
-			if (problem) void dismissProblem(problem.toolCallId);
+			if (mode === "problem" && problemTarget && activeProblemRef.current?.toolCallId === problemTarget.toolCallId)
+				void dismissProblem(problemTarget.toolCallId);
 		},
 		[abortInFlightTurn, dismissQuestion, dismissProblem, closeAbortAsk],
 	);

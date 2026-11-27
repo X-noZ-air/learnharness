@@ -38,6 +38,7 @@ import {
 	concludedByDismissalPair,
 	isSideQuestionMarker,
 	danglingQuestionOf,
+	pendingQuestionOf,
 	newAnswerResult,
 	newNextMessage,
 	newProblemDismissedMarker,
@@ -157,7 +158,7 @@ export function parseUserSteerInput(input: unknown): UserSteerInput {
 /** The native appends a dismissal makes (pure — same orphan discipline
  *  as answers: the call must be a DANGLING question call, or — the
  *  practice variant — the ACTIVE problem). */
-export function dismissAppends(record: { messages: LhMessage[] }, input: DismissInput): LhMessage[] {
+export function dismissAppends(record: { messages: LhMessage[] }, input: DismissInput, live = false): LhMessage[] {
 	assertPluginQuestionInputAllowed(record.messages, input);
 	if (input.type === "dismiss-plugin-question") throw new ChatInputError("Plugin question dismissal requires canonical server validation");
 	if (input.type === "dismiss-problem") {
@@ -167,7 +168,7 @@ export function dismissAppends(record: { messages: LhMessage[] }, input: Dismiss
 		}
 		return [newProblemDismissedMarker(input.problemCallId)];
 	}
-	const pending = danglingQuestionOf(record.messages);
+	const pending = live ? pendingQuestionOf(record.messages) : danglingQuestionOf(record.messages);
 	if (!pending || pending.toolCallId !== input.toolCallId) {
 		throw new ChatInputError("dismiss input targets no pending question call");
 	}

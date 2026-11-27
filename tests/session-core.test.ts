@@ -1021,7 +1021,7 @@ describe("answer submission recovery", () => {
 		assert.equal((part.output as { dismissed: boolean }).dismissed, true);
 	});
 
-	it("restores a question and retains its reading draft after a maintenance refusal", async () => {
+	it("keeps a question and its reading draft after a refused dismissal", async () => {
 		const refused = Promise.withResolvers<Response>();
 		const submitted: unknown[] = [];
 		const m = model({ initialMessages: [question], fetch: async (url, init) => {
@@ -1034,11 +1034,11 @@ describe("answer submission recovery", () => {
 		const dismissal = { ...dismissedAnswer("quiz", "Q?"), readingThinking: draft.trim() };
 		const first = m.dismissQuestion("q1", { ...dismissal, readingThinking: draft }, key);
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
-		refused.resolve(Response.json({ code: "maintenance", error: "Try again after maintenance." }, { status: 503 }));
+		refused.resolve(Response.json({ error: "Stale target" }, { status: 400 }));
 		assert.equal(await first, false);
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
 		assert.equal(m.questionDraft(key)?.readingThinking, draft);
-		assert.equal(m.getState().error?.message, "Try again after maintenance.");
+		assert.equal(m.getState().error?.message, "The dismissal failed (400).");
 		assert.equal(await m.dismissQuestion("q1", { ...dismissal, readingThinking: m.questionDraft(key)?.readingThinking }, key), true);
 		assert.deepEqual(submitted, Array(2).fill({ input: { type: "dismiss", toolCallId: "q1", answer: dismissal } }));
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);

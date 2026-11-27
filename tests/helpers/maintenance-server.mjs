@@ -39,14 +39,20 @@ export async function fixture() {
 		const body = [];
 		for await (const part of req) body.push(part);
 		const request = JSON.parse(Buffer.concat(body).toString());
-		waiting++;
-		try { await barrier?.promise; } finally { waiting--; }
-		res.writeHead(200, { "content-type": "text/event-stream" });
 		const chunk = (delta, finish_reason) => "data: " + JSON.stringify({ id: "fixture", model: "synthetic", choices: [{ index: 0, delta, finish_reason }] }) + "\n\n";
+		const hold = barrier;
+		if (hold?.prefix) {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write(chunk({ role: "assistant", content: hold.prefix }, null));
+		}
+		waiting++;
+		try { await hold?.promise; } finally { waiting--; }
+		if (res.destroyed) return;
+		if (!res.headersSent) res.writeHead(200, { "content-type": "text/event-stream" });
 		const worker = request.tools?.some(tool => tool.function?.name === "submit_result");
 		const delta = worker
 			? { role: "assistant", tool_calls: [{ index: 0, id: "fixture-result", type: "function", function: { name: "submit_result", arguments: '{"result":{}}' } }] }
-			: { role: "assistant", content: "Synthetic answer." };
+			: hold?.prefix ? { content: " Synthetic answer." } : { role: "assistant", content: "Synthetic answer." };
 		res.end(chunk(delta, null) + chunk({}, worker ? "tool_calls" : "stop") + "data: [DONE]\n\n");
 	});
 	const baseUrl = "http://127.0.0.1:" + await listen(model) + "/v1";
@@ -106,7 +112,7 @@ export async function fixture() {
 	}
 	function releaseModel() { barrier?.resolve(); barrier = undefined; }
 	return { home, data, origin, start, stop, cli, control, spawnCli, api, logs: () => logs,
-		holdModel() { barrier = Promise.withResolvers(); }, releaseModel,
+		holdModel(prefix) { barrier = { ...Promise.withResolvers(), prefix }; }, releaseModel,
 		waitForModel: () => until(() => waiting > 0, "local model request"),
 		async close() { releaseModel(); try { await stop(); } finally { model.closeAllConnections(); await new Promise(resolve => model.close(resolve)); await fs.rm(home, { recursive: true, force: true }); } },
 	};

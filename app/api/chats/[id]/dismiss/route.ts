@@ -20,14 +20,13 @@
  * dismissals additionally validate the current saved occurrence.
  */
 import { assertPluginQuestionInputAllowed, ChatInputError, dismissAppends, emit, parseDismissInput } from "@/src/core";
-import { mutation, runningTurn, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility } from "@/src/server";
+import { admissionClosed, runningTurn, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility, tracked, waitForOpen } from "@/src/server";
 
-async function handlePost(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
 	const owner = runningTurn(id);
 	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
-	let chat = getChat(id);
-	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	if (!getChat(id)) return Response.json({ error: "Unknown chat" }, { status: 404 });
 
 	let input;
 	try {
@@ -40,42 +39,36 @@ async function handlePost(req: Request, ctx: { params: Promise<{ id: string }> }
 		throw err;
 	}
 
-	// Body parsing yields: validate against current truth for every target,
-	// never overwrite entries appended while this body was arriving. Plugin
-	// targets additionally require exact saved-occurrence authority below.
-	chat = getChat(id);
-	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
-
-	let appends;
-	try {
-		assertPluginQuestionInputAllowed(chat.messages, input);
-		if (input.type === "dismiss-plugin-question") appends = preparePluginQuestionDismissal(chat, input);
-	} catch (err) {
-		if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
-		throw err;
+	for (;;) {
+		if (req.signal.aborted) return new Response(null, { status: 499 });
+		const chat = getChat(id);
+		if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
+		const running = isTurnRunning(id);
+		const current = running ? runningTurn(id) : undefined;
+		const liveHistory = current?.dismissalHistory?.();
+		let appends;
+		try {
+			assertPluginQuestionInputAllowed(chat.messages, input);
+			appends = input.type === "dismiss-plugin-question" ? preparePluginQuestionDismissal(chat, input)
+				: dismissAppends(liveHistory ? { messages: liveHistory } : chat, input, liveHistory !== undefined);
+		} catch (err) {
+			if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
+			throw err;
+		}
+		if (running) {
+			if (current !== owner) return Response.json({ error: "The running turn changed. Retry the dismissal." }, { status: 409 });
+			parkDismissal(id, input);
+			owner?.abort();
+			return Response.json({ ok: true, parked: true }, { status: 202 });
+		}
+		if (admissionClosed()) {
+			if (!await waitForOpen(req.signal)) return new Response(null, { status: 499 });
+			continue;
+		}
+		return tracked("write-request", () => {
+			stores.chatStore.saveMessages(id, [...chat.messages, ...appends]);
+			emit("record-changed", { chatId: id });
+			return Response.json({ ok: true });
+		});
 	}
-
-	// A running turn owns persistence. Native targets can still materialize at settle.
-	if (isTurnRunning(id)) {
-		if (runningTurn(id) !== owner) return Response.json({ error: "The running turn changed. Retry the dismissal." }, { status: 409 });
-		parkDismissal(id, input);
-		owner?.abort();
-		return Response.json({ ok: true, parked: true }, { status: 202 });
-	}
-
-	try {
-		appends ??= dismissAppends(chat, input);
-	} catch (err) {
-		if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
-		throw err;
-	}
-
-	// Write-ahead, turn-less: the record is the only state that moves.
-	// No teacher request runs here. Side exchanges remain pending for the
-	// next budget-checked call, never pre-published into compaction history.
-	stores.chatStore.saveMessages(id, [...chat.messages, ...appends]);
-	emit("record-changed", { chatId: id });
-	return Response.json({ ok: true });
 }
-
-export const POST = mutation(handlePost);

@@ -1122,7 +1122,7 @@ export class SessionModel {
 	 * — no turn, no stream, nothing wakes. The session pauses at the
 	 * user's choice; the next plain send is the wake. */
 	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<boolean> {
-		if (!this.readyRef || pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return false;
+		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return false;
 		const subject = pendingQuestionOf(this.nativeHistory());
 		if (!subject || subject.toolCallId !== toolCallId || (questionKey !== undefined && subject.key !== questionKey)) return false;
 		if (answer.readingThinking !== undefined) {
@@ -1135,7 +1135,6 @@ export class SessionModel {
 	}
 
 	async dismissProblem(problemCallId: string): Promise<boolean> {
-		if (!this.readyRef) return false;
 		const subject = activeProblemOccurrenceOf(this.nativeHistory());
 		if (subject?.toolCallId !== problemCallId) return false;
 		return this.dismiss({ type: "dismiss-problem", problemCallId }, newProblemDismissedMarker(problemCallId), () => {
@@ -1151,10 +1150,7 @@ export class SessionModel {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ input }),
 			});
-			if (!res.ok) {
-				const explanation = res.status === 503 ? maintenanceMessage(await res.text()) : undefined;
-				throw new Error(explanation || `The dismissal failed (${res.status}).`);
-			}
+			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
 			this.invalidateCanonicalReads();
 			if (isCurrent()) this.mutate(() => {
 				this.tail = [...this.tail, { ...marker, id: localId() }];

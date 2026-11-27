@@ -96,6 +96,19 @@ export function whenOpen(fn: () => void) {
 	if (!admissionClosed()) fn();
 	else state().onOpen.add(fn);
 }
+export function waitForOpen(signal: AbortSignal): Promise<boolean> {
+	if (!admissionClosed() || signal.aborted) return Promise.resolve(!signal.aborted);
+	return new Promise(resolve => {
+		const callbacks = state().onOpen;
+		const finish = () => {
+			callbacks.delete(finish);
+			signal.removeEventListener("abort", finish);
+			resolve(!signal.aborted);
+		};
+		callbacks.add(finish);
+		signal.addEventListener("abort", finish, { once: true });
+	});
+}
 export function maintenanceStatus() {
 	const s = state();
 	const reasons = s.unknownPlugin ? ["unknown-plugin-lifecycle"] : [];

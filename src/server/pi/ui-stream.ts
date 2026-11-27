@@ -3,6 +3,7 @@ import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-c
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 import type { ChatGPTRequestCycle } from "../../agent/chatgpt-request-cycle.ts";
 import { pluginQuestionLedgerFor } from "../../agent/plugin-question-tools.ts";
+import type { LhMessage } from "../../core/native-messages.ts";
 
 /**
  * THE NATIVE WIRE (Wave D, owner-approved 2026-09-26): one agent turn, streamed
@@ -118,6 +119,7 @@ export interface PiTurnSubscriber {
  *  in-memory event log + the live subscriber set. The POST response and
  *  the reattach stream are both subscribers onto it. */
 export interface PiTurnHandle {
+	dismissalHistory?(): LhMessage[] | undefined;
 	/** A fresh subscriber stream: FULL replay of the log, then live events
 	 *  until the turn settles (ending [DONE]). Cancelling it detaches the
 	 *  view only — the turn runs on. */
@@ -315,6 +317,11 @@ function startPiTurn(spec: PiTurnSpec, finish: () => void): PiTurnHandle {
 	})().finally(finish);
 
 	return {
+		dismissalHistory() {
+			const messages = agent.state.messages.filter(m => (m as { role?: string }).role !== "system");
+			const mapped = (uniquifier?.remapSettled(messages) ?? messages) as LhMessage[];
+			return mapped.map((message, index) => message.id ? message : { ...message, id: `c_dismiss_${index}` });
+		},
 		subscribe() {
 			let sub: PiTurnSubscriber | undefined;
 			const stream = new ReadableStream<Uint8Array>({
