@@ -632,19 +632,22 @@ function SessionsSidebar() {
 	   first (owner ruling), then — below a hairline — the extraction
 	   coverage block (owner-locked redesign 2026-09-24, order refined
 	   2026-09-24: Rename/Delete on top, the numbers + manual Extract
-	   affordance at the bottom). The anchor is the row that was
-	   right-clicked — assigned into a ref before the state flip so the
-	   shell measures it on its first (hidden) pass. */
-	const [ctxChatId, setCtxChatId] = useState<string | null>(null);
-	const ctxAnchorRef = useRef<HTMLElement | null>(null);
+	   affordance at the bottom). */
+	const [contextMenu, setContextMenu] = useState<{
+		kind: "session" | "folder";
+		id: string;
+		anchorRef: { current: HTMLButtonElement };
+		narrowViewport: boolean;
+	} | null>(null);
+	if (contextMenu && contextMenu.narrowViewport !== narrowViewport) setContextMenu(null);
+	const ctxChatId = contextMenu?.kind === "session" ? contextMenu.id : null;
+	const ctxFolderId = contextMenu?.kind === "folder" ? contextMenu.id : null;
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
 
-	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
-		e.preventDefault(); // suppress the native menu
-		ctxAnchorRef.current = e.currentTarget;
-		setCtxFolderId(null);
-		setCtxChatId(chat.id);
+	const openContext = (event: React.MouseEvent<HTMLButtonElement>, kind: "session" | "folder", id: string) => {
+		event.preventDefault();
+		setContextMenu({ kind, id, anchorRef: { current: event.currentTarget }, narrowViewport });
 	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
@@ -652,17 +655,17 @@ function SessionsSidebar() {
 	// or folds the sidebar. Right-clicking another row re-anchors: its
 	// pointerdown closes this menu, its contextmenu opens the next.
 	useEffect(() => {
-		if (ctxChatId === null) return;
+		if (!contextMenu) return;
 		const onPointerDown = (e: PointerEvent) => {
-			if (!interactions.isElementEligible(document.querySelector<HTMLElement>('[data-testid="session-context-menu"]'))) return;
+			if (!interactions.isElementEligible(document.querySelector<HTMLElement>(`[data-testid="${contextMenu.kind}-context-menu"]`))) return;
 			const target = e.target as Node;
 			if (target instanceof Element && target.closest("[data-lh-menu]")) return;
-			if (ctxAnchorRef.current?.contains(target)) return;
-			setCtxChatId(null);
+			if (contextMenu.anchorRef.current.contains(target)) return;
+			setContextMenu(null);
 		};
 		document.addEventListener("pointerdown", onPointerDown);
 		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [ctxChatId, interactions]);
+	}, [contextMenu, interactions]);
 
 	// Inline rename (owner ruling, wave 6): the row swaps to a text input;
 	// commit rides the SAME plumbing as the header rename — PUT the title,
@@ -732,27 +735,7 @@ function SessionsSidebar() {
 	const folderDrop = useSidebarDrop(organization, changeFolders);
 	const [creatingFolder, setCreatingFolder] = useState<{ parentId: string | null } | null>(null);
 	const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
-	const [ctxFolderId, setCtxFolderId] = useState<string | null>(null);
 	const [deletingFolder, setDeletingFolder] = useState<{ id: string; name: string; copy: DeleteDialogCopy; scope: FolderDeletionScope } | null>(null);
-	const folderAnchorRef = useRef<HTMLElement | null>(null);
-	const openFolderContext = (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
-		e.preventDefault();
-		folderAnchorRef.current = e.currentTarget;
-		setCtxChatId(null);
-		setCtxFolderId(id);
-	};
-	useEffect(() => {
-		if (ctxFolderId === null) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (!interactions.isElementEligible(document.querySelector<HTMLElement>('[data-testid="folder-context-menu"]'))) return;
-			const target = e.target as Node;
-			if (target instanceof Element && target.closest("[data-lh-menu]")) return;
-			if (folderAnchorRef.current?.contains(target)) return;
-			setCtxFolderId(null);
-		};
-		document.addEventListener("pointerdown", onPointerDown);
-		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [ctxFolderId, interactions]);
 	// A folder deletion's success: the session Delete's, for every session
 	// that went (list patch, home if the open one died, graph refetch).
 	const onFolderDeleted = useCallback(({ deletedChatIds, graphRevision }: { deletedChatIds: string[]; graphRevision: number }) => {
@@ -773,7 +756,7 @@ function SessionsSidebar() {
 		const folder = organization.folders.find((f) => f.id === id);
 		const scope = folderDeletionScope(directory, id);
 		if (!folder || !scope) return;
-		setCtxFolderId(null);
+		setContextMenu(null);
 		clearFolderFailure();
 		if (scope.chatIds.length === 0) {
 			void fetch(`/api/graph/sources/folders/${encodeURIComponent(id)}?mode=preserve-graph`, {
@@ -821,7 +804,7 @@ function SessionsSidebar() {
 								closeDrawer();
 								router.push(`/chat/${c.id}`);
 							}}
-							onContextMenu={(e) => openContext(e, c)}
+							onContextMenu={(e) => openContext(e, "session", c.id)}
 						/>
 					)}
 				</SourceDragRow>
@@ -850,7 +833,7 @@ function SessionsSidebar() {
 					dropActive={folderDrop.dropTarget === folder.id}
 					renaming={renamingFolderId === folder.id}
 					onToggle={() => toggleFolder(folder.id)}
-					onContextMenu={(e) => openFolderContext(e, folder.id)}
+					onContextMenu={(e) => openContext(e, "folder", folder.id)}
 					onRename={(name) => changeFolders({ action: "rename-folder", id: folder.id, name })}
 					onRenameDone={() => setRenamingFolderId(null)}
 				/>
@@ -1126,8 +1109,8 @@ function SessionsSidebar() {
 				    (owner ruling — no more). MenuShell owns placement/focus/arrow
 				    cycling; the dismissal effect above owns the contract. */}
 				{ctxChatId !== null && (
-					<MenuShell onClose={() => { setCtxChatId(null); return "closed"; }}
-						anchorRef={ctxAnchorRef}
+					<MenuShell onClose={() => { setContextMenu(null); return "closed"; }}
+						anchorRef={contextMenu?.anchorRef}
 						testid="session-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
@@ -1143,7 +1126,7 @@ function SessionsSidebar() {
 							data-testid="ctx-rename"
 							onClick={() => {
 								setRenamingId(ctxChatId);
-								setCtxChatId(null);
+								setContextMenu(null);
 							}}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
 						>
@@ -1159,7 +1142,7 @@ function SessionsSidebar() {
 							data-testid="ctx-export-md"
 							onClick={() => {
 								const chatId = ctxChatId;
-								setCtxChatId(null);
+								setContextMenu(null);
 								const a = document.createElement("a");
 								a.href = `/api/chats/${chatId}/markdown`;
 								a.download = ""; // the route's filename wins
@@ -1177,7 +1160,7 @@ function SessionsSidebar() {
 							onClick={() => {
 								const target = chats?.find((c) => c.id === ctxChatId);
 								if (target) setDeleting(target);
-								setCtxChatId(null);
+								setContextMenu(null);
 							}}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
 						>
@@ -1192,8 +1175,8 @@ function SessionsSidebar() {
 				    Delete only removes folders that are empty everywhere and
 				    otherwise explains why, keeping the menu open. */}
 				{ctxFolderId !== null && (
-					<MenuShell onClose={() => { setCtxFolderId(null); return "closed"; }}
-						anchorRef={folderAnchorRef}
+					<MenuShell onClose={() => { setContextMenu(null); return "closed"; }}
+						anchorRef={contextMenu?.anchorRef}
 						testid="folder-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
@@ -1201,7 +1184,7 @@ function SessionsSidebar() {
 						<button
 							type="button"
 							data-testid="folder-ctx-rename"
-							onClick={() => { setRenamingFolderId(ctxFolderId); setCtxFolderId(null); }}
+							onClick={() => { setRenamingFolderId(ctxFolderId); setContextMenu(null); }}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							Rename
@@ -1211,7 +1194,7 @@ function SessionsSidebar() {
 							data-testid="folder-ctx-new-subfolder"
 							onClick={() => {
 								const id = ctxFolderId;
-								setCtxFolderId(null);
+								setContextMenu(null);
 								if (searching) setSearchFolds((previous) => ({ query, ids: new Set([...(previous.query === query ? previous.ids : [])].filter((f) => f !== id)) }));
 								else setFolderOpen(id, true);
 								setCreatingFolder({ parentId: id });
