@@ -129,4 +129,11 @@ Additional runtime gates have prerequisites:
 
 Run checks proportionate to the change. Offline gates prove exercised contracts, not live entitlements or model-authored lesson quality.
 
+### Narrow layout
+
 The viewport smoke uses Chromium emulation. Physical Android Chrome and iPhone Safari still need checks for browser bars, notch insets, rotation, pinch zoom, and the on-screen keyboard while reading, typing, and sending.
+
+The touch and keyboard follow-up should reproduce these limits on a physical phone with the on-screen keyboard open:
+
+- In a practice draft with a long message and a layout viewport around 412 × 200 CSS pixels, a failed session start can leave the retry message below the visible part of the scrollable area that also contains the node picker. The smoke checks the alert text and retries with the original draft, and it does not measure whether the alert is visible.
+- On Home and in existing sessions, Android Chrome can reduce the layout viewport to around 412 × 200 CSS pixels because the page requests `interactive-widget=resizes-content`. A multiline editor can still grow to 192 CSS pixels. The bottom-anchored composer then needs more height than the viewport once its controls and spacing are included, clipping the top of the editor. The 200-pixel smoke cases exercise drafts.

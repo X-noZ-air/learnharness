@@ -1680,12 +1680,12 @@ export function Chat({
 								data-plugin-chrome-title
 								aria-label="Session title"
 								title="Rename this session"
-								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none narrow:text-xl [field-sizing:content]"
+								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none narrow:min-w-0 narrow:max-w-none narrow:flex-1 narrow:text-xl [field-sizing:content]"
 							/>
 							{/* flex-1 spacer during rename too, so the chips stay at
 							    the right edge; clicks here commit via the header
 							    mousedown handler. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							<div className="min-w-4 flex-1 narrow:hidden" aria-hidden="true" />
 						</>
 					) : (
 					<>
