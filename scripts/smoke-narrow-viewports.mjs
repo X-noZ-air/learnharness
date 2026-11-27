@@ -32,6 +32,7 @@ const backdrop = '[data-testid="sidebar-backdrop"]';
 const teaching = '[data-testid="new-session"]';
 const content = "[data-session-surface]";
 const modelButton = '[data-testid="stats-model"]';
+const startDictation = 'main button[aria-label="Start dictation"]';
 const keyboardViewport = { ...phoneViewport, height: 200 };
 
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), "lh-viewport-"));
@@ -165,6 +166,18 @@ async function checkVerticalHitTargets(page, selector) {
 	left + width / 2, [top + 2, bottom - 2]), `${selector} is obscured`);
 }
 
+async function checkHomeDictation(page, viewport) {
+	await page.waitForFunction((selector, id) => document.querySelector(selector)?.textContent.includes(id), {}, modelButton, modelId);
+	const minimum = isNarrow(viewport) ? 44 : 0;
+	await bounds(page, startDictation, minimum);
+	await bounds(page, `${startDictation} svg`, 12);
+	await checkVerticalHitTargets(page, `${startDictation}:enabled`);
+	for (const selector of ['[data-testid="home-mode-teach"]', '[data-testid="home-mode-practice"]', modelButton]) {
+		await bounds(page, selector, minimum);
+		await checkVerticalHitTargets(page, selector);
+	}
+}
+
 async function waitForInlineSidebar(page) {
 	await page.waitForSelector(inlineSidebar, { visible: true });
 	await page.$eval(inlineSidebar, async sidebar => {
@@ -201,6 +214,12 @@ async function sidebarClosed(page, narrow = true) {
 }
 
 async function openDrawer(page, touch = true) {
+	await page.waitForFunction(selector => {
+		const opener = document.querySelector(selector);
+		if (!opener) return false;
+		const { x, y, width, height } = opener.getBoundingClientRect();
+		return opener.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+	}, {}, drawerOpener + '[aria-expanded="false"]');
 	await action(page, drawerOpener, touch);
 	await page.waitForSelector(drawer + '[aria-modal="true"]');
 	await page.waitForFunction(selector => document.activeElement === document.querySelector(selector), {}, drawer + " aside");
@@ -430,7 +449,7 @@ async function checkHomeDraftRetry(page, mode = "teach") {
 			.filter(p => p.getClientRects().length > 0 && getComputedStyle(p).visibility === "visible")
 			.map(p => p.getBoundingClientRect().toJSON()));
 	assert.ok(guidance.every(rect => !overlaps(rect, message)), "graph guidance overlaps the retry alert");
-	await bounds(page, '[data-testid="home-mode-switch"]');
+	await checkHomeDictation(page, keyboardViewport);
 	await action(page, modelButton, true);
 	await page.waitForSelector(modelButton + '[aria-expanded="true"]');
 	await page.keyboard.press("Escape");
@@ -574,6 +593,8 @@ async function checkLesson(origin, viewport) {
 	const narrow = isNarrow(viewport);
 	const { context, page } = await newClient(origin, viewport);
 	try {
+		if (!narrow) await waitForInlineSidebar(page);
+		await checkHomeDictation(page, viewport);
 		if (narrow) await checkDrawer(page);
 		if (viewport === phoneViewport) {
 			await openDrawer(page);

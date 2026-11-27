@@ -271,7 +271,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	};
 
 	return (
-		<div ref={containerRef} className="relative flex items-center gap-1.5 narrow:min-w-0 narrow:max-w-1/2" data-testid="model-control">
+		<div ref={containerRef} className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2" data-testid="model-control">
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
 				action="open-model-picker"
@@ -279,7 +279,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
-					className="narrow:min-h-11 narrow:min-w-11 narrow:[&>span:first-child]:min-w-0 narrow:[&>span:first-child]:truncate"
+					className="min-w-0 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate narrow:min-h-11 narrow:min-w-11"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
 				>{effectiveId ? prettyModel(effectiveId) : "—"}</ModelPickerPill>
@@ -294,7 +294,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-thinking"
-					className="narrow:min-h-11 narrow:min-w-11 narrow:shrink-0"
+					className="shrink-0 narrow:min-h-11 narrow:min-w-11"
 					onClick={() => {
 						if (entry === undefined) return;
 						openMenu("thinking");
