@@ -205,6 +205,48 @@ class ReleaseTests(unittest.TestCase):
             path.stat().st_size for path in self.destination.rglob("*") if not path.is_symlink() and path.is_file()
         ))
 
+    def test_published_release_skips_only_covered_commits_of_the_same_version(self):
+        self.git("init")
+        package = self.work / "package.json"
+        package.write_text('{"version": "0.7.0"}')
+        older = self.git_commit("First release attempt")
+        package.write_text('{"version": "0.7.0", "description": "Later build"}')
+        newer = self.git_commit("Publish a descendant")
+        self.git("tag", "werft-0.7.0.1", older)
+        self.git("tag", "werft-0.7.0.2", newer)
+        self.git("tag", "werft-0.7.0.3", newer)
+        package.write_text('{"version": "0.7.1"}')
+        self.git("tag", "werft-0.7.1.1", self.git_commit("Publish another upstream version"))
+        self.git("checkout", "--detach", older)
+        package.write_text('{"version": "0.7.0", "description": "Other branch"}')
+        unrelated = self.git_commit("Diverge from the published branch")
+
+        gh = self.work / "gh"
+        gh.write_text('#!/usr/bin/env bash\nprintf "%s" "$RELEASES" | jq -r "${!#}"\n')
+        gh.chmod(0o755)
+        published = {"tag_name": "werft-0.7.0.2", "draft": False, "prerelease": False}
+        other_releases = [
+            {"tag_name": "werft-0.7.0.1", "draft": True, "prerelease": False},
+            {"tag_name": "werft-0.7.0.3", "draft": False, "prerelease": True},
+            {"tag_name": "werft-0.7.1.1", "draft": False, "prerelease": False},
+        ]
+
+        for commit, releases, expected in [
+            (older, [published, *other_releases], "werft-0.7.0.2"),
+            (newer, [published, *other_releases], "werft-0.7.0.2"),
+            (unrelated, [published, *other_releases], ""),
+            (older, other_releases, ""),
+        ]:
+            with self.subTest(commit=commit, expected=expected):
+                covered = subprocess.check_output(
+                    ["bash", ROOT / "scripts/published-werft-release.sh", commit, "werft-0.7.0."],
+                    cwd=self.work, text=True, env={
+                        **os.environ, "PATH": f"{self.work}:{os.environ['PATH']}",
+                        "GITHUB_REPOSITORY": "fixture/learnharness", "RELEASES": json.dumps(releases),
+                    },
+                ).strip()
+                self.assertEqual(covered, expected)
+
     def test_release_target_builds_the_run_commit_after_werft_advances(self):
         self.git("init")
         package = self.work / "package.json"

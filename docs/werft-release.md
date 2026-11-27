@@ -26,11 +26,12 @@ trigger, the workflow derives the upstream tag from the run commit's package
 version, checks that the tag is a published stable release whose commit is
 contained in the run commit, and records both commits in the release metadata.
 
-Release runs queue and skip commits with a published release. The workflow
-allocates `werft-<major>.<minor>.<patch>.<revision>` from existing tags and
-verifies the draft's downloaded assets before publication. An interrupted
-upload may leave a reserved revision and a draft. Rerun the full workflow to
-retry an interrupted upload.
+Release runs queue and skip any commit already contained in a published
+release for the same upstream version. The workflow allocates
+`werft-<major>.<minor>.<patch>.<revision>` from existing tags and verifies the
+draft's downloaded assets before publication. An interrupted upload may leave
+a reserved revision and a draft. Rerun the full workflow to retry an
+interrupted upload.
 
 If GitHub refuses to create the release tag, publication stops and the run
 reports the tag and commit that failed. When a newer workflow change on

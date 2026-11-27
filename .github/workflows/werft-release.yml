@@ -55,7 +55,7 @@ jobs:
           prefix="werft-${UPSTREAM_TAG#v}."
           published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "$prefix")
           if [[ -n "$published" ]]; then
-            echo "Commit $GITHUB_SHA is already published as $published"
+            echo "Published release $published already contains commit $GITHUB_SHA"
             exit 0
           fi
 
@@ -155,7 +155,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -171,12 +170,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "${RELEASE_TAG%.*}.")
-          if [[ -n "$published" ]]; then
-            echo "Commit $GITHUB_SHA is already published as $published"
-            exit 0
-          fi
-
           assets="$RUNNER_TEMP/release"
           cp "$BUNDLE" "$assets/provenance.json"
 
