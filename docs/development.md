@@ -121,7 +121,7 @@ Additional runtime gates have prerequisites:
 | Check | Prerequisite / purpose |
 | --- | --- |
 | `node scripts/smoke-provider-runtime.mjs` | Fresh build; traced provider payload/runtime paths with fixtures. Also used during packaging. |
-| `node scripts/smoke-narrow-viewports.mjs` | Fresh build and Chrome on Linux or macOS. Set `CHROME_PATH` to override the Chrome executable. Runs in CI on Linux. See [narrow layout](#narrow-layout) for coverage. |
+| `node scripts/smoke-narrow-viewports.mjs` | Fresh build and Chrome on Linux or macOS. Runs in CI on Linux. See [narrow layout](#narrow-layout) for coverage. |
 | `node scripts/smoke-web-subscriptions.mjs` | Build, no dev server running; isolated synthetic connection checks, external traffic blocked. Briefly changes/restores a source mtime to exercise reload. |
 | `node scripts/build-plugin-types.mjs` | Builds the portable type-only plugin SDK under `dist/plugin-sdk`. |
 | `node scripts/build-server.mjs` then `node scripts/smoke-server.mjs --isolated --browser` | Fresh build; assemble/verify a source-free standalone copy, installed plugin backends and browser UI. Add `--electron` for Electron's bundled Node; browser checks require local Chrome/Chromium. |

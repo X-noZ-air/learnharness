@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { HostDialog } from "@/components/host-dialog";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
@@ -211,19 +211,6 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 			return !v;
 		});
 	}, [narrow, narrowViewport, open]);
-
-	// ⌘B: the global shortcut dispatches kbdEventForAction("toggle-sidebar")
-	// and the context answers on exactly that name — the shared spelling
-	// is the fix for the interlude bug (the listener sat on the pre-
-	// convention name "lh:toggle-sidebar" while the dispatcher sent
-	// "lh:kbd-toggle-sidebar", so ⌘B silently did nothing; owner
-	// 2026-09-25).
-	useEffect(() => {
-		const event = kbdEventForAction("toggle-sidebar");
-		const onToggle = () => toggle();
-		window.addEventListener(event, onToggle);
-		return () => window.removeEventListener(event, onToggle);
-	}, [toggle]);
 
 	return (
 		<SidebarContext.Provider value={{ open: narrowViewport ? drawerOpen : open && !narrow, toggle, narrowViewport, closeDrawer, openerRef }}>
@@ -469,12 +456,25 @@ function SessionsSidebar() {
 		window.localStorage.setItem(KIND_FILTER_KEY, f);
 	}, []);
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
+	const practiceDraft = pathname === "/chat/new" && searchParams.get("mode") === "practice";
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
 
 	useEffect(() => {
 		closeDrawer();
-	}, [pathname, closeDrawer]);
+	}, [pathname, practiceDraft, closeDrawer]);
+
+	useEffect(() => {
+		const event = kbdEventForAction("toggle-sidebar");
+		const onToggle = () => {
+			const modalRoot = interactions.getActiveModal()?.rootRef.current;
+			if (narrowViewport && open && modalRoot && !modalRoot.contains(drawerRef.current)) return;
+			toggle();
+		};
+		window.addEventListener(event, onToggle);
+		return () => window.removeEventListener(event, onToggle);
+	}, [interactions, narrowViewport, open, toggle]);
 
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
 	   sessionless draft view; the session is created only when the first
@@ -857,17 +857,6 @@ function SessionsSidebar() {
 				: cn("sidebar-motion shrink-0 overflow-hidden duration-200 narrow:hidden", open ? "w-72" : "w-0")}
 			aria-hidden={!open}
 			inert={!open}
-			onKeyDown={narrowViewport ? (event) => {
-				if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
-				if (!event.currentTarget.contains(event.target as Node)) return;
-				// The app captures Tab for composer shortcuts. Keep it inside the drawer.
-				const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("a[href], button, input, [tabindex]"))
-					.filter(control => control.tabIndex >= 0 && interactions.isElementEligible(control));
-				const current = controls.indexOf(event.target as HTMLElement);
-				const next = event.shiftKey ? (current <= 0 ? controls.length - 1 : current - 1) : (current + 1) % controls.length;
-				event.stopPropagation();
-				controls[next]?.focus();
-			} : undefined}
 		>
 			<div className="flex h-full w-72 flex-col border-r bg-background narrow:h-auto narrow:min-h-full narrow:w-full">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
@@ -1236,6 +1225,18 @@ function SessionsSidebar() {
 		<HostDialog
 			open={open}
 			onClose={closeDrawer}
+			onKeyDown={(event) => {
+				if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+				const panel = drawerRef.current;
+				if (!panel || (event.target !== event.currentTarget && !panel.contains(event.target as Node))) return;
+				// The app captures Tab for composer shortcuts. Keep it inside the drawer.
+				const controls = Array.from(panel.querySelectorAll<HTMLElement>("a[href], button, input, [tabindex]"))
+					.filter(control => control.tabIndex >= 0 && interactions.isElementEligible(control));
+				const current = controls.indexOf(event.target as HTMLElement);
+				const next = event.shiftKey ? (current <= 0 ? controls.length - 1 : current - 1) : (current + 1) % controls.length;
+				event.stopPropagation();
+				controls[next]?.focus();
+			}}
 			initialFocusRef={drawerRef}
 			returnFocusFallback={getDrawerFocusFallback}
 			aria-label="Sessions"

@@ -313,6 +313,23 @@ async function checkSidebarContextMenus(page, chatId) {
 			await page.click(row, { button: "right" });
 			await page.waitForSelector(menu, { visible: true });
 		};
+		if (kind === "session") {
+			for (const reverse of [false, true]) {
+				await openMenu();
+				await page.keyboard.press("Escape");
+				await page.waitForSelector(menu, { hidden: true });
+				await waitForFocus(page, drawer);
+				if (reverse) await page.keyboard.down("Shift");
+				await page.keyboard.press("Tab");
+				if (reverse) await page.keyboard.up("Shift");
+				const focus = await page.evaluate(selector => ({
+					inDrawer: document.querySelector(selector)?.contains(document.activeElement),
+					label: document.activeElement.getAttribute("aria-label"),
+				}), drawer + " aside");
+				assert.equal(focus.inDrawer, true, "Tab moves from the dialog frame into the drawer");
+				assert.equal(focus.label === "Home", !reverse, "Tab and Shift+Tab enter at opposite ends");
+			}
+		}
 		await openMenu();
 		await toggleDrawerWithShortcut(page);
 		await sidebarClosed(page);
@@ -363,12 +380,24 @@ async function checkDraftRetry(origin) {
 	const { context, page } = await newClient(origin, phoneViewport);
 	try {
 		await openDrawer(page);
+		await action(page, teaching, true);
+		await page.waitForFunction(() => location.pathname === "/chat/new" && !location.search);
+		await sidebarClosed(page);
+		await openDrawer(page);
 		await action(page, '[data-testid="new-session-practice"]', true);
 		await page.waitForFunction(() => location.pathname === "/chat/new" && location.search === "?mode=practice");
 		await sidebarClosed(page);
+		await openDrawer(page);
+		await page.evaluate(() => history.back());
+		await page.waitForFunction(() => location.pathname === "/chat/new" && !location.search);
+		await sidebarClosed(page);
+		await page.evaluate(() => history.forward());
+		await page.waitForFunction(() => location.search === "?mode=practice");
+		await page.waitForSelector(input + '[aria-label="What do you want to practice?"]');
 
 		const attempts = [];
 		page.on("request", request => {
+			if (request.method() === "DELETE" && new URL(request.url()).pathname.startsWith("/api/chats/")) return;
 			if (request.method() === "POST" && new URL(request.url()).pathname === "/api/chats") {
 				attempts.push(request.postData());
 				if (attempts.length === 1) return request.respond({ status: 503 });
@@ -394,6 +423,26 @@ async function checkDraftRetry(origin) {
 		assert.equal(attempts.length, 2);
 		assert.deepEqual(JSON.parse(attempts[0]), { title: draft, kind: "practice" });
 		assert.equal(attempts[1], attempts[0], "the retry sends the original practice draft");
+
+		await page.setViewport(phoneViewport);
+		await openDrawer(page);
+		const chatPath = new URL(page.url()).pathname;
+		const row = `[data-session-id="${chatPath.split("/").at(-1)}"]`;
+		await page.waitForSelector(row, { visible: true });
+		await page.click(row, { button: "right" });
+		await action(page, '[data-testid="ctx-delete"]', false);
+		const confirming = '[data-testid="delete-confirm"]';
+		const pending = page.waitForRequest(request => request.method() === "DELETE" &&
+			new URL(request.url()).pathname === `/api/chats/${chatPath.split("/").at(-1)}`);
+		await action(page, confirming, false);
+		const request = await pending;
+		await toggleDrawerWithShortcut(page);
+		await page.waitForSelector(confirming + ":disabled");
+		await request.respond({ status: 503 });
+		await page.waitForSelector('[data-testid="delete-failure"]', { visible: true });
+		await action(page, '[data-testid="delete-cancel"]', false);
+		await action(page, close, true);
+		await sidebarClosed(page);
 		await checkPracticeRename(page);
 	} finally {
 		await context.close();
@@ -517,7 +566,7 @@ try {
 	const providerPort = await listen(stub);
 	const origin = await startApp();
 	browser = await puppeteer.launch({
-		...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: "chrome" }),
+		channel: "chrome",
 		headless: true,
 		userDataDir: path.join(profile, "browser"),
 		args: ["--disable-background-networking", "--disable-sync", "--no-first-run",
