@@ -292,6 +292,30 @@ async function checkDrawerRotation(page, focusTarget = `${inlineSidebar} ${close
 	await sidebarClosed(page);
 }
 
+async function checkSidebarContextMenuRotation(page, chatId) {
+	await openDrawer(page);
+	await action(page, '[data-testid="sidebar-add-folder"]', true);
+	await page.type('[data-testid="sidebar-new-folder-row"] input', "Rotation fixture");
+	await page.keyboard.press("Enter");
+
+	const rows = [
+		["session", `[data-session-id="${chatId}"]`],
+		["folder", 'button[aria-label="Expand folder Rotation fixture"]'],
+	];
+	for (const [kind, row] of rows) {
+		const menu = `[data-testid="${kind}-context-menu"]`;
+		await page.waitForSelector(row, { visible: true });
+		await page.click(row, { button: "right" });
+		await page.waitForSelector(menu, { visible: true });
+		await page.setViewport(rotatedPhoneViewport);
+		await waitForInlineSidebar(page);
+		assert.equal(await page.$(menu), null, `${kind} context menu closes when the drawer becomes inline`);
+		await page.setViewport(phoneViewport);
+		await sidebarClosed(page);
+		if (kind === "session") await openDrawer(page);
+	}
+}
+
 async function typeDraftWithKeyboardOpen(page, text) {
 	await action(page, input, true);
 	await page.setViewport(keyboardViewport);
@@ -419,6 +443,7 @@ async function checkLesson(origin, viewport) {
 		assert.ok(modelRequests.some(body => body?.includes(followUp(name))));
 
 		if (viewport === phoneViewport) {
+			await checkSidebarContextMenuRotation(page, route.split("/").at(-1));
 			await openDrawerWithShortcut(page);
 			await page.keyboard.press("Escape");
 			await sidebarClosed(page);
