@@ -88,6 +88,12 @@ test("resume requires the current drain generation", () => {
 	}
 });
 
+test("the open generation cannot start a drain", () => {
+	const open = control("status");
+	assert.throws(() => control("drain", open.generation), /only renew an active drain/);
+	assert.deepEqual(control("status"), open);
+});
+
 test("an ended owner counts again only while admission is open", () => {
 	const owner = beginWork("delivery");
 	owner.end();

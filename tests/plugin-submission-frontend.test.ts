@@ -183,14 +183,16 @@ test("model retry reuses accepted transformed history and never re-intercepts le
 });
 
 test("steer displays the maintenance explanation only for a matching 503 refusal", async () => {
-	for (const [status, code, expected] of [
-		[412, "submission-stale", "The steer failed (412)."],
-		[412, "maintenance", "The steer failed (412)."],
-		[503, "other", "The steer failed (503)."],
-		[503, "maintenance", "Retry after maintenance."],
+	const stale = JSON.stringify({ code: "submission-stale", error: "The live submission target changed. Your input has been kept." });
+	const maintenance = JSON.stringify({ code: "maintenance", error: "Retry after maintenance." });
+	for (const [status, body, expected] of [
+		[412, stale, stale],
+		[412, maintenance, maintenance],
+		[503, "Service unavailable.", "Service unavailable."],
+		[503, "", "The steer failed (503)."],
+		[503, maintenance, "Retry after maintenance."],
 	] as const) {
-		const model = new SessionModel({ chatId: "fixture", initialMessages: [], fetch: async () =>
-			Response.json({ code, error: "Retry after maintenance." }, { status }) });
+		const model = new SessionModel({ chatId: "fixture", initialMessages: [], fetch: async () => new Response(body, { status }) });
 		assert.equal(await model.steer("keep my draft"), false);
 		assert.equal(model.getState().error?.message, expected);
 	}

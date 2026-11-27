@@ -137,3 +137,64 @@ test("a subscription change from admitted sign-in wakes parked delivery only aft
 	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, [steer]);
 	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
 });
+
+test("an admitted foreground turn settling during drain cannot wake an old subscription delivery", { timeout: 5000 }, async (t) => {
+	const { beginWork, control, maintenanceStatus } = await import("../src/core/maintenance.ts");
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "fixture.sock");
+	const provider = NATIVE_SUBSCRIPTIONS[0]!;
+	connection(provider.providerId, false);
+	const chat = stores.chatStore.createChat("Foreground turn with a parked result");
+	const model = { ...piModels().getModels(provider.providerId)[0]!, provider: provider.logicalId };
+	stores.chatStore.saveSettings(chat.id, { model: { provider: model.provider, id: model.id } });
+	const turn = beginWork("main-turn", true);
+	const login = beginWork("sign-in", true);
+	t.after(() => {
+		turn.end();
+		login.end();
+		unregisterLiveAgent(chat.id);
+		endTurn(chat.id);
+		discardChatDeliveries(chat.id);
+		const status = maintenanceStatus();
+		if (status.mode === "draining") control("resume", status.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	const foreground = { id: "fixture-foreground", role: "user" as const, content: "Continue learning", timestamp: 1 };
+	const agent = new Agent({ initialState: { model, messages: [foreground] }, streamFn: () => new AssistantMessageEventStream() });
+	turn.run(() => {
+		assert(beginTurn(chat.id));
+		registerLiveAgent(chat.id, agent);
+	});
+	const job = stores.jobStore.createJob({ kind: "research", chatId: chat.id, toolCallId: "parked-during-foreground" });
+	const result = { brief: "Fixture helper result", sources: [] };
+	stores.jobStore.updateJob(job.id, { status: "done", result, delivery: { kind: "result", status: "pending" } });
+	const steer = buildSubagentSteer(job, result);
+	const delivered = deliverJobResult(steer);
+	const wakes: boolean[] = [];
+	setTurnRunner(async (id, input) => {
+		wakes.push(maintenanceStatus().mode === "open");
+		if (input.type === "steers") stores.chatStore.saveMessages(id, [foreground, ...input.steers]);
+		return 200;
+	});
+	await new Promise(resolve => setImmediate(resolve));
+	const held = control("drain");
+	assert.deepEqual(held.counts, { "main-turn": 1, "sign-in": 1 });
+	login.run(() => connection(provider.providerId, true));
+	login.end();
+	turn.run(() => {
+		stores.chatStore.saveMessages(chat.id, [foreground]);
+		unregisterLiveAgent(chat.id);
+		endTurn(chat.id);
+		settleSteers(chat.id, [foreground], false, agent);
+	});
+	turn.end();
+	assert.equal(control("status", held.generation).drained, true);
+	assert.deepEqual(wakes, []);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
+
+	control("resume", held.generation);
+	await delivered;
+	assert.deepEqual(wakes, [true]);
+	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, [foreground, steer]);
+});

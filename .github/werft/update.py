@@ -373,9 +373,8 @@ def prepare_candidate(api, repo, journal, base_sha, release, branch, pr):
 
     live_sha = api.branch_sha(branch, missing=True)
     allowed_previous = active["sha"] if same_release else None
-    journaled_predecessor = active["previous_sha"] if same_release else None
     sha = repo.candidate(base_sha, release)
-    if live_sha not in (None, allowed_previous, journaled_predecessor, sha) or (pr and live_sha is None):
+    if live_sha not in (None, allowed_previous, sha) or (pr and live_sha is None):
         raise Refusal("candidate_changed", "prepare_candidate", expected=allowed_previous, observed=live_sha)
     candidate = {
         "tag": release["tag"], "base_sha": base_sha, "sha": sha,

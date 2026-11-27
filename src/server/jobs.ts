@@ -93,6 +93,7 @@ export function setPluginJobRecovery(recover: PluginJobRecovery): void {
 interface QueuedSteer {
 	steer: SteerMessage;
 	promise: Promise<void>;
+	parked: boolean;
 	/** Wake cargo remains owned here, but must not steer into its own run. */
 	waking?: boolean;
 	/** The constructed vehicle, once startup claims a turn. Until then only
@@ -234,7 +235,7 @@ export function deliverJobResult(steer: SteerMessage): Promise<void> {
 	return entry.promise;
 }
 
-function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
+function queueSteer(chatId: string, steer: SteerMessage, parked = false): QueuedSteer {
 	const queue = state().queues.get(chatId) ?? [];
 	const existing = queue.find((entry) => entry.steer.id === steer.id);
 	if (existing) return existing;
@@ -243,7 +244,7 @@ function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
 	const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
 	// Recovery/registration may own an entry with no waiting caller.
 	void promise.catch(() => undefined);
-	const entry: QueuedSteer = { steer, promise, resolve, reject };
+	const entry: QueuedSteer = { steer, promise, parked, resolve, reject };
 	queue.push(entry);
 	state().queues.set(chatId, queue);
 	return entry;
@@ -263,15 +264,27 @@ export function automaticFollowUpAllowed(chatId: string, agent?: Agent): boolean
 	return connectionBackgroundAllowed(provider);
 }
 
+function deliveryAdmitted(entry: QueuedSteer): boolean {
+	return !entry.parked || !admissionClosed();
+}
+
+function readyForWake(entry: QueuedSteer): boolean {
+	return deliveryAdmitted(entry) && !entry.handedTo && !entry.waking && !entry.deferred;
+}
+
 function handOffEligible(chatId: string, agent: Agent): void {
 	const queue = state().queues.get(chatId);
 	// Keep automatic results in their owning registry. Never mix them into a
 	// foreground batch without express account consent. Learner steers below
 	// remain deliverable, including the first poll of an answer run.
-	if (automaticFollowUpAllowed(chatId, agent) && queue && queue.length > 0) {
+	if (queue?.length) {
+		const allowed = automaticFollowUpAllowed(chatId, agent);
 		for (const entry of queue) {
-			if (!entry.waking && !entry.deferred && entry.handedTo !== agent && entry.steer.customType !== "probe-handoff") {
+			if (!allowed) {
+				if (!entry.waking) entry.parked = true;
+			} else if (deliveryAdmitted(entry) && !entry.waking && !entry.deferred && entry.handedTo !== agent && entry.steer.customType !== "probe-handoff") {
 				agent.steer(entry.steer);
+				entry.parked = false;
 				entry.handedTo = agent;
 			}
 		}
@@ -301,7 +314,7 @@ export function registerLiveAgent(chatId: string, agent: Agent, allowDeferred = 
 	state().liveAgents.set(chatId, agent);
 	restorePendingDeliveries(chatId);
 	for (const entry of state().queues.get(chatId) ?? []) {
-		if (allowDeferred) entry.deferred = false;
+		if (allowDeferred && deliveryAdmitted(entry)) entry.deferred = false;
 		if (entry.waking && wakeSteerIds?.has(entry.steer.id)) entry.wakeAgent = agent;
 	}
 	handOffEligible(chatId, agent);
@@ -378,7 +391,10 @@ export function restoreUncommittedAutomatic(chatId: string, agent: Agent, automa
 	const s = state();
 	s.automaticDeferred.add(agent);
 	for (const entry of s.queues.get(chatId) ?? []) {
-		if (entry.handedTo === agent && automaticIds.has(entry.steer.id)) entry.handedTo = undefined;
+		if (entry.handedTo === agent && automaticIds.has(entry.steer.id)) {
+			entry.handedTo = undefined;
+			entry.parked = true;
+		}
 	}
 	agent.clearSteeringQueue();
 	for (const entry of s.userSteers.get(chatId) ?? []) {
@@ -413,7 +429,10 @@ export function settleSteers(chatId: string, persisted: { id?: string }[], faile
 			const wakeHere = settledAgent !== undefined && entry.wakeAgent === settledAgent;
 			if (handedHere) entry.handedTo = undefined;
 			if (wakeHere) { entry.waking = false; entry.wakeAgent = undefined; }
-			if (failed && (handedHere || wakeHere) && jobIdOf(entry.steer)) entry.deferred = true;
+			if (failed && (handedHere || wakeHere) && jobIdOf(entry.steer)) {
+				entry.deferred = true;
+				entry.parked = true;
+			}
 			remaining.push(entry);
 		}
 	}
@@ -489,9 +508,10 @@ function chatIdOf(steer: SteerMessage): string {
  */
 function pump(chatId: string): Promise<void> {
 	const s = state();
-	if (!chatId || !s.queues.get(chatId)?.length || s.pumping.has(chatId)) return Promise.resolve();
+	const queue = s.queues.get(chatId);
+	if (!chatId || !queue?.length || s.pumping.has(chatId)) return Promise.resolve();
 	// A marker outlives a hold its caller does not own. Delivery continues when it opens.
-	if (!canStartWork()) { whenOpen(() => void pump(chatId)); return Promise.resolve(); }
+	if (!canStartWork() || !queue.some(deliveryAdmitted)) { whenOpen(() => void pump(chatId)); return Promise.resolve(); }
 	const lease = beginWork("delivery");
 	return lease.run(() => pumpQueue(chatId, lease)).finally(() => lease.end());
 }
@@ -521,9 +541,13 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 			// (an in-run injection persisted, a wake completed, or a duplicate
 			// deliver raced in). Resolve and flip without re-firing anything.
 			noteSteersDurable(chatId, record.messages);
-			const stillPending = (s.queues.get(chatId) ?? []).filter((entry) => !entry.waking && !entry.deferred);
+			const stillPending = (s.queues.get(chatId) ?? []).filter((entry) => deliveryAdmitted(entry) && !entry.waking && !entry.deferred);
 			if (stillPending.length === 0) { parked = true; return; }
-			if (!automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) { parked = true; return; }
+			if (!automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) {
+				for (const entry of stillPending) entry.parked = true;
+				parked = true;
+				return;
+			}
 
 			// VEHICLE 1 — THE LIVE RUN: pi's steering queue. The agent of the
 			// streaming turn takes every eligible marker; pi injects at the
@@ -576,7 +600,7 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 			// A live run may have delivered some markers while the gates were
 			// closed — re-check: only still-missing markers ride the wake.
 			noteSteersDurable(chatId, fresh.messages);
-			const fire = (s.queues.get(chatId) ?? []).filter((entry) => !entry.waking && !entry.deferred && !entry.handedTo);
+			const fire = (s.queues.get(chatId) ?? []).filter(readyForWake);
 			if (fire.length === 0) return;
 
 			// THE DISMISSAL PAUSE (owner design 2026-10-03, "A2"): the record
@@ -589,13 +613,17 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 			// An interrupted question-recovery request also waits for explicit
 			// input; a queued job must not restart its replacement turn.
 			if (endsInDismissal(fresh.messages) || endsInQuestionRecovery(fresh.messages) || !automaticFollowUpAllowed(chatId)) {
+				for (const entry of fire) entry.parked = true;
 				parked = true;
 				return;
 			}
 
 			// Keep ownership through the wake. The flag excludes cargo from
 			// its own live-agent handoff while duplicate callers share it.
-			for (const entry of fire) entry.waking = true;
+			for (const entry of fire) {
+				entry.parked = false;
+				entry.waking = true;
+			}
 			const steers = fire.map((e) => e.steer);
 
 			// Fire the wake with cargo still registered. A 409 releases its
@@ -610,7 +638,11 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 			const owned = fire.filter((entry) => s.queues.get(chatId)?.includes(entry));
 			if (status === 403 || status === 409) {
 				for (const entry of owned) { entry.waking = false; entry.wakeAgent = undefined; }
-				if (status === 403) { parked = true; return; }
+				if (status === 403) {
+					for (const entry of owned) entry.parked = true;
+					parked = true;
+					return;
+				}
 				await delay(RETRY_BACKOFF_MS[Math.min(attempt++, RETRY_BACKOFF_MS.length - 1)]!);
 				continue;
 			}
@@ -637,7 +669,8 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 		// a live run are NOT stragglers (settleSteers owns their resurrection)
 		// — restarting for them would just park in waitForIdle forever.
 		const q = state().queues.get(chatId) ?? [];
-		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some((e) => e.handedTo === undefined && !e.waking && !e.deferred)) void pump(chatId);
+		if (q.some(entry => !deliveryAdmitted(entry) && !entry.deferred)) whenOpen(() => void pump(chatId));
+		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some(readyForWake)) void pump(chatId);
 	}
 }
 
@@ -677,7 +710,10 @@ state().stopConnectionWatch = onSubscriptionChange(() => {
 		const pending = (s.queues.get(chatId) ?? []).filter((entry) => entry.handedTo === agent && !consumed.has(entry.steer.id));
 		if (pending.length === 0) continue;
 		agent.clearSteeringQueue();
-		for (const entry of pending) entry.handedTo = undefined;
+		for (const entry of pending) {
+			entry.handedTo = undefined;
+			entry.parked = true;
+		}
 		for (const entry of s.userSteers.get(chatId) ?? []) if (!consumed.has(entry.message.id)) entry.handedTo = undefined;
 		handOffEligible(chatId, agent); // only unconsumed learner input; never replay consumed steers
 	}
@@ -689,6 +725,7 @@ function deferOrReject(chatId: string, entry: QueuedSteer, error: Error): void {
 	entry.wakeAgent = undefined;
 	if (jobIdOf(entry.steer)) {
 		entry.deferred = true;
+		entry.parked = true;
 		console.error(`[steer ${entry.steer.id}] delivery remains pending:`, error.message);
 	} else {
 		removeEntry(chatId, entry);
@@ -739,7 +776,7 @@ function restorePendingDeliveries(chatId: string): void {
 			: job.result ? buildSubagentSteer(job, job.result as never) : undefined;
 		if (!steer) continue;
 		if (steerDelivered(record.messages, steer.id)) finalizeSteer(steer);
-		else queueSteer(chatId, steer);
+		else queueSteer(chatId, steer, true);
 	}
 }
 
@@ -757,11 +794,13 @@ function restorePendingDeliveries(chatId: string): void {
 async function waitForIdle(chatId: string, lease: Lease): Promise<boolean> {
 	for (;;) {
 		const record = stores.chatStore.getChat(chatId);
-		if (!record || !(state().queues.get(chatId) ?? []).some((entry) => !entry.waking && !entry.deferred && !entry.handedTo)) return lease.renew();
+		const pending = (state().queues.get(chatId) ?? []).filter(readyForWake);
+		if (!record || pending.length === 0) return lease.renew();
 		const running = isTurnRunning(chatId);
 		const blocked = running || hasUnresolvedQuestion(record.messages);
 		if (!blocked) {
 			if (!lease.renew()) return false;
+			for (const entry of pending) entry.parked = false;
 			await delay(GRACE_MS);
 			const recheck = stores.chatStore.getChat(chatId);
 			if (
@@ -771,7 +810,10 @@ async function waitForIdle(chatId: string, lease: Lease): Promise<boolean> {
 			) {
 				return true;
 			}
-		} else if (!running) lease.end();
+		} else if (!running) {
+			for (const entry of pending) entry.parked = true;
+			lease.end();
+		}
 		await delay(POLL_MS);
 	}
 }

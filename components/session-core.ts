@@ -1107,8 +1107,9 @@ export class SessionModel {
 			}
 			dropSteer();
 			settleDelivery();
-			const explanation = res.status === 503 ? maintenanceMessage(await res.text()) : undefined;
-			this.setError(explanation || `The steer failed (${res.status}).`);
+			const body = await res.text();
+			const explanation = res.status === 503 ? maintenanceMessage(body) : undefined;
+			this.setError(explanation || body || `The steer failed (${res.status}).`);
 		} catch (err) {
 			dropSteer(); settleDelivery();
 			this.setError((err as Error).message);
