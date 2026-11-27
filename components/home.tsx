@@ -211,8 +211,8 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-5">
-				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4">
+			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)]">
+				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0">
 					{/* The pick bar (owner vision, 2026-10-04): the chain
 					    table's selection is PERSISTENT — picked
 					    propositions show here as a count + Clear in EITHER
@@ -220,33 +220,35 @@ export function Home({
 					    send consumes it). Practice mode with nothing picked
 					    shows the pick HINT so the affordance is discoverable;
 					    teaching mode with nothing picked renders nothing. */}
-					<ComposerActions
-						picker={(practiceProps.length > 0 || mode === "practice") && (
-							<NodePickerControl
-								count={practiceProps.length}
-								onOpen={() => setChainSelectOpen(true)}
-								onClear={() => setPracticeProps([])}
-							/>
-						)}
-						setup={zeroKeys ? (
-							<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
-						) : (
-							!configured && (
-								<button
-									type="button"
-									data-testid="setup-cta"
-									onClick={() => setSetupOpen(true)}
-									className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
-								>
-									Set up your models
-								</button>
-							)
-						)}
-					/>
-					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+					<div className="contents narrow:short:block narrow:short:overflow-y-auto">
+						<ComposerActions
+							picker={(practiceProps.length > 0 || mode === "practice") && (
+								<NodePickerControl
+									count={practiceProps.length}
+									onOpen={() => setChainSelectOpen(true)}
+									onClear={() => setPracticeProps([])}
+								/>
+							)}
+							setup={zeroKeys ? (
+								<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
+							) : (
+								!configured && (
+									<button
+										type="button"
+										data-testid="setup-cta"
+										onClick={() => setSetupOpen(true)}
+										className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+									>
+										Set up your models
+									</button>
+								)
+							)}
+						/>
+					</div>
+					{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:shrink-0">{OPENING_PROMPT_FAILURE}</p>}
 					<form
 						data-attachment-composer=""
-						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg"
+						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg narrow:short:min-h-[3.625rem]"
 					onSubmit={(e) => {
 						e.preventDefault();
 						void start();
@@ -279,7 +281,7 @@ export function Home({
 						}}
 						placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
 						autoFocus
-						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground narrow:min-h-11 narrow:min-w-0"
+						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground narrow:min-h-11 narrow:min-w-0 narrow:short:self-stretch"
 					/>
 					<AttachFilesButton editorRef={topicInputRef} />
 					{/* No tooltip on the start square — the ↵ glyph is the

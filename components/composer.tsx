@@ -195,7 +195,7 @@ export function Composer({
 				}}
 				placeholder={placeholder}
 				autoFocus={autoFocus}
-				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground narrow:min-h-11 narrow:min-w-0"
+				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground narrow:min-h-11 narrow:min-w-0 narrow:short:self-stretch"
 			/>
 			<AttachFilesButton editorRef={editorRef} />
 			{/* The button follows the text (owner report 2026-10-03): while

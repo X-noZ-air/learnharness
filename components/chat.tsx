@@ -2907,12 +2907,12 @@ export function DockOverlay({
 	});
 
 	return (
-		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:via-10% narrow:short:to-30%" />
-			<div ref={blockRef} className="relative bg-background pb-5">
-				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
-					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
-					<div ref={bodyRef}>
+		<div className={cn("pointer-events-none absolute inset-x-0 bottom-0", mode === "chat" && "narrow:short:flex narrow:short:max-h-full narrow:short:flex-col")} style={{ right: sbInset }}>
+			<div className={cn("h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:via-10% narrow:short:to-30%", mode === "chat" && "narrow:short:absolute narrow:short:inset-x-0 narrow:short:bottom-full")} />
+			<div ref={blockRef} className={cn("relative bg-background pb-5", mode === "chat" && "narrow:short:flex narrow:short:min-h-0")}>
+				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={cn(DOCK, mode === "chat" && "narrow:short:flex narrow:short:flex-col")} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
+					<div ref={viewportRef} data-dock-viewport="" className={cn("pointer-events-auto", mode === "chat" && "narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col")}>
+					<div ref={bodyRef} className={mode === "chat" ? "narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col" : undefined}>
 					{setupCta}
 					{reconciliation === "failed" && <div role="alert" className="mb-2 rounded-2xl border bg-card px-4 py-3 text-sm">Could not sync the saved session. <Button type="button" variant="ghost" onClick={onRetrySync}>Retry syncing</Button></div>}
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
@@ -2943,14 +2943,14 @@ export function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+					<div ref={shellRef} data-attachment-composer="" className={cn("pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg", mode === "chat" && "narrow:short:flex narrow:short:min-h-[3.625rem] narrow:short:flex-col")}>
 						{preparationStatus}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
 						<div
 							ref={contentRef}
 							key={mode}
-							className={mode === initialModeRef.current ? "flow-root" : "flow-root dock-variant"}
+							className={cn("flow-root", mode !== initialModeRef.current && "dock-variant", mode === "chat" && "narrow:short:grid narrow:short:min-h-0 narrow:short:grid-rows-[minmax(0,1fr)]")}
 						>
 							{pluginQuestion && pluginDraft ? (
 								<PluginQuestionDock viewReader={customViewReader} snapshot={pluginQuestion} chatId={chatId} draft={pluginDraft} expanded={expanded} reveal={revealPending} onExpand={expandAndReveal} ready={pluginReady} available={pluginAvailable} reconciliation={reconciliation} readingRef={readingInputRef} onMicAvailable={onPluginMicAvailable} send={onPluginSend} dismiss={onPluginDismiss} prepareSubmission={onPreparePluginQuestion} />

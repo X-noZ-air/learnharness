@@ -158,6 +158,13 @@ async function bounds(page, selector, minimum = 0) {
 	return rect;
 }
 
+async function checkVerticalHitTargets(page, selector) {
+	const { left, width, top, bottom } = await bounds(page, selector);
+	assert.ok(await page.$eval(selector, (target, x, ys) =>
+		ys.every(y => target.contains(document.elementFromPoint(x, y))),
+	left + width / 2, [top + 2, bottom - 2]), `${selector} is obscured`);
+}
+
 async function waitForInlineSidebar(page) {
 	await page.waitForSelector(inlineSidebar, { visible: true });
 	await page.$eval(inlineSidebar, async sidebar => {
@@ -356,6 +363,8 @@ async function typeDraftWithKeyboardOpen(page, text) {
 	assert.ok(await page.$eval(input, editor => editor.scrollHeight > editor.clientHeight),
 		"long draft scrolls within the editor");
 	await layout(page, keyboardViewport);
+	await checkVerticalHitTargets(page, input);
+	await checkVerticalHitTargets(page, send);
 	return draft;
 }
 
@@ -363,6 +372,20 @@ async function submitDraftWithKeyboardOpen(page, text) {
 	await typeDraftWithKeyboardOpen(page, text);
 	await action(page, send, true);
 	await page.setViewport(phoneViewport);
+}
+
+async function checkHomeAndChatWithKeyboardOpen(origin) {
+	const { context, page } = await newClient(origin, phoneViewport);
+	try {
+		await submitDraftWithKeyboardOpen(page, opening("short viewport"));
+		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
+		await readText(page, lesson);
+
+		await submitDraftWithKeyboardOpen(page, followUp("short viewport"));
+		await readText(page, answer);
+	} finally {
+		await context.close();
+	}
 }
 
 async function checkPracticeRename(page) {
@@ -407,16 +430,13 @@ async function checkDraftRetry(origin) {
 		await page.setRequestInterception(true);
 		const draft = await typeDraftWithKeyboardOpen(page, "Practice squares after retrying session creation.");
 		await action(page, send, true);
-		await page.waitForFunction(() => document.querySelector('main [role="alert"]')?.textContent.includes("Try sending again"));
+		const alert = 'main [role="alert"]';
+		await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes("Try sending again"), {}, alert);
 		await page.waitForSelector(send + ":enabled");
+		await checkVerticalHitTargets(page, alert);
 		await layout(page, keyboardViewport);
-		for (const selector of [input, send]) {
-			assert.ok(await page.$eval(selector, target => {
-				const { left, width, top, bottom } = target.getBoundingClientRect();
-				const x = left + width / 2;
-				return [top + 2, bottom - 2].every(y => target.contains(document.elementFromPoint(x, y)));
-			}), `${selector} is clipped after a failed start`);
-		}
+		await checkVerticalHitTargets(page, input);
+		await checkVerticalHitTargets(page, send);
 
 		await action(page, send, true);
 		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
@@ -590,6 +610,8 @@ try {
 	}
 
 	await configureModel(origin, providerPort);
+	await checkHomeAndChatWithKeyboardOpen(origin);
+	console.log("Home and active chat editors at 412x200 passed");
 	for (const viewport of viewports) {
 		await checkLesson(origin, viewport);
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
