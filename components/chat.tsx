@@ -2058,9 +2058,7 @@ export function Chat({
 					pendingThinkingInput={pendingThinkingInput}
 					onPreparePluginQuestion={preparePluginQuestion}
 					preparing={submissionRunner.occupied}
-					preparationStatus={<>
-						{preparationError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{preparationError}</p>}
-					</>}
+					preparationError={preparationError}
 					pluginQuestion={pendingPlugin}
 					pluginDraft={pendingPlugin ? pluginQuestionDraft(pendingPlugin) : undefined}
 					pluginAvailable={!!pendingPlugin && pluginQuestionAvailability?.questionId === pendingPlugin.questionId && pluginQuestionAvailability.status === "available"}
@@ -2393,7 +2391,7 @@ function TranscriptElementReporter({ onElement }: { onElement: (element: HTMLEle
 export function DockOverlay({
 	viewReader, viewTargets, unavailableOccurrence,
 	pending,
-	onPrepareBuiltin, onBuiltinPendingInput, onPrepareThinking, pendingThinkingInput, onPreparePluginQuestion, preparing, preparationStatus,
+	onPrepareBuiltin, onBuiltinPendingInput, onPrepareThinking, pendingThinkingInput, onPreparePluginQuestion, preparing, preparationError,
 	pluginQuestion, pluginDraft, pluginAvailable, pluginReady, onPluginMicAvailable, onPluginSend, onPluginDismiss, unreadablePlugin, reconciliation, onRetrySync,
 	initialQuestionDraft,
 	onSaveQuestionDraft,
@@ -2432,7 +2430,7 @@ export function DockOverlay({
 	pendingThinkingInput: boolean;
 	onPreparePluginQuestion: PreparePluginQuestionSubmission;
 	preparing: boolean;
-	preparationStatus: React.ReactNode;
+	preparationError?: string;
 	pluginQuestion?: PluginQuestionSnapshot;
 	pluginDraft?: PluginQuestionDraft;
 	pluginAvailable: boolean;
@@ -2944,13 +2942,17 @@ export function DockOverlay({
 						/>
 					)}
 					<div ref={shellRef} data-attachment-composer="" className={cn("pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg", mode === "chat" && "narrow:short:flex narrow:short:min-h-[3.625rem] narrow:short:flex-col")}>
-						{preparationStatus}
+						{preparationError && (
+							<div role="region" aria-label="Submission preparation error" tabIndex={0} className="min-h-0 max-h-[25dvh] overflow-y-auto">
+								<p role="alert" className="wrap-anywhere px-4 py-2 text-sm text-destructive">{preparationError}</p>
+							</div>
+						)}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
 						<div
 							ref={contentRef}
 							key={mode}
-							className={cn("flow-root", mode !== initialModeRef.current && "dock-variant", mode === "chat" && "narrow:short:grid narrow:short:min-h-0 narrow:short:grid-rows-[minmax(0,1fr)]")}
+							className={cn("flow-root", mode !== initialModeRef.current && "dock-variant", mode === "chat" && "narrow:short:grid narrow:short:min-h-14 narrow:short:grid-rows-[minmax(0,1fr)]")}
 						>
 							{pluginQuestion && pluginDraft ? (
 								<PluginQuestionDock viewReader={customViewReader} snapshot={pluginQuestion} chatId={chatId} draft={pluginDraft} expanded={expanded} reveal={revealPending} onExpand={expandAndReveal} ready={pluginReady} available={pluginAvailable} reconciliation={reconciliation} readingRef={readingInputRef} onMicAvailable={onPluginMicAvailable} send={onPluginSend} dismiss={onPluginDismiss} prepareSubmission={onPreparePluginQuestion} />

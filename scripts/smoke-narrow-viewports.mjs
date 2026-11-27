@@ -33,6 +33,9 @@ const teaching = '[data-testid="new-session"]';
 const content = "[data-session-surface]";
 const modelButton = '[data-testid="stats-model"]';
 const startDictation = 'main button[aria-label="Start dictation"]';
+const preparationDraft = "Explain the square after the preparation failure.";
+const preparationError = "The drawing could not be exported. ".repeat(16).trim();
+const preparationReply = "The retry reached the teacher with the original draft.";
 const keyboardViewport = { ...phoneViewport, height: 200 };
 
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), "lh-viewport-"));
@@ -56,7 +59,8 @@ const stub = createServer(async (request, response) => {
 		const body = JSON.parse(Buffer.concat(await Array.fromAsync(request)).toString());
 		const user = body.messages.findLast(message => message.role === "user");
 		modelRequests.push(JSON.stringify(user?.content));
-		const text = modelRequests.at(-1).includes("How many sides") ? answer : lesson;
+		const submitted = modelRequests.at(-1);
+		const text = submitted.includes(preparationDraft) ? preparationReply : submitted.includes("How many sides") ? answer : lesson;
 		const chunk = { id: "synthetic-viewport-turn", object: "chat.completion.chunk", created: 1, model: modelId };
 		const start = { ...chunk, choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }] };
 		const stop = { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } };
@@ -482,6 +486,59 @@ async function checkHomePracticeRetry(origin) {
 	}
 }
 
+async function installPreparationFixture() {
+	const id = "viewport-preparation-smoke";
+	const directory = path.join(profile, "data", "plugins", id, "dist");
+	await fs.mkdir(directory, { recursive: true });
+	await fs.writeFile(path.join(directory, "manifest.json"), JSON.stringify({
+		apiVersion: 1, id, name: "Viewport preparation fixture", version: "1.0.0", minAppVersion: "0.7.0", main: "main.js",
+	}));
+	await fs.writeFile(path.join(directory, "main.js"), `
+		export function activate(ctx) {
+			let failed = false;
+			return ctx.registerSubmissionInterceptor({
+				id: "fail-once",
+				priority: 0,
+				intercept(input) {
+					if (failed || input.type !== "text" || !input.content.text.startsWith(${JSON.stringify(preparationDraft)})) return;
+					failed = true;
+					throw new Error(${JSON.stringify(preparationError)});
+				},
+			});
+		}
+	`);
+	await fs.writeFile(path.join(profile, "data", "plugins-state.json"), JSON.stringify({ version: 1, enabled: { [id]: true } }));
+}
+
+async function checkChatPreparationRetry(page) {
+	const viewport = { ...keyboardViewport, width: 360 };
+	await page.setViewport(viewport);
+	await action(page, input, true);
+	await page.keyboard.sendCharacter([preparationDraft, ...Array(20).fill("Draft line")].join("\n"));
+	await page.waitForSelector(send + ":enabled");
+	const count = modelRequests.length;
+	await action(page, send, true);
+	const alert = 'main [data-attachment-composer] [role="alert"]';
+	await page.waitForFunction((selector, error) => document.querySelector(selector)?.textContent.includes(error), {}, alert, preparationError);
+	assert.equal(modelRequests.length, count, "preparation failure must not reach the model");
+	await layout(page, viewport);
+	await checkVerticalHitTargets(page, input);
+	await checkVerticalHitTargets(page, send);
+	const scrollRegion = await page.$eval('[aria-label="Submission preparation error"]', region => {
+		region.scrollTop = region.scrollHeight;
+		return { height: region.clientHeight, fullHeight: region.scrollHeight, scrollTop: region.scrollTop };
+	});
+	assert.ok(scrollRegion.height > 0 && scrollRegion.scrollTop > 0, "the multi-line error scrolls within the dock");
+	assert.ok(scrollRegion.scrollTop + scrollRegion.height >= scrollRegion.fullHeight - 1, "the full error is reachable");
+	await checkVerticalHitTargets(page, send);
+	await action(page, send, true);
+	await page.waitForSelector(alert, { hidden: true });
+	await page.setViewport(phoneViewport);
+	await readText(page, preparationReply);
+	assert.equal(modelRequests.length, count + 1, "the retained draft reaches the model once on retry");
+	assert.ok(modelRequests.at(-1).includes(preparationDraft), "the retry sends the original draft");
+}
+
 async function checkHomeAndChatWithKeyboardOpen(origin) {
 	const { context, page } = await newClient(origin, phoneViewport);
 	try {
@@ -491,6 +548,7 @@ async function checkHomeAndChatWithKeyboardOpen(origin) {
 
 		await submitDraftWithKeyboardOpen(page, followUp("short viewport"));
 		await readText(page, answer);
+		await checkChatPreparationRetry(page);
 	} finally {
 		await context.close();
 	}
@@ -690,7 +748,7 @@ async function checkLesson(origin, viewport) {
 }
 
 try {
-	await fs.mkdir(path.join(profile, "data"));
+	await installPreparationFixture();
 	await fs.writeFile(path.join(profile, "auth.json"), "{}\n", { mode: 0o600 });
 	const providerPort = await listen(stub);
 	const origin = await startApp();
@@ -721,7 +779,7 @@ try {
 	await configureModel(origin, providerPort);
 	await checkHomeAndChatWithKeyboardOpen(origin);
 	await checkHomePracticeRetry(origin);
-	console.log("Home retry and practice picker and active chat editors at 412x200 passed");
+	console.log("Short home retry, practice picker, and chat preparation retry passed");
 	for (const viewport of viewports) {
 		await checkLesson(origin, viewport);
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
