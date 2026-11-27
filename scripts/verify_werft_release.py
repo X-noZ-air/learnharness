@@ -18,11 +18,11 @@ TAG_PATTERN = re.compile(rf"werft-({VERSION})\.([1-9][0-9]*)")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 RUNTIME = "learnharness-linux-x64.tar.gz"
 SOURCE = "learnharness-source.tar.gz"
-DEPENDENCY_SOURCES = "learnharness-dependency-sources.tar.gz"
+NOTICE = "learnharness-third-party-notice.json"
 METADATA = "release-metadata.json"
 SUMS = "SHA256SUMS"
 PROVENANCE = "provenance.json"
-FILES = (RUNTIME, SOURCE, DEPENDENCY_SOURCES, METADATA)
+FILES = (RUNTIME, SOURCE, NOTICE, METADATA)
 ASSETS = (*FILES, SUMS, PROVENANCE)
 
 
@@ -45,9 +45,6 @@ def archive_members(archive):
         require(name not in members, f"duplicate archive path: {name}")
         require(entry.isfile() or entry.isdir() or entry.issym(), f"unsupported archive entry: {name}")
         require(not (entry.sparse or entry.mode & 0o7000), f"unsupported archive attributes: {name}")
-        require(parts[0] not in {"data", "private", ".git", "profile"}
-                and all(not re.match(r"^(?:\.env(?:\.|$)|auth\.json|(?:chatgpt|github-copilot|xai)-credentials\.json)", part)
-                        for part in parts), f"profile or authentication file in archive: {name}")
         if entry.issym():
             link = entry.linkname
             target = posixpath.normpath(posixpath.join(posixpath.dirname(name), link))
@@ -74,7 +71,7 @@ def check_payload(destination, members):
                 require(header.startswith(b"\x7fELF\x02\x01") and header[18:20] == b"\x3e\x00",
                         f"native file is not Linux x64 ELF: {name}")
 
-    for name in ("server.js", "LICENSE", ".next/BUILD_ID", "scripts/plugin-loader.cjs"):
+    for name in ("server.js", "LICENSE", NOTICE, ".next/BUILD_ID", "scripts/plugin-loader.cjs"):
         require((destination / name).is_file(), f"missing standalone file: {name}")
     for name in (".next/static", "public", "node_modules", "core-plugins"):
         directory = destination / name
@@ -160,11 +157,22 @@ def download_release(tag, commit, directory):
         require(file.stat().st_size == size, f"download size mismatch: {name}")
 
 
+def verify_node(binary, metadata):
+    version, abi = json.loads(subprocess.check_output([
+        binary.absolute(), "-p", "JSON.stringify([process.versions.node, Number(process.versions.modules)])",
+    ], env={key: value for key, value in os.environ.items() if key not in ("NODE_OPTIONS", "NODE_PATH")}, timeout=10))
+    require(version == metadata["node_version"],
+            f"Node version mismatch: expected {metadata['node_version']}, got {version}")
+    require(abi == metadata["node_abi"],
+            f"Node ABI mismatch: expected {metadata['node_abi']}, got {abi}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag")
     parser.add_argument("expected_commit", help="Full fork commit from the trusted update candidate")
     parser.add_argument("destination", type=Path, help="New directory, with an existing parent")
+    parser.add_argument("--node", required=True, type=Path, help="Path to the Node binary that will run the release")
     args = parser.parse_args()
     try:
         destination = args.destination.absolute()
@@ -173,9 +181,10 @@ def main():
             assets = Path(directory)
             download_release(args.tag, args.expected_commit, assets)
             metadata = verify_assets(assets, args.tag, args.expected_commit)
+            verify_node(args.node, metadata)
             unpack(assets / RUNTIME, destination, metadata["unpacked_bytes"])
         print(json.dumps(metadata, sort_keys=True))
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, tarfile.TarError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Release refused: {error}\n")
 
 

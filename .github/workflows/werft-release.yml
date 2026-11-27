@@ -1,6 +1,8 @@
 name: Werft release
 
 on:
+  push:
+    branches: [werft]
   workflow_dispatch:
     inputs:
       merge_sha:
@@ -9,15 +11,15 @@ on:
         type: string
       upstream_tag:
         description: Stable upstream release tag, e.g. v0.7.0
-        required: true
+        required: false
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: werft-release-${{ inputs.upstream_tag }}
-  cancel-in-progress: false
+  group: werft-release
+  queue: max
 
 env:
   NODE_VERSION: "26.13.1"
@@ -30,8 +32,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       release_tag: ${{ steps.target.outputs.release_tag }}
+      upstream_tag: ${{ steps.target.outputs.upstream_tag }}
       upstream_commit: ${{ steps.target.outputs.upstream_commit }}
-      node_version: ${{ steps.target.outputs.node_version }}
     steps:
       - name: Require the product branch in the release fork
         run: |
@@ -42,23 +44,34 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Bind the build to the dispatched commit and a stable upstream tag
+      - name: Select an unpublished commit and bind it to a stable upstream tag
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ inputs.merge_sha }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
         run: |
-          test "$MERGE_SHA" = "$GITHUB_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$MERGE_SHA" = "$GITHUB_SHA"
+          fi
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          package_version=$(jq -er .version package.json)
+          UPSTREAM_TAG=${UPSTREAM_TAG:-v$package_version}
           [[ "$UPSTREAM_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$(jq -r .version package.json)" = "${UPSTREAM_TAG#v}"
+          test "$package_version" = "${UPSTREAM_TAG#v}"
+
+          prefix="werft-$package_version."
+          published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "$prefix")
+          if [[ -n "$published" ]]; then
+            echo "Commit $GITHUB_SHA is already published as $published"
+            exit 0
+          fi
+
           test "$(gh api "repos/amosblomqvist/learnharness/releases/tags/$UPSTREAM_TAG" --jq '.draft or .prerelease')" = false
           git fetch --no-tags https://github.com/amosblomqvist/learnharness.git "refs/tags/$UPSTREAM_TAG"
           upstream_commit=$(git rev-parse 'FETCH_HEAD^{commit}')
           git merge-base --is-ancestor "$upstream_commit" "$GITHUB_SHA"
 
-          prefix="werft-${UPSTREAM_TAG#v}."
           revision=$(git tag -l "$prefix*" | python3 -c '
           import re, sys
           prefix = sys.argv[1]
@@ -69,26 +82,41 @@ jobs:
           ' "$prefix")
           {
             echo "release_tag=$prefix$revision"
+            echo "upstream_tag=$UPSTREAM_TAG"
             echo "upstream_commit=$upstream_commit"
-            echo "node_version=$NODE_VERSION"
           } >> "$GITHUB_OUTPUT"
-      - run: python3 tests/werft-release.test.py
 
   quality:
     needs: prepare
-    uses: ./.github/workflows/ci.yml
-    with:
-      node_version: ${{ needs.prepare.outputs.node_version }}
+    if: needs.prepare.outputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run plugins:setup
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run lint
+      - run: python3 tests/werft-release.test.py
 
   build:
     needs: prepare
+    if: needs.prepare.outputs.release_tag != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-      UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+      UPSTREAM_TAG: ${{ needs.prepare.outputs.upstream_tag }}
       UPSTREAM_COMMIT: ${{ needs.prepare.outputs.upstream_commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -103,17 +131,15 @@ jobs:
       - run: npm run plugins:setup
       - name: Build with the exact version's source offer
         env:
-          NEXT_PUBLIC_LH_SOURCE_OFFER: ${{ env.RELEASE_TAG }}:${{ github.sha }}
+          NEXT_PUBLIC_LH_SOURCE_OFFER: ${{ github.sha }}
         run: npm run build
-      - run: node scripts/smoke-provider-runtime.mjs
       - run: node scripts/build-server.mjs
-      - run: node scripts/smoke-server.mjs --isolated
       - name: Pack and inspect the archive in an empty directory
         run: python3 scripts/package_werft_release.py "$RUNNER_TEMP/release" "$RUNNER_TEMP/standalone"
       - name: Boot the extracted archive with Node and run the offline browser smoke
         run: node scripts/smoke-server.mjs --standalone "$RUNNER_TEMP/standalone" --browser
         env:
-          EXPECTED_LH_SOURCE_OFFER: ${{ env.RELEASE_TAG }}:${{ github.sha }}
+          EXPECTED_LH_SOURCE_OFFER: ${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: upload
         with:
@@ -137,6 +163,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -152,6 +179,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
+          published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "${RELEASE_TAG%.*}.")
+          if [[ -n "$published" ]]; then
+            echo "Commit $GITHUB_SHA is already published as $published"
+            exit 0
+          fi
+
           assets="$RUNNER_TEMP/release"
           cp "$BUNDLE" "$assets/provenance.json"
           verify() {

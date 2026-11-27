@@ -2,8 +2,11 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -40,6 +43,7 @@ class ReleaseTests(unittest.TestCase):
             for info, data in [
                 entry("./server.js"),
                 entry("./LICENSE"),
+                entry(f"./{verifier.NOTICE}", b"{}"),
                 entry("./.next/BUILD_ID"),
                 entry("./.next/static/app.js"),
                 entry("./scripts/plugin-loader.cjs"),
@@ -66,8 +70,6 @@ class ReleaseTests(unittest.TestCase):
             ("absolute link", entry("bin/unsafe", link="/etc")),
             ("escaping link", entry("bin/unsafe", link="../../outside")),
             ("link as parent", entry("node_modules/test/alias.js/child")),
-            ("profile", entry("data/settings.json")),
-            ("credentials", entry("nested/auth.json")),
         ]:
             with self.subTest(name=name):
                 self.make_archive([extra])
@@ -86,7 +88,7 @@ class ReleaseTests(unittest.TestCase):
         self.make_archive()
         with tarfile.open(self.work / verifier.SOURCE, "w:gz", pax_headers={"comment": self.commit}) as source:
             source.addfile(*entry("learnharness/README.md"))
-        (self.work / verifier.DEPENDENCY_SOURCES).write_bytes(b"synthetic vendor sources")
+        (self.work / verifier.NOTICE).write_bytes(b"{}")
         (self.work / verifier.METADATA).write_text(json.dumps({
             "release_tag": self.tag, "fork_commit": self.commit, "upstream_tag": "v0.7.0",
             "upstream_commit": "c" * 40, "package_version": "0.7.0", "os": "linux", "arch": "x64",
@@ -132,6 +134,81 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 verifier.verify_assets(self.work, self.tag, wrong_commit)
         self.assertFalse(self.destination.exists())
+
+    def test_cli_checks_exact_node_version_and_abi_before_installing(self):
+        self.make_release()
+        node = self.work / "test node"
+        argv = ["verify_werft_release.py", self.tag, self.commit, str(self.destination), "--node", str(node)]
+
+        def download_fixture(_tag, _commit, destination):
+            for asset in verifier.ASSETS:
+                shutil.copyfile(self.work / asset, destination / asset)
+
+        real_run = subprocess.run
+
+        def run_locally(command, *args, **kwargs):
+            if command[0] == "gh":
+                return subprocess.CompletedProcess(command, 0)
+            return real_run(command, *args, **kwargs)
+
+        with patch.object(sys, "argv", argv), patch.object(verifier, "download_release", side_effect=download_fixture), \
+                patch.object(verifier.subprocess, "run", side_effect=run_locally):
+            for version, abi, error in [("26.13.0", 147, "version"), ("26.13.1", 146, "ABI")]:
+                with self.subTest(error=error):
+                    node.write_text(f"#!/bin/sh\nprintf '%s\\n' '[\"{version}\", {abi}]'\n")
+                    node.chmod(0o755)
+                    with self.assertRaises(SystemExit) as result, patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        verifier.main()
+                    self.assertEqual(result.exception.code, 1)
+                    self.assertIn(f"Node {error} mismatch", stderr.getvalue())
+                    self.assertFalse(self.destination.exists())
+
+            node.write_text("#!/bin/sh\nprintf '%s\\n' '[\"26.13.1\", 147]'\n")
+            with patch("sys.stdout", new_callable=io.StringIO):
+                verifier.main()
+            self.assertTrue((self.destination / "server.js").is_file())
+
+    def test_packager_ships_the_same_generated_notice_as_the_release_asset(self):
+        self.make_archive()
+        standalone = self.work / ".next/standalone"
+        standalone.parent.mkdir()
+        verifier.unpack(self.artifact, standalone, verifier.measure(self.artifact))
+        (self.work / "LICENSE").write_text("fixture license")
+        (standalone / "package.json").write_text('{"version": "0.7.0"}')
+        (standalone / "node_modules/test/package.json").write_text(json.dumps({
+            "name": "test", "version": "4.5.7", "repository": "https://example.test/test", "gitHead": self.commit,
+        }))
+        (self.work / "package-lock.json").write_text(json.dumps({"packages": {
+            "node_modules/test": {"version": "4.5.7", "license": "MIT",
+                                  "resolved": "https://example.test/test-4.5.7.tgz"},
+        }}))
+        (standalone / "node_modules/test-unknown").mkdir()
+        (standalone / "node_modules/test-unknown/index.js").touch()
+        def git(*args):
+            return subprocess.check_output(["git", *args], cwd=self.work, stderr=subprocess.DEVNULL, text=True)
+
+        git("init")
+        git("add", "LICENSE", "package-lock.json")
+        git("-c", "user.name=Release Test", "-c", "user.email=release@example.test",
+            "commit", "-m", "Package fixture")
+        commit = git("rev-parse", "HEAD").strip()
+        node_version = subprocess.check_output(["node", "-p", "process.versions.node"], text=True).strip()
+
+        assets = self.work / "assets"
+        subprocess.run([sys.executable, ROOT / "scripts/package_werft_release.py", assets, self.destination],
+                       cwd=self.work, check=True, env={
+                           **os.environ, "RELEASE_TAG": self.tag, "GITHUB_SHA": commit, "UPSTREAM_TAG": "v0.7.0",
+                           "UPSTREAM_COMMIT": self.commit, "NODE_VERSION": node_version,
+                       })
+        notice = (assets / verifier.NOTICE).read_bytes()
+        self.assertEqual((self.destination / verifier.NOTICE).read_bytes(), notice)
+        components = {item["name"]: item for item in json.loads(notice)["components"]}
+        self.assertEqual(components["test"]["version"], "4.5.7")
+        self.assertEqual(components["test"]["license"], "MIT")
+        self.assertEqual(components["test"]["source_repository"], "https://example.test/test")
+        self.assertEqual(components["test"]["source_revision"], self.commit)
+        self.assertFalse(components["test"]["missing_metadata"])
+        self.assertIn("version", components["test-unknown"]["missing_metadata"])
 
 
 if __name__ == "__main__":

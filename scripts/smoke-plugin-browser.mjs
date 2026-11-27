@@ -587,22 +587,18 @@ export async function verifyPluginBrowser(url, options = {}) {
 		const documentResponse = await page.goto(base, { waitUntil: "domcontentloaded" });
 		assert.equal(documentResponse?.status(), 200, "The caller's live app must serve its home screen");
 		if (options.sourceOffer) {
-			const [tag, commit] = options.sourceOffer.split(":");
-			const expected = `https://github.com/X-noZ-air/learnharness/releases/download/${tag}/learnharness-source.tar.gz`;
-			const checkSource = async (selector, visibleCommit) => {
-				await page.waitForSelector(selector, { visible: true });
-				const link = await page.$eval(selector, element => ({
-					href: element.href, label: element.querySelector("span")?.textContent,
-					visibleCommit: element.querySelector("code")?.textContent, commit: element.querySelector("code")?.title,
-				}));
-				assert.deepEqual(link, { href: expected, label: "Source code of this version", visibleCommit, commit });
-			};
-			await checkSource('aside [data-testid="source-code-link"]', commit.slice(0, 12));
-			await page.locator('[data-testid="settings-entry"]').click();
-			await page.locator('[data-testid="settings-nav-about"]').click();
-			await checkSource('[data-testid="section-about"] [data-testid="source-code-link"]', commit);
-			await closeSettings();
-			evidence.assertions.push("Sidebar and About offer the source archive and report the exact packaged commit");
+			const commit = options.sourceOffer;
+			const selector = 'aside [data-testid="source-code-link"]';
+			await page.waitForSelector(selector, { visible: true });
+			const link = await page.$eval(selector, element => ({
+				href: element.href, label: element.querySelector("span")?.textContent,
+				visibleCommit: element.querySelector("code")?.textContent, commit: element.title,
+			}));
+			assert.deepEqual(link, {
+				href: `https://github.com/X-noZ-air/learnharness/archive/${commit}.tar.gz`,
+				label: "Source code of this version", visibleCommit: commit.slice(0, 12), commit,
+			});
+			evidence.assertions.push("Sidebar offers the source archive for the exact packaged commit");
 		}
 		await openPlugins();
 		const warning = await page.$eval('[data-testid="section-plugins"]', element => element.textContent);

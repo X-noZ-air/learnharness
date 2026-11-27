@@ -33,8 +33,7 @@ import {
 	type ReactNode,
 	type RefObject,
 } from "react";
-import { BotIcon, InfoIcon, KeyIcon, KeyboardIcon, PaletteIcon, PlugIcon, PuzzleIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
-import { hasSourceOffer, SourceOffer } from "@/components/source-offer";
+import { BotIcon, KeyIcon, KeyboardIcon, PaletteIcon, PlugIcon, PuzzleIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers, type CloseOutcome } from "@/components/interaction-layers";
 import {
@@ -72,7 +71,7 @@ const SECTIONS = [
 	{ id: "keyboard", label: "Keyboard", icon: KeyboardIcon, hint: "Stored on this device" },
 	{ id: "general", label: "General", icon: SettingsIcon },
 ] as const;
-type SectionId = (typeof SECTIONS)[number]["id"] | "about" | "plugins" | "core-plugins" | `plugin:${string}`;
+type SectionId = (typeof SECTIONS)[number]["id"] | "plugins" | "core-plugins" | `plugin:${string}`;
 
 /** `open(section?, row?)` — the optional ROW deep-links into the Keys
  *  section with that row unfolded (zero-keys wave: the dictation error's
@@ -259,7 +258,6 @@ export function SettingsDialogBody({
 	const selected = missingPlugin ? management : active;
 	const navSections: { id: SectionId; label: string; icon?: LucideIcon }[] = [
 		...SECTIONS,
-		...(hasSourceOffer ? [{ id: "about" as const, label: "About", icon: InfoIcon }] : []),
 		{ id: "core-plugins", label: "Core plugins", icon: PlugIcon },
 		{ id: "plugins", label: "Community plugins", icon: PuzzleIcon },
 		...enabledPlugins.map(plugin => ({ id: `plugin:${plugin.info.id}` as const, label: plugin.info.manifest?.name ?? plugin.info.id })),
@@ -433,7 +431,7 @@ export function SettingsDialogBody({
 				>
 					{navSections.map((s, index) => (
 						<div key={s.id} className="shrink-0">
-							{index === SECTIONS.length + Number(hasSourceOffer) && <hr className="my-2 border-border" />}
+							{index === SECTIONS.length && <hr className="my-2 border-border" />}
 							<button
 								type="button"
 								data-testid={`settings-nav-${s.id}`}
@@ -473,11 +471,7 @@ export function SettingsDialogBody({
 							{error}
 						</p>
 					)}
-					{selected === "about" && hasSourceOffer ? (
-						<SettingsSection title="About" testid="section-about">
-							<SourceOffer fullCommit />
-						</SettingsSection>
-					) : selected === "plugins" || selected === "core-plugins" ? <PluginsSection origin={selected === "core-plugins" ? "core" : "community"} onOpenSettings={pluginId => setActive(`plugin:${pluginId}`)} />
+					{selected === "plugins" || selected === "core-plugins" ? <PluginsSection origin={selected === "core-plugins" ? "core" : "community"} onOpenSettings={pluginId => setActive(`plugin:${pluginId}`)} />
 						: activePlugin ? <PluginSettingsPage key={`${activePlugin.info.id}/${activePlugin.info.revision}`} plugin={activePlugin} />
 							: activePluginId !== null ? <p role="status" className="px-6 py-5 text-xs text-muted-foreground">Loading plugins…</p>
 								: record === undefined ? (

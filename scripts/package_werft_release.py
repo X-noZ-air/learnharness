@@ -8,8 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from collect_werft_sources import collect
-from verify_werft_release import DEPENDENCY_SOURCES, FILES, METADATA, RUNTIME, SOURCE, SUMS, measure, require, sha256, unpack
+from verify_werft_release import FILES, METADATA, NOTICE, RUNTIME, SOURCE, SUMS, measure, require, sha256, unpack
+from werft_third_party import generate_notice
 
 
 def main():
@@ -27,14 +27,17 @@ def main():
     require(runtime["node_version"] == os.environ["NODE_VERSION"], "unexpected Node version")
     require(runtime["os"] == "linux" and runtime["arch"] == "x64"
             and platform.machine() == "x86_64", "release requires Linux x64")
-    package = json.loads(Path(".next/standalone/package.json").read_text())
+    standalone = Path(".next/standalone")
+    package = json.loads((standalone / "package.json").read_text())
     require(package["version"] == upstream_tag[1:], "package version differs from upstream tag")
 
     assets.mkdir()
-    shutil.copyfile("LICENSE", ".next/standalone/LICENSE")
+    shutil.copyfile("LICENSE", standalone / "LICENSE")
+    (assets / NOTICE).write_text(generate_notice(Path.cwd(), standalone))
+    shutil.copyfile(assets / NOTICE, standalone / NOTICE)
     subprocess.run([
         "tar", "--create", "--gzip", "--hard-dereference", "--file", assets / RUNTIME,
-        "--directory", ".next/standalone", ".",
+        "--directory", standalone, ".",
     ], check=True)
     with subprocess.Popen(["git", "archive", "--format=tar", f"--prefix=learnharness-{commit}/", commit],
                           stdout=subprocess.PIPE) as git:
@@ -42,8 +45,6 @@ def main():
             subprocess.run(["gzip", "-n"], stdin=git.stdout, stdout=file, check=True)
         if git.wait():
             raise RuntimeError("git archive failed")
-    collect(assets / DEPENDENCY_SOURCES)
-
     unpacked_bytes = measure(assets / RUNTIME)
     unpack(assets / RUNTIME, destination, unpacked_bytes)
     metadata = {
