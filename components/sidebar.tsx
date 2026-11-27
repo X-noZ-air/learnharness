@@ -639,7 +639,7 @@ function SessionsSidebar() {
 		anchorRef: { current: HTMLButtonElement };
 		narrowViewport: boolean;
 	} | null>(null);
-	if (contextMenu && contextMenu.narrowViewport !== narrowViewport) setContextMenu(null);
+	if (contextMenu && (contextMenu.narrowViewport !== narrowViewport || (narrowViewport && !open))) setContextMenu(null);
 	const ctxChatId = contextMenu?.kind === "session" ? contextMenu.id : null;
 	const ctxFolderId = contextMenu?.kind === "folder" ? contextMenu.id : null;
 	const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -1242,7 +1242,7 @@ function SessionsSidebar() {
 			returnFocusFallback={getDrawerFocusFallback}
 			aria-label="Sessions"
 			backdropProps={{ "data-testid": "sidebar-backdrop", className: "fixed inset-0 bg-black/40" }}
-			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background pt-[var(--lh-safe-top)] pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] shadow-xl" />}
+			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background shadow-xl" />}
 		>
 			{sidebar}
 		</HostDialog>
