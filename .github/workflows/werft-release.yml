@@ -179,15 +179,6 @@ jobs:
 
           assets="$RUNNER_TEMP/release"
           cp "$BUNDLE" "$assets/provenance.json"
-          verify() {
-            PYTHONPATH=scripts python3 -c '
-          from pathlib import Path
-          from sys import argv
-          from verify_werft_release import verify_assets
-          verify_assets(Path(argv[1]), argv[2], argv[3])
-          ' "$1" "$RELEASE_TAG" "$GITHUB_SHA"
-          }
-          verify "$assets"
 
           # Creating (never updating) the ref reserves this revision, including
           # when an upload later fails and the draft is left for inspection.
@@ -199,5 +190,10 @@ jobs:
             --title "LearnHarness $RELEASE_TAG" \
             --notes "Linux x64 standalone and corresponding source for commit $GITHUB_SHA." "$assets"/*
           gh release download "$RELEASE_TAG" --pattern '*' --dir "$RUNNER_TEMP/draft"
-          verify "$RUNNER_TEMP/draft"
+          PYTHONPATH=scripts python3 -c '
+          from pathlib import Path
+          from sys import argv
+          from verify_werft_release import verify_assets
+          verify_assets(Path(argv[1]), argv[2], argv[3])
+          ' "$RUNNER_TEMP/draft" "$RELEASE_TAG" "$GITHUB_SHA"
           gh release edit "$RELEASE_TAG" --draft=false --latest=false

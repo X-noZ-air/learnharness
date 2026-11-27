@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from verify_werft_release import FILES, METADATA, NOTICE, RUNTIME, SOURCE, SUMS, measure, require, sha256, unpack
+from verify_werft_release import FILES, METADATA, NOTICE, RUNTIME, SOURCE, SUMS, require, sha256, unpack
 from werft_third_party import generate_notice
 
 
@@ -45,8 +45,7 @@ def main():
             subprocess.run(["gzip", "-n"], stdin=git.stdout, stdout=file, check=True)
         if git.wait():
             raise RuntimeError("git archive failed")
-    unpacked_bytes = measure(assets / RUNTIME)
-    unpack(assets / RUNTIME, destination, unpacked_bytes)
+    unpacked_bytes = unpack(assets / RUNTIME, destination)
     metadata = {
         "release_tag": tag, "fork_commit": commit, "upstream_tag": upstream_tag, "upstream_commit": upstream_commit,
         **runtime, "packed_bytes": (assets / RUNTIME).stat().st_size, "unpacked_bytes": unpacked_bytes,

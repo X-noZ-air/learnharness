@@ -12,6 +12,8 @@ release workflow, verifier and source offer were added on 2026-11-26.
 
 ## Release triggers
 
+The fork's default branch is `werft`, and release workflows are dispatched there.
+
 Both triggers build the `werft` commit that GitHub assigns to the run. A push
 builds the pushed commit. The M2.1 update automation dispatches
 `.github/workflows/werft-release.yml` on `werft` after merging with the built-in

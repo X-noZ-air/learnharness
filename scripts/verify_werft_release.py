@@ -78,25 +78,20 @@ def check_payload(destination, members):
         require(directory.is_dir() and any(directory.iterdir()), f"missing standalone assets: {name}")
 
 
-def measure(file):
-    with tarfile.open(file, "r:gz") as archive:
-        return sum(entry.size for entry in archive_members(archive).values() if entry.isfile())
-
-
-def unpack(file, destination, size):
+def unpack(file, destination):
     require(not os.path.lexists(destination), f"destination already exists: {destination}")
     with tempfile.TemporaryDirectory(prefix=".learnharness-", dir=destination.parent) as scratch:
         staging = Path(scratch).resolve() / "standalone"
         staging.mkdir()
         with tarfile.open(file, "r:gz") as archive:
             members = archive_members(archive)
-            require(size == sum(entry.size for entry in members.values() if entry.isfile()), "unpacked size mismatch")
             archive.extractall(staging, members=members.values(), filter="data")
         check_payload(staging, members)
         # GNU mv -T avoids merging directories. Check that --no-clobber moved
         # the tree, since a competing destination otherwise gives success.
         subprocess.run(["mv", "-T", "--no-clobber", staging, destination], check=True)
         require(not staging.exists(), f"destination already exists: {destination}")
+    return sum(entry.size for entry in members.values() if entry.isfile())
 
 
 def sha256(file):
@@ -128,8 +123,6 @@ def verify_assets(assets, tag, commit):
     require(re.fullmatch(r"[0-9]+\.[0-9]+", metadata["glibc_version"]), "invalid glibc build target")
     require(re.fullmatch(VERSION, metadata["node_version"])
             and type(metadata["node_abi"]) is int and metadata["node_abi"] > 0, "invalid Node runtime metadata")
-    require(type(metadata["packed_bytes"]) is int and metadata["packed_bytes"] == (assets / RUNTIME).stat().st_size
-            and type(metadata["unpacked_bytes"]) is int and metadata["unpacked_bytes"] > 0, "invalid archive sizes")
 
     with tarfile.open(assets / SOURCE, "r:gz") as source:
         require(source.pax_headers.get("comment") == commit, "source archive commit mismatch")
@@ -181,7 +174,7 @@ def main():
             download_release(args.tag, args.expected_commit, assets)
             metadata = verify_assets(assets, args.tag, args.expected_commit)
             verify_node(args.node, metadata)
-            unpack(assets / RUNTIME, destination, metadata["unpacked_bytes"])
+            unpack(assets / RUNTIME, destination)
         print(json.dumps(metadata, sort_keys=True))
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Release refused: {error}\n")

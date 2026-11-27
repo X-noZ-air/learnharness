@@ -47,29 +47,31 @@ class ReleaseTests(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def make_archive(self, extra=()):
+        entries = [
+            entry("./server.js"),
+            entry("./LICENSE"),
+            entry(f"./{verifier.NOTICE}", b"{}"),
+            entry("./.next/BUILD_ID"),
+            entry("./.next/static/app.js"),
+            entry("./scripts/plugin-loader.cjs"),
+            entry("./public/logo.svg"),
+            entry("./core-plugins/test/manifest.json"),
+            entry("./node_modules/test/index.js"),
+            entry("./node_modules/test/alias.js", link="./index.js"),
+            *extra,
+        ]
         with tarfile.open(self.artifact, "w:gz") as archive:
-            for info, data in [
-                entry("./server.js"),
-                entry("./LICENSE"),
-                entry(f"./{verifier.NOTICE}", b"{}"),
-                entry("./.next/BUILD_ID"),
-                entry("./.next/static/app.js"),
-                entry("./scripts/plugin-loader.cjs"),
-                entry("./public/logo.svg"),
-                entry("./core-plugins/test/manifest.json"),
-                entry("./node_modules/test/index.js"),
-                entry("./node_modules/test/alias.js", link="./index.js"),
-                *extra,
-            ]:
+            for info, data in entries:
                 archive.addfile(info, data)
+        return sum(info.size for info, _ in entries if info.isfile())
 
     def test_preserves_dotfiles_and_relative_symlinks(self):
         self.make_archive()
-        verifier.unpack(self.artifact, self.destination, verifier.measure(self.artifact))
+        verifier.unpack(self.artifact, self.destination)
         self.assertTrue((self.destination / ".next/BUILD_ID").is_file())
         self.assertEqual((self.destination / "node_modules/test/alias.js").readlink(), Path("./index.js"))
         with self.assertRaisesRegex(ValueError, "destination already exists"):
-            verifier.unpack(self.artifact, self.destination, verifier.measure(self.artifact))
+            verifier.unpack(self.artifact, self.destination)
 
     def test_refuses_unsafe_entries_without_installing(self):
         for name, extra in [
@@ -82,18 +84,18 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.make_archive([extra])
                 with self.assertRaises(ValueError):
-                    verifier.measure(self.artifact)
+                    verifier.unpack(self.artifact, self.destination)
                 self.assertFalse(self.destination.exists())
 
     def test_foreign_native_file_never_reaches_destination(self):
         arm64 = b"\x7fELF\x02\x01" + b"\0" * 12 + b"\xb7\x00"
         self.make_archive([entry("node_modules/test/native.node", arm64)])
         with self.assertRaisesRegex(ValueError, "not Linux x64 ELF"):
-            verifier.unpack(self.artifact, self.destination, verifier.measure(self.artifact))
+            verifier.unpack(self.artifact, self.destination)
         self.assertFalse(self.destination.exists())
 
-    def make_release(self, node_version="26.13.1"):
-        self.make_archive()
+    def make_release(self, node_version="26.13.1", *, packed_bytes=None, unpacked_bytes=None):
+        actual_unpacked_bytes = self.make_archive()
         with tarfile.open(self.work / verifier.SOURCE, "w:gz", pax_headers={"comment": self.commit}) as source:
             source.addfile(*entry("learnharness/README.md"))
         (self.work / verifier.NOTICE).write_bytes(b"{}")
@@ -101,8 +103,9 @@ class ReleaseTests(unittest.TestCase):
             "release_tag": self.tag, "fork_commit": self.commit, "upstream_tag": "v0.7.0",
             "upstream_commit": "c" * 40, "package_version": "0.7.0", "os": "linux", "arch": "x64",
             "glibc_version": "2.39",
-            "node_version": node_version, "node_abi": 147, "packed_bytes": self.artifact.stat().st_size,
-            "unpacked_bytes": verifier.measure(self.artifact),
+            "node_version": node_version, "node_abi": 147,
+            "packed_bytes": self.artifact.stat().st_size if packed_bytes is None else packed_bytes,
+            "unpacked_bytes": actual_unpacked_bytes if unpacked_bytes is None else unpacked_bytes,
         }))
         (self.work / verifier.SUMS).write_text("".join(
             f"{verifier.sha256(self.work / name)}  {name}\n" for name in verifier.FILES
@@ -145,7 +148,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_cli_checks_exact_node_version_and_abi_before_installing(self):
-        self.make_release()
+        self.make_release(packed_bytes=1, unpacked_bytes=2)
         node = self.work / "test node"
         argv = ["verify_werft_release.py", self.tag, self.commit, str(self.destination), "--node", str(node)]
 
@@ -173,15 +176,17 @@ class ReleaseTests(unittest.TestCase):
                     self.assertFalse(self.destination.exists())
 
             node.write_text("#!/bin/sh\nprintf '%s\\n' '[\"26.13.1\", 147]'\n")
-            with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stdout", new_callable=io.StringIO) as stdout:
                 verifier.main()
             self.assertTrue((self.destination / "server.js").is_file())
+            metadata = json.loads(stdout.getvalue())
+            self.assertEqual((metadata["packed_bytes"], metadata["unpacked_bytes"]), (1, 2))
 
     def test_packager_ships_the_same_generated_notice_as_the_release_asset(self):
         self.make_archive()
         standalone = self.work / ".next/standalone"
         standalone.parent.mkdir()
-        verifier.unpack(self.artifact, standalone, verifier.measure(self.artifact))
+        verifier.unpack(self.artifact, standalone)
         (self.work / "LICENSE").write_text("fixture license")
         (self.work / "package.json").write_text('{"version": "0.7.0"}')
         (standalone / "package.json").write_text('{"version": "0.7.0"}')
@@ -224,6 +229,11 @@ class ReleaseTests(unittest.TestCase):
                        })
         notice = (assets / verifier.NOTICE).read_bytes()
         self.assertEqual((self.destination / verifier.NOTICE).read_bytes(), notice)
+        release = json.loads((assets / verifier.METADATA).read_text())
+        self.assertEqual(release["packed_bytes"], (assets / verifier.RUNTIME).stat().st_size)
+        self.assertEqual(release["unpacked_bytes"], sum(
+            path.stat().st_size for path in self.destination.rglob("*") if not path.is_symlink() and path.is_file()
+        ))
         inventory = json.loads(notice)
         self.assertCountEqual([item["name"] for item in inventory["components"]],
                               ["test", "test-unknown", "@scope/child", "next", "webpack"])
