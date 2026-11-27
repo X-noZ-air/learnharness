@@ -1,3 +1,4 @@
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -407,7 +408,7 @@ test("a run refused during maintenance reaches its caller and leaves the session
 	const f = fixture(t, [output()]);
 	f.service.register(f.definition);
 	const { id } = f.service.create("helper");
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	await assert.rejects(f.service.send(id, "Task during the hold", { requestId: "held" }), MaintenanceError);
 	assert.equal(f.service.get(id).status, "idle");
 	assert.deepEqual(f.store.get(id)?.messages, []);

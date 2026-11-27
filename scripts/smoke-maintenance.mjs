@@ -1,5 +1,6 @@
 // POSIX integration test. Every request reaches a real server with a disposable profile.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,7 +15,7 @@ async function refused(id) {
 	assert.equal(response.status, 503); assert.equal((await response.json()).code, "maintenance");
 }
 async function hold(kind) {
-	const s = await f.control({ op: "drain" });
+	const s = await f.control({ op: "drain", attempt: { id: randomUUID(), startByMs: Date.now() + 5000 } });
 	assert.equal(s.mode, "draining"); assert.ok(s.counts[kind] > 0, JSON.stringify(s)); return s;
 }
 async function stopDrained(ready) {

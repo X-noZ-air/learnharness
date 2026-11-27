@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import { after, test } from "node:test";
 import { beginWork, control, maintenanceStatus, mutation, refuseDrainWhile, tracked, unknownPluginLoaded } from "../src/core/maintenance.ts";
 
@@ -11,7 +12,7 @@ after(() => {
 test("an owner hands off through a closed admission gate and finishes after durable work", async () => {
 	process.env.LH_MAINTENANCE_SOCKET = "/unused/unit-test.sock";
 	const owner = beginWork("main-turn");
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.equal(held.counts["main-turn"], 1);
 	const late = await mutation(() => { throw new Error("late mutation executed"); })();
 	assert.equal(late.status, 503);
@@ -29,7 +30,7 @@ test("an owner hands off through a closed admission gate and finishes after dura
 test("a request owns streamed input until its handler settles", async () => {
 	const done = Promise.withResolvers<void>();
 	const request = mutation(async () => { await done.promise; return new Response(); })();
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.equal(held.counts["write-request"], 1);
 	done.resolve(); await request;
 	assert.equal(control("status").drained, true);
@@ -39,7 +40,7 @@ test("a request owns streamed input until its handler settles", async () => {
 test("a hold whose caller died expires and the server accepts writes again", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const accepted = mutation(() => new Response());
-	const held = control("drain", undefined, 1000);
+	const held = control("drain", undefined, 1000, newDrainAttempt());
 	t.mock.timers.tick(600);
 	assert.equal(control("status", held.generation).drained, true, "reading the status keeps the hold as it is");
 	t.mock.timers.tick(399);
@@ -56,7 +57,7 @@ test("a hold whose caller died expires and the server accepts writes again", asy
 
 test("a living holder keeps its hold by repeating the drain", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const held = control("drain", undefined, 1000);
+	const held = control("drain", undefined, 1000, newDrainAttempt());
 	t.mock.timers.tick(900);
 	assert.throws(() => control("drain", undefined, 1), /requires its generation/);
 	assert.throws(() => control("drain", "other-generation", 1), /Stale/);
@@ -66,7 +67,7 @@ test("a living holder keeps its hold by repeating the drain", async (t) => {
 	assert.equal((await mutation(() => new Response())()).status, 503);
 	assert.equal(control("resume", held.generation).mode, "open");
 	t.mock.timers.tick(5000);
-	assert.equal(control("drain").mode, "draining", "an ended hold leaves no deadline behind");
+	assert.equal(control("drain", undefined, undefined, newDrainAttempt()).mode, "draining", "an ended hold leaves no deadline behind");
 	t.mock.timers.tick(59999);
 	assert.equal(maintenanceStatus().mode, "draining", "the default hold lasts a minute");
 	t.mock.timers.tick(1);
@@ -76,9 +77,9 @@ test("a living holder keeps its hold by repeating the drain", async (t) => {
 });
 
 test("resume requires the current drain generation", () => {
-	const previousHold = control("drain");
+	const previousHold = control("drain", undefined, undefined, newDrainAttempt());
 	control("resume", previousHold.generation);
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	try {
 		assert.throws(() => control("resume"), /requires its generation/);
 		assert.throws(() => control("resume", previousHold.generation), /Stale/);
@@ -91,6 +92,12 @@ test("resume requires the current drain generation", () => {
 test("the open generation cannot start a drain", () => {
 	const open = control("status");
 	assert.throws(() => control("drain", open.generation), /only renew an active drain/);
+	assert.deepEqual(control("status"), open);
+});
+
+test("an initial drain requires an attempt without changing open status on refusal", () => {
+	const open = control("status");
+	assert.throws(() => control("drain"), /requires a drain attempt/);
 	assert.deepEqual(control("status"), open);
 });
 
@@ -114,7 +121,7 @@ test("an ended owner counts again only while admission is open", () => {
 	assert.equal(owner.renew(), true);
 	assert.deepEqual(maintenanceStatus().counts, { delivery: 1 });
 	owner.end();
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.equal(owner.renew(), false);
 	assert.throws(() => owner.run(() => beginWork("main-turn")), "an ended owner admits no child");
 	assert.equal(control("status", held.generation).drained, true);
@@ -126,7 +133,7 @@ test("an ended owner counts again only while admission is open", () => {
 test("accepted state held only in memory withholds readiness under its own reason", () => {
 	let parked = true;
 	refuseDrainWhile("fixture-memory-only", () => parked);
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(held.counts, {});
 	assert.deepEqual(held.reasons, ["fixture-memory-only"]);
 	assert.equal(held.drained, false);
@@ -139,7 +146,7 @@ test("accepted state held only in memory withholds readiness under its own reaso
 
 test("unknown backend lifetime refuses a guarantee even after its request ends", () => {
 	unknownPluginLoaded();
-	const s = control("drain");
+	const s = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(s.counts, {});
 	assert.deepEqual(s.reasons, ["unknown-plugin-lifecycle"]);
 	assert.equal(s.drained, false);

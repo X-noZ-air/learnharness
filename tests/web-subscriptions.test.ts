@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import test, { after } from "node:test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -155,7 +156,7 @@ test("drain waits for a device sign-in through its bound browser action and dura
 	try {
 		const login = owner.control("xai", { op: "login" }, origin);
 		await challenge.promise;
-		const state = control("drain");
+		const state = control("drain", undefined, undefined, newDrainAttempt());
 		assert.equal(state.drained, false);
 		assert.equal(state.counts["sign-in"], 1);
 		await assert.rejects(owner.control("xai", { op: "login" }, origin), /maintenance/);
@@ -186,7 +187,7 @@ test("a pending web sign-in remains visible and can finish through its local cal
 		const response = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "login" }, origin));
 		assert.equal(response.status, 200);
 		const { browserAction } = await response.json();
-		const hold = control("drain");
+		const hold = control("drain", undefined, undefined, newDrainAttempt());
 		assert.equal(hold.counts["sign-in"], 1);
 		const status = await subscriptionControlsResponse(request(undefined, origin));
 		assert.equal((await status.json()).chatgpt.pending, true);
@@ -208,5 +209,39 @@ test("a pending web sign-in remains visible and can finish through its local cal
 		if (status.mode === "draining") control("resume", status.generation);
 		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	}
+});
+
+test("the web control cancels an admitted device sign-in during drain", { timeout: 5000 }, async (t) => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "lh-device-cancel-"));
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(scratch, "unit.sock");
+	const challenge = Promise.withResolvers<void>();
+	const owner = createWebSubscriptionOwner({ directory: scratch, sdk: fakeSDK(async (_id, interaction) => {
+		interaction.notify({ type: "device_code", userCode: "FIXTURE", verificationUri: "https://example.invalid/verify" });
+		challenge.resolve();
+		return interaction.prompt({ type: "text", message: "Fixture prompt" }).then(() => credentials("xai"));
+	}) });
+	t.mock.method(webSubscriptionOwner(), "control", owner.control);
+	const issue = (op: string) => subscriptionControlsResponse(request({ providerId: "xai", op }));
+	const login = issue("login");
+	try {
+		await challenge.promise;
+		const hold = control("drain", undefined, undefined, newDrainAttempt());
+		assert.equal(hold.counts["sign-in"], 1);
+		assert.equal((await issue("login")).status, 503);
+		assert.equal((await issue("cancel")).status, 200);
+		await login;
+		assert.equal((await owner.native.status()).find((entry: { providerId: string }) => entry.providerId === "xai")?.pending, false);
+		assert.equal(control("status", hold.generation).drained, true);
+	} finally {
+		owner.close();
+		await login;
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+		await fs.rm(scratch, { recursive: true, force: true });
 	}
 });

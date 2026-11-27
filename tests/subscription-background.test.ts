@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import { after, before, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
@@ -85,7 +86,7 @@ test("a probe handoff waiting for subscription consent postpones drain and reach
 	});
 	const delivered = deliverJobResult(handoff);
 	await new Promise(resolve => setImmediate(resolve));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(held.counts, {});
 	assert.equal(held.drained, false);
 	assert.deepEqual(held.reasons, ["parked-probe-handoff"]);
@@ -117,7 +118,7 @@ test("a subscription change from admitted sign-in wakes parked delivery only aft
 	void delivered.catch(() => {});
 	await new Promise(resolve => setImmediate(resolve));
 	const login = beginWork("sign-in", true);
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	t.after(() => {
 		login.end();
 		discardChatDeliveries(chat.id);
@@ -178,7 +179,7 @@ test("an admitted foreground turn settling during drain cannot wake an old subsc
 		return 200;
 	});
 	await new Promise(resolve => setImmediate(resolve));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(held.counts, { "main-turn": 1, "sign-in": 1 });
 	login.run(() => connection(provider.providerId, true));
 	login.end();

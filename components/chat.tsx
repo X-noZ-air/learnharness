@@ -519,16 +519,16 @@ export function Chat({
 			const p = pendingRef.current;
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
-				const reading = readingThinkingRef.current.trim() || undefined;
-				clearReadingThinking();
-				void closeSideThreadRef.current(); // its note lands after the skip
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
 					p.toolCallId,
-					reading ? { ...answer, readingThinking: reading } : answer,
+					{ ...answer, readingThinking: readingThinkingRef.current },
 					p.key,
-				);
-				if (busyRef.current) abortInFlightTurn();
+				).then(accepted => {
+					if (!accepted) return;
+					void closeSideThreadRef.current(); // its note lands after the skip
+					if (busyRef.current) abortInFlightTurn();
+				});
 				return;
 			}
 			// The practice discard (owner, 2026-10-04): ask-style — the
@@ -659,10 +659,6 @@ export function Chat({
 	}, [controller]);
 	const applyReadingThinking = useCallback((v: string) => {
 		readingThinkingRef.current = v;
-	}, []);
-	const clearReadingThinking = useCallback(() => {
-		readingThinkingRef.current = "";
-		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
 	const pendingQuestionId = pendingPlugin ? pluginQuestionOccurrenceKey(pendingPlugin.occurrence) : pending?.key ?? null;
 	useLayoutEffect(() => {

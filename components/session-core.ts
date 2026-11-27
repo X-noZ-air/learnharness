@@ -1130,14 +1130,19 @@ export class SessionModel {
 	 * user's choice; the next plain send is the wake. On failure the
 	 * durable record wins: the error surfaces, the record-changed sync
 	 * (or any later refetch) replaces the optimistic append with truth. */
-	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<void> {
-		if (!this.readyRef || pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return;
+	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<boolean> {
+		if (!this.readyRef || pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return false;
 		const subject = pendingQuestionOf(this.nativeHistory());
-		if (questionKey !== undefined && (subject?.key !== questionKey || subject.toolCallId !== toolCallId)) return;
+		if (questionKey !== undefined && (subject?.key !== questionKey || subject.toolCallId !== toolCallId)) return false;
+		if (subject?.toolCallId === toolCallId && answer.readingThinking !== undefined) {
+			this.saveQuestionDraft(subject.key, { readingThinking: answer.readingThinking });
+			answer = { ...answer, readingThinking: answer.readingThinking.trim() || undefined };
+		}
 		const tool = pendingCallTool(this.nativeHistory(), toolCallId) ?? "quiz";
+		const optimistic = { ...newAnswerResult(toolCallId, tool, answer), id: localId() };
 		this.invalidateCanonicalReads();
 		this.mutate(() => {
-			this.tail = [...this.tail, { ...newAnswerResult(toolCallId, tool, answer), id: localId() }];
+			this.tail = [...this.tail, optimistic];
 		});
 		try {
 			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
@@ -1145,10 +1150,18 @@ export class SessionModel {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ input: { type: "dismiss", toolCallId, answer } }),
 			});
-			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
+			if (!res.ok) {
+				const explanation = res.status === 503 ? maintenanceMessage(await res.text()) : undefined;
+				if (explanation !== undefined) {
+					this.mutate(() => { this.tail = this.tail.filter(message => message.id !== optimistic.id); });
+				}
+				throw new Error(explanation || `The dismissal failed (${res.status}).`);
+			}
 			this.invalidateCanonicalReads();
+			return true;
 		} catch (err) {
 			this.setError((err as Error).message);
+			return false;
 		}
 	}
 

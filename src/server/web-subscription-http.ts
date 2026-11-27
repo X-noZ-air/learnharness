@@ -50,7 +50,7 @@ async function parseControl(request: Request, continuationOnly: boolean): Promis
 		const dispatch = async () => Response.json(await webSubscriptionOwner().control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
 		// The controller validates the attempt and its exact one-use prompt/action.
 		if (continuationOnly) {
-			if ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt") return await dispatch();
+			if (fields.op === "cancel" || ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt")) return await dispatch();
 			return maintenanceRefusal();
 		}
 		return await dispatch();

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import fs from "node:fs";
 import os from "node:os";
 import { createConnection, createServer, type Socket } from "node:net";
@@ -116,7 +117,8 @@ test("a result finished behind an open question leaves the server ready and is d
 		const id = ${JSON.stringify(owner.id)};
 		setTurnRunner(async () => 500);
 		recoverStaleJobs();
-		const held = control('drain');
+		const { newDrainAttempt } = await import('./tests/helpers/maintenance-attempt.ts');
+		const held = control('drain', undefined, undefined, newDrainAttempt());
 		control('resume', held.generation);
 		const handed = []; beginTurn(id);
 		registerLiveAgent(id, { steer: marker => handed.push(marker) });
@@ -146,7 +148,7 @@ test("a result that is being delivered counts as work and finishes during the ho
 		return 200;
 	});
 	const delivery = deliverJobResult(buildSubagentSteer(saved, result));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(held.counts, { delivery: 1 });
 	assert.equal(held.drained, false);
 	await delivery;
@@ -171,7 +173,7 @@ test("an admitted job takes over a pump parked behind a quiz during drain", { ti
 	const worker = beginWork("job", true);
 	t.after(() => { answer.end(); worker.end(); });
 	assert(beginTurn(owner.id));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	const later = worker.run(() => queueResult(owner.id, "admitted-result"));
 	worker.end();
 	const wakes: SteerMessage[][] = [];
@@ -211,7 +213,7 @@ test("a deliberate retry registered during the hold delivers after resume", { ti
 	await until(() => Object.keys(maintenanceStatus().counts).length === 0);
 	const answer = beginWork("main-turn", true);
 	t.after(() => answer.end());
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	const live = agent();
 	answer.run(() => {
 		assert(beginTurn(owner.id));
@@ -301,7 +303,7 @@ test("a dictation token stays available during a hold", async (t) => {
 	process.env.DEEPGRAM_API_KEY = "fixture-key";
 	t.after(() => { delete process.env.DEEPGRAM_API_KEY; });
 	t.mock.method(globalThis, "fetch", async () => Response.json({ access_token: "fixture-token" }));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	const response = await tokenRoute.GET();
 	assert.equal(response.status, 200);
 	assert.deepEqual(await response.json(), { token: "fixture-token" });
@@ -318,7 +320,7 @@ test("the configured API-key model catalog stays readable during a hold", async 
 	const before = await (await modelRoute.GET()).json();
 	assert(before.models.some((model: { provider: string }) => model.provider === "anthropic"));
 
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	const response = await modelRoute.GET();
 	assert.equal(response.status, 200);
 	assert.deepEqual(await response.json(), before);
@@ -340,7 +342,7 @@ test("an admitted chat request reconciles its saved question after a hold begins
 		override async json() { await body.promise; return super.json(); }
 	}
 	const sending = chatRoute.POST(new DelayedRequest(post("http://test/api/chat", { chatId: owner.id, input: { type: "text", text: "Continue after the old question" } })));
-	const held = control("drain");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
 	assert.equal(held.counts["write-request"], 1);
 	body.resolve();
 	assert.equal((await sending).status, 503, "the request reaches the unconfigured model gate");
@@ -384,7 +386,7 @@ test("the drain command cannot acquire a startup hold", () => {
 	assert.deepEqual(result, { code: 1, mode: "startup-hold", released: "open" });
 });
 
-type Command = { op: string; generation?: string; holdMs?: number };
+type Command = { op: string; generation?: string; holdMs?: number; attempt?: { id: string; startByMs?: number } };
 async function throughDelayedSocket(handle: (command: Command, socket: Socket) => void, args: string[]) {
 	const socket = path.join(directory, "delayed.sock");
 	const server = createServer(peer => {
@@ -405,7 +407,7 @@ test("a delayed ready reply reports only the remaining time for its confirmed ge
 	let receivedAt = 0;
 	const result = await throughDelayedSocket((command, peer) => {
 		receivedAt = Date.now();
-		const status = control(command.op, command.generation, command.holdMs);
+		const status = control(command.op, command.generation, command.holdMs, command.attempt);
 		setTimeout(() => peer.end(JSON.stringify(status) + "\n"), 150);
 	}, ["--timeout-ms", "3000", "--hold-ms", String(period)]);
 	assert.equal(result.code, 0, JSON.stringify(result));
@@ -436,7 +438,7 @@ test("listing chats and jobs on a fresh profile leaves its directories absent", 
 test("a ready reply delivered after its requested hold expired is refused", async () => {
 	const result = await throughDelayedSocket((command, peer) => {
 		try {
-			const status = control(command.op, command.generation, command.holdMs);
+			const status = control(command.op, command.generation, command.holdMs, command.attempt);
 			const reply = () => peer.end(JSON.stringify(status) + "\n");
 			if (command.op === "drain") setTimeout(reply, 100);
 			else reply();
@@ -454,7 +456,7 @@ test("a stalled renewal releases the confirmed drain generation and exits with c
 	try {
 		const result = await throughDelayedSocket((command, peer) => {
 			ops.push(command.op);
-			const status = control(command.op, command.generation, command.holdMs);
+			const status = control(command.op, command.generation, command.holdMs, command.attempt);
 			if (ops.length !== 2) peer.end(JSON.stringify(status) + "\n");
 		}, ["--timeout-ms", "30000"]);
 		assert.equal(result.code, 2);

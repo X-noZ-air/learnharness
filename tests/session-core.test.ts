@@ -1021,6 +1021,29 @@ describe("answer submission recovery", () => {
 		assert.equal((part.output as { dismissed: boolean }).dismissed, true);
 	});
 
+	it("restores a question and retains its reading draft after a maintenance refusal", async () => {
+		const refused = Promise.withResolvers<Response>();
+		const submitted: unknown[] = [];
+		const m = model({ initialMessages: [question], fetch: async (url, init) => {
+			assert.equal(String(url), "/api/chats/chat_x/dismiss");
+			submitted.push(JSON.parse(String(init?.body)));
+			return submitted.length === 1 ? refused.promise : Response.json({ ok: true });
+		} });
+		const key = pendingQuestionOf([question])!.key;
+		const draft = "  Keep this reasoning.  ";
+		const dismissal = { ...dismissedAnswer("quiz", "Q?"), readingThinking: draft.trim() };
+		const first = m.dismissQuestion("q1", { ...dismissal, readingThinking: draft }, key);
+		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
+		refused.resolve(Response.json({ code: "maintenance", error: "Try again after maintenance." }, { status: 503 }));
+		assert.equal(await first, false);
+		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
+		assert.equal(m.questionDraft(key)?.readingThinking, draft);
+		assert.equal(m.getState().error?.message, "Try again after maintenance.");
+		assert.equal(await m.dismissQuestion("q1", { ...dismissal, readingThinking: m.questionDraft(key)?.readingThinking }, key), true);
+		assert.deepEqual(submitted, Array(2).fill({ input: { type: "dismiss", toolCallId: "q1", answer: dismissal } }));
+		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
+	});
+
 	it("restores an unconfirmed optimistic answer when the post-ack record read fails", async () => {
 		let posts = 0;
 		let reads = 0;

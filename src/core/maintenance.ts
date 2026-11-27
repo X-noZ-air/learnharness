@@ -132,12 +132,13 @@ export function control(op: string, generation?: string, holdMs: number = HOLD_M
 		if (s.mode === "draining" && generation === undefined) throw new Error("Drain renewal requires its generation");
 		if (s.mode === "open") {
 			if (generation !== undefined) throw new Error("A generation can only renew an active drain");
-			if (attempt && (typeof attempt.startByMs !== "number" || !Number.isSafeInteger(attempt.startByMs) || Date.now() >= attempt.startByMs)) {
+			if (!attempt) throw new Error("An initial drain requires a drain attempt");
+			if (typeof attempt.startByMs !== "number" || !Number.isSafeInteger(attempt.startByMs) || Date.now() >= attempt.startByMs) {
 				throw new Error("Drain attempt expired before admission");
 			}
 			s.mode = "draining";
 			s.generation = randomUUID();
-			s.drainAttemptId = attempt?.id;
+			s.drainAttemptId = attempt.id;
 		}
 		// Only its holder keeps a drain alive. A caller that dies cannot leave admission closed.
 		clearTimeout(s.holdTimer);
