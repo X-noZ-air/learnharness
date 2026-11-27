@@ -121,9 +121,16 @@ Additional runtime gates have prerequisites:
 | Check | Prerequisite / purpose |
 | --- | --- |
 | `node scripts/smoke-provider-runtime.mjs` | Fresh build; traced provider payload/runtime paths with fixtures. Also used during packaging. |
+| `node scripts/smoke-narrow-viewports.mjs` | Fresh build and Chrome on Linux or macOS. Runs in CI on Linux. See [narrow layout](#narrow-layout) for coverage. |
 | `node scripts/smoke-web-subscriptions.mjs` | Build, no dev server running; isolated synthetic connection checks, external traffic blocked. Briefly changes/restores a source mtime to exercise reload. |
 | `node scripts/build-plugin-types.mjs` | Builds the portable type-only plugin SDK under `dist/plugin-sdk`. |
 | `node scripts/build-server.mjs` then `node scripts/smoke-server.mjs --isolated --browser` | Fresh build; assemble/verify a source-free standalone copy, installed plugin backends and browser UI. Add `--electron` for Electron's bundled Node; browser checks require local Chrome/Chromium. |
 | Other `scripts/smoke-*.mjs` | Standalone/native renderers, image workers, demo helper, compression, file paths, opening. Read each script and the [release guide](desktop-release.md) before running. |
 
 Run checks proportionate to the change. Offline gates prove exercised contracts, not live entitlements or model-authored lesson quality.
+
+### Narrow layout
+
+The viewport smoke uses Chromium emulation, temporary browser profiles, and a synthetic model endpoint. It starts with an empty profile, opens a draft, sends a message and a follow-up, and reopens the session in a second browser context with a different device class. The [viewport fixture](../tests/fixtures/narrow-viewports.mjs) covers phone portrait and landscape, the drawer breakpoint, desktop, and ultrawide. Physical Android Chrome and iPhone Safari still need checks for browser bars, notch insets, rotation, pinch zoom, and the on-screen keyboard while reading, typing, and sending.
+
+The smoke emulates keyboard-reduced viewports at 412 × 200 and 360 × 200 CSS pixels. For failed session starts on Home and in practice drafts, it checks that the editor, retry message, and submit control remain reachable, that the practice node picker opens and responds to touch sorting, and that retry sends the original draft. In an active session at 360 × 200, a fixture makes submission preparation fail with a multiline error. The smoke checks that the error region scrolls, that the editor and Send remain reachable, and that retry submits the retained draft once.

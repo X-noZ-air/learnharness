@@ -2,7 +2,7 @@
 
 import {
 	cloneElement, useCallback, useLayoutEffect, useRef, useState,
-	type HTMLAttributes, type ReactElement, type ReactNode, type Ref, type RefObject,
+	type HTMLAttributes, type KeyboardEventHandler, type ReactElement, type ReactNode, type Ref, type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { FocusScope } from "@radix-ui/react-focus-scope";
@@ -20,12 +20,13 @@ type FrameProps = HTMLAttributes<HTMLElement> & { ref?: Ref<HTMLElement> };
 export interface HostDialogProps {
 	open: boolean;
 	onClose: (reason: CloseReason) => CloseOutcome | void;
+	onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 	layerId?: LayerId;
 	ownerId?: LayerId | null;
 	openingLease?: OpeningLease;
 	initialFocusRef?: RefObject<HTMLElement | null>;
 	/** Context to focus if the original opener is no longer eligible. */
-	returnFocusFallback?: HTMLElement;
+	returnFocusFallback?: HTMLElement | (() => HTMLElement | null);
 	headingRef?: RefObject<HTMLElement | null>;
 	/** Existing visual root: classes, styles, ref and test IDs are retained. */
 	frame?: ReactElement<FrameProps>;
@@ -47,7 +48,7 @@ function assignRef(ref: Ref<HTMLElement> | undefined, node: HTMLElement | null) 
 }
 
 function OpenHostDialog({
-	onClose, layerId, ownerId, openingLease, initialFocusRef, headingRef, returnFocusFallback,
+	onClose, onKeyDown, layerId, ownerId, openingLease, initialFocusRef, headingRef, returnFocusFallback,
 	frame = <div />, backdropProps = {}, children, ...labels
 }: HostDialogProps) {
 	const controller = useInteractionLayers();
@@ -118,7 +119,10 @@ function OpenHostDialog({
 		const generation = controller.getGeneration();
 		const focusRevision = controller.getFocusRevision();
 		const opener = openerRef.current;
-		setTimeout(() => { controller.restoreFocus(opener, generation, focusRevision, openingLease, returnFocusFallback); }, 0);
+		setTimeout(() => {
+			const fallback = typeof returnFocusFallback === "function" ? returnFocusFallback() : returnFocusFallback;
+			controller.restoreFocus(opener, generation, focusRevision, openingLease, fallback ?? undefined);
+		}, 0);
 	}, [controller, openingLease, returnFocusFallback]);
 
 	const originalRef = frame.props.ref;
@@ -148,6 +152,7 @@ function OpenHostDialog({
 					onMountAutoFocus={event => { event.preventDefault(); }}
 					onUnmountAutoFocus={event => { event.preventDefault(); }}>
 					<div ref={boundaryRef} role="dialog" tabIndex={-1}
+						onKeyDown={onKeyDown}
 						aria-modal={layer.active || undefined}
 						aria-label={labels["aria-label"] ?? frame.props["aria-label"]}
 						aria-labelledby={labels["aria-labelledby"] ?? frame.props["aria-labelledby"]}

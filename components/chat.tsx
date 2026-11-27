@@ -1680,12 +1680,12 @@ export function Chat({
 								data-plugin-chrome-title
 								aria-label="Session title"
 								title="Rename this session"
-								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none [field-sizing:content]"
+								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none narrow:min-w-0 narrow:max-w-none narrow:flex-1 narrow:text-xl [field-sizing:content]"
 							/>
-							{/* flex-1 spacer during rename too, so the chips stay at
-							    the right edge; clicks here commit via the header
-							    mousedown handler. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							{/* At wider widths, the spacer keeps the chips at the right
+							    edge while the input follows the title length. Clicks here
+							    commit via the header mousedown handler. */}
+							<div className="min-w-4 flex-1 narrow:hidden" aria-hidden="true" />
 						</>
 					) : (
 					<>
@@ -1702,7 +1702,7 @@ export function Chat({
 								setRenaming(true);
 							}}
 							data-plugin-chrome-title
-							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-3xl tracking-tight transition-colors hover:bg-accent"
+							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-3xl tracking-tight transition-colors hover:bg-accent narrow:text-xl"
 						>
 							{titleText}
 							</button>
@@ -2058,9 +2058,7 @@ export function Chat({
 					pendingThinkingInput={pendingThinkingInput}
 					onPreparePluginQuestion={preparePluginQuestion}
 					preparing={submissionRunner.occupied}
-					preparationStatus={<>
-						{preparationError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{preparationError}</p>}
-					</>}
+					preparationError={preparationError}
 					pluginQuestion={pendingPlugin}
 					pluginDraft={pendingPlugin ? pluginQuestionDraft(pendingPlugin) : undefined}
 					pluginAvailable={!!pendingPlugin && pluginQuestionAvailability?.questionId === pendingPlugin.questionId && pluginQuestionAvailability.status === "available"}
@@ -2393,7 +2391,7 @@ function TranscriptElementReporter({ onElement }: { onElement: (element: HTMLEle
 export function DockOverlay({
 	viewReader, viewTargets, unavailableOccurrence,
 	pending,
-	onPrepareBuiltin, onBuiltinPendingInput, onPrepareThinking, pendingThinkingInput, onPreparePluginQuestion, preparing, preparationStatus,
+	onPrepareBuiltin, onBuiltinPendingInput, onPrepareThinking, pendingThinkingInput, onPreparePluginQuestion, preparing, preparationError,
 	pluginQuestion, pluginDraft, pluginAvailable, pluginReady, onPluginMicAvailable, onPluginSend, onPluginDismiss, unreadablePlugin, reconciliation, onRetrySync,
 	initialQuestionDraft,
 	onSaveQuestionDraft,
@@ -2432,7 +2430,7 @@ export function DockOverlay({
 	pendingThinkingInput: boolean;
 	onPreparePluginQuestion: PreparePluginQuestionSubmission;
 	preparing: boolean;
-	preparationStatus: React.ReactNode;
+	preparationError?: string;
 	pluginQuestion?: PluginQuestionSnapshot;
 	pluginDraft?: PluginQuestionDraft;
 	pluginAvailable: boolean;
@@ -2907,12 +2905,12 @@ export function DockOverlay({
 	});
 
 	return (
-		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
-			<div ref={blockRef} className="relative bg-background pb-5">
-				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
-					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
-					<div ref={bodyRef}>
+		<div className={cn("pointer-events-none absolute inset-x-0 bottom-0", mode === "chat" && "narrow:short:flex narrow:short:max-h-full narrow:short:flex-col")} style={{ right: sbInset }}>
+			<div className={cn("h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:via-10% narrow:short:to-30%", mode === "chat" && "narrow:short:absolute narrow:short:inset-x-0 narrow:short:bottom-full")} />
+			<div ref={blockRef} className={cn("relative bg-background pb-5", mode === "chat" && "narrow:short:flex narrow:short:min-h-0")}>
+				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={cn(DOCK, mode === "chat" && "narrow:short:flex narrow:short:flex-col")} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
+					<div ref={viewportRef} data-dock-viewport="" className={cn("pointer-events-auto", mode === "chat" && "narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col")}>
+					<div ref={bodyRef} className={mode === "chat" ? "narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col" : undefined}>
 					{setupCta}
 					{reconciliation === "failed" && <div role="alert" className="mb-2 rounded-2xl border bg-card px-4 py-3 text-sm">Could not sync the saved session. <Button type="button" variant="ghost" onClick={onRetrySync}>Retry syncing</Button></div>}
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
@@ -2943,14 +2941,18 @@ export function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
-						{preparationStatus}
+					<div ref={shellRef} data-attachment-composer="" className={cn("pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg", mode === "chat" && "narrow:short:flex narrow:short:min-h-[3.625rem] narrow:short:flex-col")}>
+						{preparationError && (
+							<div role="region" aria-label="Submission preparation error" tabIndex={0} className="min-h-0 max-h-[25dvh] overflow-y-auto">
+								<p role="alert" className="wrap-anywhere px-4 py-2 text-sm text-destructive">{preparationError}</p>
+							</div>
+						)}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
 						<div
 							ref={contentRef}
 							key={mode}
-							className={mode === initialModeRef.current ? "flow-root" : "flow-root dock-variant"}
+							className={cn("flow-root", mode !== initialModeRef.current && "dock-variant", mode === "chat" && "narrow:short:grid narrow:short:min-h-14 narrow:short:grid-rows-[minmax(0,1fr)]")}
 						>
 							{pluginQuestion && pluginDraft ? (
 								<PluginQuestionDock viewReader={customViewReader} snapshot={pluginQuestion} chatId={chatId} draft={pluginDraft} expanded={expanded} reveal={revealPending} onExpand={expandAndReveal} ready={pluginReady} available={pluginAvailable} reconciliation={reconciliation} readingRef={readingInputRef} onMicAvailable={onPluginMicAvailable} send={onPluginSend} dismiss={onPluginDismiss} prepareSubmission={onPreparePluginQuestion} />

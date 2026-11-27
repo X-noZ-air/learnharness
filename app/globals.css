@@ -5,6 +5,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Keep the phone layout and SidebarProvider's NARROW_QUERY in sync. */
+@custom-variant narrow (@media (width < 640px));
+@custom-variant short (@media (height <= 27rem));
+
 /*
  * THE SKIN — wave 5. Design tokens, the single place to restyle the app.
  *

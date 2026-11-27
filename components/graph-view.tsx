@@ -1509,11 +1509,11 @@ export function GraphView({
 		<div className="relative h-full w-full">
 			{isEmpty ? (
 				// The empty graph keeps the first action clear without zero-valued statistics.
-				<div className="flex h-full w-full items-center justify-center px-4">
-					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
-						<WaypointsIcon className="size-10 opacity-40" strokeWidth={1.25} />
-						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
-						<div className="max-w-sm text-sm">
+				<div className="flex h-full w-full items-center justify-center px-4 narrow:short:absolute narrow:short:inset-x-0 narrow:short:top-11 narrow:short:bottom-[var(--home-dock-height,0px)] narrow:short:h-auto narrow:short:[container:empty-graph/size]">
+					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground narrow:short:gap-1">
+						<WaypointsIcon className="size-10 opacity-40 narrow:short:hidden" strokeWidth={1.25} />
+						<div className="text-lg font-medium text-foreground narrow:short:text-sm narrow:short:leading-4">Knowledge graph</div>
+						<div className="max-w-sm text-sm [@container_empty-graph_(height<4.75rem)]:hidden">
 							<p>Start a session to begin learning.</p>
 							<p className="mt-1 text-xs">Attach your material with the paperclip or drag and drop.</p>
 						</div>

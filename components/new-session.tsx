@@ -174,8 +174,8 @@ export function DraftShell({
 					{/* The pointer-events pattern (953b22b): the sticky wrapper is
 					    pointer-events-none so nothing here blocks the empty-state
 					    area; the blob and the stats row re-enable it themselves. */}
-					<div className="pointer-events-none sticky bottom-0 mt-auto w-full">
-						<Conversation className="h-full min-w-0 flex-1" initial="instant">
+					<div className="pointer-events-none sticky bottom-0 mt-auto w-full narrow:short:flex narrow:short:h-full narrow:short:flex-col">
+						<Conversation className="h-full min-w-0 flex-1 narrow:short:h-auto narrow:short:min-h-0" initial="instant">
 							<ConversationContent className="min-h-full gap-0 p-0">
 								<ConversationEmptyState
 									title={mode === "practice" ? "New practice session" : "New session"}
@@ -187,17 +187,20 @@ export function DraftShell({
 								/>
 							</ConversationContent>
 						</Conversation>
-						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
-						<div className="bg-background pb-4">
-							<div className={DOCK}>
-								<ComposerActions
-									picker={(picks.length > 0 || mode === "practice") && (
-										<NodePickerControl count={picks.length} onOpen={onOpenPicker} onClear={onClearPicks} />
-									)}
-									setup={setupCta}
-								/>
-								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+						<div className={`h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:shrink-0 ${startError ? "narrow:short:h-0" : "narrow:short:h-4"}`} />
+						<div className={`bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:shrink-0 narrow:short:flex-col ${startError ? "narrow:short:max-h-full narrow:short:pb-0" : "narrow:short:max-h-[calc(100%-1rem)]"}`}>
+							<div className={`${DOCK} narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0`}>
+								{/* Keep the retry dock's actions and alert clear of the floating sidebar toggle. */}
+								<div className={`contents narrow:short:pointer-events-auto narrow:short:block narrow:short:overflow-y-auto ${startError ? "narrow:short:ml-12" : ""}`}>
+									<ComposerActions
+										picker={(picks.length > 0 || mode === "practice") && (
+											<NodePickerControl count={picks.length} onOpen={onOpenPicker} onClear={onClearPicks} />
+										)}
+										setup={setupCta}
+									/>
+								</div>
+								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+								<div data-attachment-composer="" className={`pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)] ${startError ? "narrow:short:flex-1" : ""}`}>
 									<Composer
 										busy={busy}
 										value={text}

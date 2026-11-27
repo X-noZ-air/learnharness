@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
+import { HostDialog } from "@/components/host-dialog";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
 import { DumbbellIcon, FolderPlusIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
@@ -35,10 +36,8 @@ import { InteractionLayersProvider, useInteractionLayers, useOptionalInteraction
 import { StartupMessage, type StartupMessageOffer } from "@/components/startup-message";
 
 /**
- * Toggleable sidebar — NOT a modal drawer: no backdrop, no focus theft. It
- * sits inline next to the content and can stay open while working in a
- * session. Open state persists across pages (provider lives in the root
- * layout) and across reloads (localStorage).
+ * The desktop sidebar sits inline and remembers its preference across reloads.
+ * The narrow browser drawer has independent, transient open state.
  */
 
 const STORAGE_KEY = "lh:sidebar-open";
@@ -54,8 +53,8 @@ const STORAGE_KEY = "lh:sidebar-open";
  * preference. Opening the sidebar while narrow asks the Electron shell to
  * widen the window to the threshold (window.lh.expandWindow, IPC in
  * electron/main.cjs) — the resize listener flips `narrow` and the sidebar
- * appears. In the plain browser there is no window to widen and no
- * suppression — a narrow tab opens the sidebar if the user says so.
+ * appears. Browser tabs use the separate drawer breakpoint described in
+ * docs/getting-started.md.
  *
  * Mirrors SIDEBAR_AUTOCLOSE in electron/main.cjs — keep in sync.
  */
@@ -63,6 +62,7 @@ import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/sr
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
 const SIDEBAR_AUTOCLOSE = 928;
+const NARROW_QUERY = "(width < 640px)";
 
 // Module scope, guarded for SSR (the server has no navigator).
 const IS_ELECTRON = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
@@ -102,9 +102,18 @@ declare global {
 	}
 }
 
-const SidebarContext = createContext<{ open: boolean; toggle: () => void }>({
+const SidebarContext = createContext<{
+	open: boolean;
+	toggle: () => void;
+	narrowViewport: boolean;
+	closeDrawer: () => void;
+	openerRef: RefObject<HTMLButtonElement | null> | null;
+}>({
 	open: false,
 	toggle: () => {},
+	narrowViewport: false,
+	closeDrawer: () => {},
+	openerRef: null,
 });
 
 export function useSidebar() {
@@ -124,6 +133,22 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [open, setOpen] = useState(false);
 	const [narrow, setNarrow] = useState(false);
 	const [mounted, setMounted] = useState(false);
+	const [narrowViewport, setNarrowViewport] = useState(false);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const openerRef = useRef<HTMLButtonElement>(null);
+	const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
+	useEffect(() => {
+		if (IS_ELECTRON || typeof window.matchMedia !== "function") return;
+		const query = window.matchMedia(NARROW_QUERY);
+		const apply = () => {
+			setNarrowViewport(query.matches);
+			if (!query.matches) closeDrawer();
+		};
+		apply();
+		query.addEventListener("change", apply);
+		return () => query.removeEventListener("change", apply);
+	}, [closeDrawer]);
 
 	useEffect(() => {
 		// Electron shell detection (merged chrome, 2026-09-17): keys the
@@ -166,6 +191,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, []);
 
 	const toggle = useCallback(() => {
+		if (narrowViewport) {
+			setDrawerOpen((value) => !value);
+			return;
+		}
 		// Opening while narrow (auto-closed, or the user's own closed-at-
 		// narrow): ask the shell to widen to the threshold — the resize
 		// listener flips `narrow` and the sidebar appears. The preference
@@ -181,23 +210,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 			localStorage.setItem(STORAGE_KEY, v ? "0" : "1");
 			return !v;
 		});
-	}, [narrow, open]);
-
-	// ⌘B: the global shortcut dispatches kbdEventForAction("toggle-sidebar")
-	// and the context answers on exactly that name — the shared spelling
-	// is the fix for the interlude bug (the listener sat on the pre-
-	// convention name "lh:toggle-sidebar" while the dispatcher sent
-	// "lh:kbd-toggle-sidebar", so ⌘B silently did nothing; owner
-	// 2026-09-25).
-	useEffect(() => {
-		const event = kbdEventForAction("toggle-sidebar");
-		const onToggle = () => toggle();
-		window.addEventListener(event, onToggle);
-		return () => window.removeEventListener(event, onToggle);
-	}, [toggle]);
+	}, [narrow, narrowViewport, open]);
 
 	return (
-		<SidebarContext.Provider value={{ open: open && !narrow, toggle }}>
+		<SidebarContext.Provider value={{ open: narrowViewport ? drawerOpen : open && !narrow, toggle, narrowViewport, closeDrawer, openerRef }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -211,29 +227,36 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  transition (same duration-200, same easing, both gated on mount) —
  *  before, it mounted/unmounted in one frame, so its 48px footprint
  *  (button + gap) popped and dragged the title and chips sideways while
- *  the sidebar was still mid-slide. When open the slot is exactly zero
- *  (w-0 -mr-3: width 0, the negative margin cancels the header's gap-3),
+ *  the sidebar was still mid-slide. When the inline sidebar is open, its
+ *  toggle slot is exactly zero (w-0 -mr-3 cancels the header's gap-3),
  *  so resting layouts are pixel-identical to the old conditional render.
  *  The icon fades with the slot and is clipped by it as it collapses —
- *  no popping in either direction. */
+ *  no popping in either direction. The drawer overlays a fixed-width slot. */
 export function SidebarToggle() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrowViewport, openerRef } = useSidebar();
 	return (
 		<span
 			className={cn(
-				"sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200",
+				"sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200 narrow:mr-0 narrow:h-11 narrow:w-11",
 				open ? "w-0 -mr-3" : "w-9 mr-0 lh-closed-toggle",
 			)}
 		>
 			<Hint label="Open sidebar" action="toggle-sidebar">
 			<Button
+				ref={openerRef}
 				variant="ghost"
 				size="icon"
 				aria-label="Open sidebar"
-				aria-hidden={open}
-				tabIndex={open ? -1 : 0}
-				onClick={toggle}
-				className={cn("sidebar-motion duration-200", open ? "pointer-events-none opacity-0" : "opacity-100")}
+				aria-expanded={open}
+				aria-haspopup={narrowViewport ? "dialog" : undefined}
+				aria-hidden={open && !narrowViewport}
+				tabIndex={open && !narrowViewport ? -1 : 0}
+				onClick={(event) => {
+					// Touch browsers may activate a button without focusing it.
+					if (narrowViewport) event.currentTarget.focus({ preventScroll: true });
+					toggle();
+				}}
+				className={cn("sidebar-motion duration-200 narrow:size-11", open ? "pointer-events-none opacity-0" : "opacity-100")}
 			>
 				{/* Owner, round 6: size-4, SAME as the close glyph — the toggle
 				    must not grow when the sidebar is closed (it did: size-5 here).
@@ -332,7 +355,7 @@ export function SessionRow({
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			data-session-id={chat.id}
 			className={cn(
-				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent",
+				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent narrow:min-h-11",
 				compact ? SIDEBAR_COMPACT_ROW : "py-2",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
@@ -417,7 +440,10 @@ const KIND_FILTER_KEY = "lh:session-kind-filter";
 function SessionsSidebar() {
 	const { appearance: { compactSessionList } } = useAppearance();
 	const interactions = useInteractionLayers();
-	const { open, toggle } = useSidebar();
+	const { open, toggle, narrowViewport, closeDrawer, openerRef } = useSidebar();
+	const drawerRef = useRef<HTMLElement>(null);
+	const inlineCloseRef = useRef<HTMLButtonElement>(null);
+	const getDrawerFocusFallback = useCallback(() => inlineCloseRef.current ?? openerRef?.current ?? null, [openerRef]);
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -430,16 +456,34 @@ function SessionsSidebar() {
 		window.localStorage.setItem(KIND_FILTER_KEY, f);
 	}, []);
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
+	const practiceDraft = pathname === "/chat/new" && searchParams.get("mode") === "practice";
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
+
+	useEffect(() => {
+		closeDrawer();
+	}, [pathname, practiceDraft, closeDrawer]);
+
+	useEffect(() => {
+		const event = kbdEventForAction("toggle-sidebar");
+		const onToggle = () => {
+			const modalRoot = interactions.getActiveModal()?.rootRef.current;
+			if (narrowViewport && open && modalRoot && !modalRoot.contains(drawerRef.current)) return;
+			toggle();
+		};
+		window.addEventListener(event, onToggle);
+		return () => window.removeEventListener(event, onToggle);
+	}, [interactions, narrowViewport, open, toggle]);
 
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
 	   sessionless draft view; the session is created only when the first
 	   message is sent (and that message becomes its title). Search: a
 	   client-side filter over the poll snapshot — no server round trip. */
 	const newSession = useCallback(() => {
+		closeDrawer();
 		router.push("/chat/new");
-	}, [router]);
+	}, [router, closeDrawer]);
 
 	/* FUZZY (owner round 8, 2026-10-05): subsequence match ranked by
 	 * fuzzyScore — prefix beats word-boundary beats scattered. FOLDERS
@@ -588,19 +632,22 @@ function SessionsSidebar() {
 	   first (owner ruling), then — below a hairline — the extraction
 	   coverage block (owner-locked redesign 2026-09-24, order refined
 	   2026-09-24: Rename/Delete on top, the numbers + manual Extract
-	   affordance at the bottom). The anchor is the row that was
-	   right-clicked — assigned into a ref before the state flip so the
-	   shell measures it on its first (hidden) pass. */
-	const [ctxChatId, setCtxChatId] = useState<string | null>(null);
-	const ctxAnchorRef = useRef<HTMLElement | null>(null);
+	   affordance at the bottom). */
+	const [contextMenu, setContextMenu] = useState<{
+		kind: "session" | "folder";
+		id: string;
+		anchorRef: { current: HTMLButtonElement };
+		narrowViewport: boolean;
+	} | null>(null);
+	if (contextMenu && (contextMenu.narrowViewport !== narrowViewport || (narrowViewport && !open))) setContextMenu(null);
+	const ctxChatId = contextMenu?.kind === "session" ? contextMenu.id : null;
+	const ctxFolderId = contextMenu?.kind === "folder" ? contextMenu.id : null;
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
 
-	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
-		e.preventDefault(); // suppress the native menu
-		ctxAnchorRef.current = e.currentTarget;
-		setCtxFolderId(null);
-		setCtxChatId(chat.id);
+	const openContext = (event: React.MouseEvent<HTMLButtonElement>, kind: "session" | "folder", id: string) => {
+		event.preventDefault();
+		setContextMenu({ kind, id, anchorRef: { current: event.currentTarget }, narrowViewport });
 	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
@@ -608,17 +655,17 @@ function SessionsSidebar() {
 	// or folds the sidebar. Right-clicking another row re-anchors: its
 	// pointerdown closes this menu, its contextmenu opens the next.
 	useEffect(() => {
-		if (ctxChatId === null) return;
+		if (!contextMenu) return;
 		const onPointerDown = (e: PointerEvent) => {
-			if (!interactions.isElementEligible(document.querySelector<HTMLElement>('[data-testid="session-context-menu"]'))) return;
+			if (!interactions.isElementEligible(document.querySelector<HTMLElement>(`[data-testid="${contextMenu.kind}-context-menu"]`))) return;
 			const target = e.target as Node;
 			if (target instanceof Element && target.closest("[data-lh-menu]")) return;
-			if (ctxAnchorRef.current?.contains(target)) return;
-			setCtxChatId(null);
+			if (contextMenu.anchorRef.current.contains(target)) return;
+			setContextMenu(null);
 		};
 		document.addEventListener("pointerdown", onPointerDown);
 		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [ctxChatId, interactions]);
+	}, [contextMenu, interactions]);
 
 	// Inline rename (owner ruling, wave 6): the row swaps to a text input;
 	// commit rides the SAME plumbing as the header rename — PUT the title,
@@ -688,27 +735,7 @@ function SessionsSidebar() {
 	const folderDrop = useSidebarDrop(organization, changeFolders);
 	const [creatingFolder, setCreatingFolder] = useState<{ parentId: string | null } | null>(null);
 	const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
-	const [ctxFolderId, setCtxFolderId] = useState<string | null>(null);
 	const [deletingFolder, setDeletingFolder] = useState<{ id: string; name: string; copy: DeleteDialogCopy; scope: FolderDeletionScope } | null>(null);
-	const folderAnchorRef = useRef<HTMLElement | null>(null);
-	const openFolderContext = (e: React.MouseEvent<HTMLButtonElement>, id: string) => {
-		e.preventDefault();
-		folderAnchorRef.current = e.currentTarget;
-		setCtxChatId(null);
-		setCtxFolderId(id);
-	};
-	useEffect(() => {
-		if (ctxFolderId === null) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (!interactions.isElementEligible(document.querySelector<HTMLElement>('[data-testid="folder-context-menu"]'))) return;
-			const target = e.target as Node;
-			if (target instanceof Element && target.closest("[data-lh-menu]")) return;
-			if (folderAnchorRef.current?.contains(target)) return;
-			setCtxFolderId(null);
-		};
-		document.addEventListener("pointerdown", onPointerDown);
-		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [ctxFolderId, interactions]);
 	// A folder deletion's success: the session Delete's, for every session
 	// that went (list patch, home if the open one died, graph refetch).
 	const onFolderDeleted = useCallback(({ deletedChatIds, graphRevision }: { deletedChatIds: string[]; graphRevision: number }) => {
@@ -729,7 +756,7 @@ function SessionsSidebar() {
 		const folder = organization.folders.find((f) => f.id === id);
 		const scope = folderDeletionScope(directory, id);
 		if (!folder || !scope) return;
-		setCtxFolderId(null);
+		setContextMenu(null);
 		clearFolderFailure();
 		if (scope.chatIds.length === 0) {
 			void fetch(`/api/graph/sources/folders/${encodeURIComponent(id)}?mode=preserve-graph`, {
@@ -774,9 +801,10 @@ function SessionsSidebar() {
 							kbdSelected={kbdId === c.id}
 							onOpen={() => {
 								setKbdIndex(null);
+								closeDrawer();
 								router.push(`/chat/${c.id}`);
 							}}
-							onContextMenu={(e) => openContext(e, c)}
+							onContextMenu={(e) => openContext(e, "session", c.id)}
 						/>
 					)}
 				</SourceDragRow>
@@ -805,7 +833,7 @@ function SessionsSidebar() {
 					dropActive={folderDrop.dropTarget === folder.id}
 					renaming={renamingFolderId === folder.id}
 					onToggle={() => toggleFolder(folder.id)}
-					onContextMenu={(e) => openFolderContext(e, folder.id)}
+					onContextMenu={(e) => openContext(e, "folder", folder.id)}
 					onRename={(name) => changeFolders({ action: "rename-folder", id: folder.id, name })}
 					onRenameDone={() => setRenamingFolderId(null)}
 				/>
@@ -819,12 +847,18 @@ function SessionsSidebar() {
 		);
 	});
 
-	return (
+	const sidebar = (
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			data-testid="sessions-sidebar"
+			ref={narrowViewport ? drawerRef : undefined}
+			tabIndex={narrowViewport ? -1 : undefined}
+			className={narrowViewport
+				? "h-full overflow-y-auto overscroll-contain outline-none"
+				: cn("sidebar-motion shrink-0 overflow-hidden duration-200 narrow:hidden", open ? "w-72" : "w-0")}
 			aria-hidden={!open}
+			inert={!open}
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-background">
+			<div className="flex h-full w-72 flex-col border-r bg-background narrow:h-auto narrow:min-h-full narrow:w-full">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
@@ -848,18 +882,20 @@ function SessionsSidebar() {
 						<Link
 							href="/"
 							aria-label="Home"
-							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50"
+							onClick={closeDrawer}
+							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground narrow:size-11 dark:hover:bg-accent/50"
 						>
 							<LhMark className="size-6" />
 						</Link>
 					</Hint>
 					<Hint label="Close sidebar" action="toggle-sidebar">
 						<Button
+							ref={!narrowViewport && open ? inlineCloseRef : undefined}
 							variant="ghost"
 							size="icon"
 							aria-label="Close sidebar"
 							onClick={toggle}
-							className="lh-no-drag"
+							className="lh-no-drag narrow:size-11"
 						>
 							<PanelLeftCloseIcon className="size-4" />
 						</Button>
@@ -873,7 +909,7 @@ function SessionsSidebar() {
 						data-testid="new-session"
 						title="Teaching"
 						onClick={() => void newSession()}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 					>
 						<PlusIcon className="size-3 shrink-0" />
 						<span className="min-w-0 truncate">Teaching</span>
@@ -883,8 +919,8 @@ function SessionsSidebar() {
 						type="button"
 						data-testid="new-session-practice"
 						title="Practice"
-						onClick={() => router.push("/chat/new?mode=practice")}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						onClick={() => { closeDrawer(); router.push("/chat/new?mode=practice"); }}
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 					>
 						<DumbbellIcon className="size-3 shrink-0" />
 						<span className="min-w-0 truncate">Practice</span>
@@ -912,12 +948,11 @@ function SessionsSidebar() {
 							// or the FIRST match when nothing is walked (the
 							// quick-open pattern) — then blurs (focus returns to
 							// the app per the Enter law; the query stays for
-							// re-searching). Esc leaves the search (owner,
-							// keyboard wave): blur back to normal, and claim the
-							// key so the window Esc chain (dictation / abort)
-							// doesn't also fire.
+							// re-searching). Inline search claims Esc when leaving
+							// the field to keep it out of the window's cancel chain.
 							onKeyDown={(e) => {
 								if (e.key === "Escape") {
+									if (narrowViewport) return; // The drawer's modal layer owns Escape.
 									if (!interactions.isElementEligible(e.currentTarget)) return;
 									interactions.claimEscape(e);
 									e.stopPropagation();
@@ -941,6 +976,7 @@ function SessionsSidebar() {
 									const target = shown![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
 									if (!target) return;
 									e.preventDefault();
+									closeDrawer();
 									router.push(`/chat/${target.id}`);
 									setKbdIndex(null);
 									e.currentTarget.blur();
@@ -948,7 +984,7 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60"
+							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60 narrow:h-11"
 						/>
 						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
@@ -960,7 +996,7 @@ function SessionsSidebar() {
 								aria-label="Add folder"
 								data-testid="sidebar-add-folder"
 								onClick={() => setCreatingFolder({ parentId: null })}
-								className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:size-11"
 							>
 								<FolderPlusIcon className="size-3.5" />
 							</button>
@@ -984,7 +1020,7 @@ function SessionsSidebar() {
 							data-testid={`kind-filter-${f}`}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors",
+									"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors narrow:min-h-11",
 								kindFilter === f
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:text-foreground",
@@ -1005,7 +1041,7 @@ function SessionsSidebar() {
 
 				{/* The bar overlays the rows (owner polish round): rules and
 				    highlights run to the edge; it shows while scrolling/hovering. */}
-				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" className="flex flex-col" {...folderDrop.containerProps}>
+				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" areaClassName="narrow:flex-[1_0_auto]" className="flex flex-col" {...folderDrop.containerProps}>
 					{(creatingFolder?.parentId === null || (rows !== null && rows.length > 0)) && (
 						<div data-testid="session-rows">
 							{creatingFolder?.parentId === null && (
@@ -1046,7 +1082,7 @@ function SessionsSidebar() {
 								type="button"
 								onClick={() => openSettings()}
 								data-testid="settings-entry"
-								className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground narrow:min-h-11"
 							>
 								<SettingsIcon className="size-3" />
 								Settings
@@ -1060,8 +1096,8 @@ function SessionsSidebar() {
 				    (owner ruling — no more). MenuShell owns placement/focus/arrow
 				    cycling; the dismissal effect above owns the contract. */}
 				{ctxChatId !== null && (
-					<MenuShell onClose={() => { setCtxChatId(null); return "closed"; }}
-						anchorRef={ctxAnchorRef}
+					<MenuShell onClose={() => { setContextMenu(null); return "closed"; }}
+						anchorRef={contextMenu?.anchorRef}
 						testid="session-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
@@ -1077,7 +1113,7 @@ function SessionsSidebar() {
 							data-testid="ctx-rename"
 							onClick={() => {
 								setRenamingId(ctxChatId);
-								setCtxChatId(null);
+								setContextMenu(null);
 							}}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
 						>
@@ -1093,7 +1129,7 @@ function SessionsSidebar() {
 							data-testid="ctx-export-md"
 							onClick={() => {
 								const chatId = ctxChatId;
-								setCtxChatId(null);
+								setContextMenu(null);
 								const a = document.createElement("a");
 								a.href = `/api/chats/${chatId}/markdown`;
 								a.download = ""; // the route's filename wins
@@ -1111,7 +1147,7 @@ function SessionsSidebar() {
 							onClick={() => {
 								const target = chats?.find((c) => c.id === ctxChatId);
 								if (target) setDeleting(target);
-								setCtxChatId(null);
+								setContextMenu(null);
 							}}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
 						>
@@ -1126,8 +1162,8 @@ function SessionsSidebar() {
 				    Delete only removes folders that are empty everywhere and
 				    otherwise explains why, keeping the menu open. */}
 				{ctxFolderId !== null && (
-					<MenuShell onClose={() => { setCtxFolderId(null); return "closed"; }}
-						anchorRef={folderAnchorRef}
+					<MenuShell onClose={() => { setContextMenu(null); return "closed"; }}
+						anchorRef={contextMenu?.anchorRef}
 						testid="folder-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
@@ -1135,7 +1171,7 @@ function SessionsSidebar() {
 						<button
 							type="button"
 							data-testid="folder-ctx-rename"
-							onClick={() => { setRenamingFolderId(ctxFolderId); setCtxFolderId(null); }}
+							onClick={() => { setRenamingFolderId(ctxFolderId); setContextMenu(null); }}
 							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							Rename
@@ -1145,7 +1181,7 @@ function SessionsSidebar() {
 							data-testid="folder-ctx-new-subfolder"
 							onClick={() => {
 								const id = ctxFolderId;
-								setCtxFolderId(null);
+								setContextMenu(null);
 								if (searching) setSearchFolds((previous) => ({ query, ids: new Set([...(previous.query === query ? previous.ids : [])].filter((f) => f !== id)) }));
 								else setFolderOpen(id, true);
 								setCreatingFolder({ parentId: id });
@@ -1183,9 +1219,36 @@ function SessionsSidebar() {
 				/>
 			</aside>
 	);
+
+	if (!narrowViewport) return sidebar;
+	return (
+		<HostDialog
+			open={open}
+			onClose={closeDrawer}
+			onKeyDown={(event) => {
+				if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+				const panel = drawerRef.current;
+				if (!panel || (event.target !== event.currentTarget && !panel.contains(event.target as Node))) return;
+				// The app captures Tab for composer shortcuts. Keep it inside the drawer.
+				const controls = Array.from(panel.querySelectorAll<HTMLElement>("a[href], button, input, [tabindex]"))
+					.filter(control => control.tabIndex >= 0 && interactions.isElementEligible(control));
+				const current = controls.indexOf(event.target as HTMLElement);
+				const next = event.shiftKey ? (current <= 0 ? controls.length - 1 : current - 1) : (current + 1) % controls.length;
+				event.stopPropagation();
+				controls[next]?.focus();
+			}}
+			initialFocusRef={drawerRef}
+			returnFocusFallback={getDrawerFocusFallback}
+			aria-label="Sessions"
+			backdropProps={{ "data-testid": "sidebar-backdrop", className: "fixed inset-0 bg-black/40" }}
+			frame={<div className="absolute inset-y-0 left-0 w-72 max-w-[calc(100%-3rem)] bg-background shadow-xl" />}
+		>
+			{sidebar}
+		</HostDialog>
+	);
 }
 
-/** The app frame: sidebar inline + content. Rendered once in the root layout. */
+/** The app frame owns the sidebar and content for the lifetime of the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
 	const [contentRoot, setContentRoot] = useState<HTMLElement | null>(null);
 	const pathname = usePathname();

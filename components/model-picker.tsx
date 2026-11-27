@@ -271,7 +271,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	};
 
 	return (
-		<div ref={containerRef} className="relative flex items-center gap-1.5" data-testid="model-control">
+		<div ref={containerRef} className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2" data-testid="model-control">
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
 				action="open-model-picker"
@@ -279,6 +279,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
+					className="min-w-0 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate narrow:min-h-11 narrow:min-w-11"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
 				>{effectiveId ? prettyModel(effectiveId) : "—"}</ModelPickerPill>
@@ -293,6 +294,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-thinking"
+					className="shrink-0 narrow:min-h-11 narrow:min-w-11"
 					onClick={() => {
 						if (entry === undefined) return;
 						openMenu("thinking");
@@ -309,7 +311,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					anchorRef={containerRef}
 					testid="model-menu" onClose={() => { setOpen(null); return "closed"; }}
 					preferredSide="up"
-					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl narrow:max-w-[calc(100vw-3rem)]"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					<ModelMenuList

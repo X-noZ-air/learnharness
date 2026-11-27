@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Source_Sans_3 } from "next/font/google";
 import { connection } from "next/server";
 import "katex/dist/katex.min.css";
@@ -20,6 +20,9 @@ export const metadata: Metadata = {
 	title: "Learning Harness",
 	description: "A teacher agent with a memory — sessions, quizzes, and a knowledge graph of what you know.",
 };
+
+// Let Android Chrome resize the layout viewport when the keyboard opens.
+export const viewport: Viewport = { interactiveWidget: "resizes-content" };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
 	// The theme is server-rendered — its class AND its color variables —

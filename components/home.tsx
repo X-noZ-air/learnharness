@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -41,6 +41,19 @@ export function Home({
 	const router = useRouter();
 	const pathname = usePathname();
 	const bodyRef = useRef<HTMLDivElement>(null);
+	const dockRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const body = bodyRef.current;
+		const dock = dockRef.current;
+		if (!body || !dock) return;
+		const reserveDockSpace = () => {
+			body.style.setProperty("--home-dock-height", `${dock.getBoundingClientRect().height}px`);
+		};
+		reserveDockSpace();
+		const observer = new ResizeObserver(reserveDockSpace);
+		observer.observe(dock, { box: "border-box" });
+		return () => observer.disconnect();
+	}, []);
 	const surfaceTarget = usePageSurfaceBoundary({ active: pathname === "/", viewKey: "/", bodyRef });
 	const chromeStyle = useSurfaceChromeStyle(surfaceTarget);
 	const [folderFilterSlot, setFolderFilterSlot] = useState<HTMLElement | null>(null);
@@ -211,42 +224,47 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-5">
-				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4">
-					{/* The pick bar (owner vision, 2026-10-04): the chain
-					    table's selection is PERSISTENT — picked
-					    propositions show here as a count + Clear in EITHER
-					    mode (it survives mode switches; only a practice
-					    send consumes it). Practice mode with nothing picked
-					    shows the pick HINT so the affordance is discoverable;
-					    teaching mode with nothing picked renders nothing. */}
-					<ComposerActions
-						picker={(practiceProps.length > 0 || mode === "practice") && (
-							<NodePickerControl
-								count={practiceProps.length}
-								onOpen={() => setChainSelectOpen(true)}
-								onClear={() => setPracticeProps([])}
+			<div ref={dockRef} className={`pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)] ${startError ? "narrow:short:pb-0" : ""}`}>
+				<div className={`pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0 ${startError ? "narrow:short:[&>:last-child]:pt-0" : ""}`}>
+					{/* In a short viewport, show the retry alert first and let the picker scroll into view. */}
+					<div className={`contents narrow:short:flex narrow:short:overflow-y-auto ${startError ? "narrow:short:flex-col-reverse" : "narrow:short:flex-col"}`}>
+						{/* The pick bar (owner vision, 2026-10-04): the chain
+						    table's selection is PERSISTENT — picked
+						    propositions show here as a count + Clear in EITHER
+						    mode (it survives mode switches; only a practice
+						    send consumes it). Practice mode with nothing picked
+						    shows the pick HINT so the affordance is discoverable;
+						    teaching mode with nothing picked renders nothing. */}
+						<div className="contents narrow:short:block narrow:short:shrink-0">
+							<ComposerActions
+								picker={(practiceProps.length > 0 || mode === "practice") && (
+									<NodePickerControl
+										count={practiceProps.length}
+										onOpen={() => setChainSelectOpen(true)}
+										onClear={() => setPracticeProps([])}
+									/>
+								)}
+								setup={zeroKeys ? (
+									<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
+								) : (
+									!configured && (
+										<button
+											type="button"
+											data-testid="setup-cta"
+											onClick={() => setSetupOpen(true)}
+											className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+										>
+											Set up your models
+										</button>
+									)
+								)}
 							/>
-						)}
-						setup={zeroKeys ? (
-							<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
-						) : (
-							!configured && (
-								<button
-									type="button"
-									data-testid="setup-cta"
-									onClick={() => setSetupOpen(true)}
-									className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
-								>
-									Set up your models
-								</button>
-							)
-						)}
-					/>
-					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+							{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+						</div>
+					</div>
 					<form
 						data-attachment-composer=""
-						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg"
+						className={`flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg narrow:short:min-h-[3.625rem] ${startError ? "narrow:short:h-[3.625rem] narrow:short:shrink-0" : ""}`}
 					onSubmit={(e) => {
 						e.preventDefault();
 						void start();
@@ -279,7 +297,7 @@ export function Home({
 						}}
 						placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
 						autoFocus
-						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground narrow:min-h-11 narrow:min-w-0 narrow:short:self-stretch"
 					/>
 					<AttachFilesButton editorRef={topicInputRef} />
 					{/* No tooltip on the start square — the ↵ glyph is the
@@ -288,7 +306,7 @@ export function Home({
 						type="submit"
 						aria-label="Start session"
 						disabled={(!topic.trim() && !dictation.active) || busy}
-						className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-40"
+						className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-40 narrow:size-11"
 					>
 						<CornerDownLeftIcon className="size-5" />
 					</button>
@@ -301,7 +319,7 @@ export function Home({
 						dictationSlot={<DictationBar dictation={dictation} />}
 						turns={[] as TurnUsage[]}
 						leadingSlot={
-							<div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="home-mode-switch">
+							<div className="flex min-w-0 shrink-[0.25] items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="home-mode-switch">
 								{(["teach", "practice"] as const).map((m) => (
 									<button
 										key={m}
@@ -309,14 +327,14 @@ export function Home({
 										data-testid={`home-mode-${m}`}
 										onClick={() => setMode(m)}
 										className={
-											"flex items-center gap-1 rounded-sm px-2 py-0.5 text-[11px] uppercase tracking-wider transition-colors " +
+										"flex items-center gap-1 rounded-sm px-2 py-0.5 text-[11px] uppercase tracking-wider transition-colors narrow:min-h-11 narrow:min-w-11 narrow:px-1.5 narrow:tracking-normal " +
 											(mode === m
 												? "bg-accent text-foreground"
 												: "text-muted-foreground hover:text-foreground")
 										}
 									>
-										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3" /> : null}
-										{m === "teach" ? "Teach" : "Practice"}
+										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
+										<span className="min-w-0 truncate">{m === "teach" ? "Teach" : "Practice"}</span>
 									</button>
 								))}
 							</div>

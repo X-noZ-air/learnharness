@@ -323,7 +323,7 @@ export function ChainTableBody({
 				</span>
 				{onOrganizationChange && <button type="button" aria-label="Add folder" data-testid="add-source-folder"
 					onClick={() => setCreatingFolder(true)} className="lh-no-drag rounded-lg p-2 text-muted-foreground hover:bg-accent"><FolderPlusIcon className="size-4" /></button>}
-				<div className="relative shrink-0">
+				<div className="relative w-56 shrink-0 narrow:min-w-0 narrow:shrink">
 					<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					<input
 						ref={searchRef}
@@ -333,7 +333,7 @@ export function ChainTableBody({
 						placeholder="Search nodes…"
 						aria-label="Search nodes"
 						spellCheck={false}
-						className="lh-no-drag h-8 w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+						className="lh-no-drag h-8 w-full rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 					/>
 				</div>
 			<button
