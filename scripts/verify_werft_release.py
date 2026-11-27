@@ -126,7 +126,7 @@ def verify_assets(assets, tag, commit):
     require(metadata["package_version"] == tag_match[1], "package version mismatch")
     require(metadata["os"] == "linux" and metadata["arch"] == "x64", "unsupported runtime target")
     require(re.fullmatch(r"[0-9]+\.[0-9]+", metadata["glibc_version"]), "invalid glibc build target")
-    require(re.fullmatch(r"26\.[0-9]+\.[0-9]+", metadata["node_version"])
+    require(re.fullmatch(VERSION, metadata["node_version"])
             and type(metadata["node_abi"]) is int and metadata["node_abi"] > 0, "invalid Node runtime metadata")
     require(type(metadata["packed_bytes"]) is int and metadata["packed_bytes"] == (assets / RUNTIME).stat().st_size
             and type(metadata["unpacked_bytes"]) is int and metadata["unpacked_bytes"] > 0, "invalid archive sizes")

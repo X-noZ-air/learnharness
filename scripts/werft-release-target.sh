@@ -7,13 +7,6 @@ if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
     echo "merge_sha must be a full commit SHA contained in the werft run commit" >&2
     exit 1
   fi
-  if [[ -n "$UPSTREAM_TAG" ]]; then
-    merged_version=$(git show "$MERGE_SHA:package.json" | jq -er '.version | strings')
-    if [[ "$UPSTREAM_TAG" != "v$merged_version" ]]; then
-      echo "upstream_tag must match the package version at merge_sha" >&2
-      exit 1
-    fi
-  fi
 fi
 
 version=$(jq -er '.version | strings' package.json)

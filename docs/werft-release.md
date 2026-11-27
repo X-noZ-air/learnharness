@@ -15,8 +15,8 @@ release workflow, verifier and source offer were added on 2026-11-26.
 Both triggers build the `werft` commit that GitHub assigns to the run. A push
 builds the pushed commit. The M2.1 update automation dispatches
 `.github/workflows/werft-release.yml` on `werft` after merging with the built-in
-GitHub token. It supplies the full merged commit as `merge_sha` and can supply
-`upstream_tag` to identify the upstream version at that merge.
+GitHub token. It supplies the full merged commit as `merge_sha` and can include
+the informational `upstream_tag` input.
 
 The dispatch accepts the run commit itself or an ancestor as `merge_sha`.
 When `werft` has advanced, the newer run commit covers the merge. For either
@@ -28,7 +28,14 @@ Release runs queue and skip commits with a published release. The workflow
 allocates `werft-<major>.<minor>.<patch>.<revision>` from existing tags and
 verifies the draft's downloaded assets before publication. An interrupted
 upload may leave a reserved revision and a draft. Rerun the full workflow to
-retry. Select published server releases by their versioned `werft-*` tag.
+retry an interrupted upload.
+
+If GitHub refuses to create the release tag, publication stops and the run
+reports the tag and commit that failed. When a newer workflow change on
+`werft` causes the refusal, the run for the newer commit builds and publishes
+its own release after checks pass. That commit contains the older commit.
+Consumers take only published server releases by their versioned `werft-*`
+tag and use the commit from the successful run.
 
 ## Verify and run
 

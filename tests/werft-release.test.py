@@ -92,7 +92,7 @@ class ReleaseTests(unittest.TestCase):
             verifier.unpack(self.artifact, self.destination, verifier.measure(self.artifact))
         self.assertFalse(self.destination.exists())
 
-    def make_release(self):
+    def make_release(self, node_version="26.13.1"):
         self.make_archive()
         with tarfile.open(self.work / verifier.SOURCE, "w:gz", pax_headers={"comment": self.commit}) as source:
             source.addfile(*entry("learnharness/README.md"))
@@ -101,7 +101,7 @@ class ReleaseTests(unittest.TestCase):
             "release_tag": self.tag, "fork_commit": self.commit, "upstream_tag": "v0.7.0",
             "upstream_commit": "c" * 40, "package_version": "0.7.0", "os": "linux", "arch": "x64",
             "glibc_version": "2.39",
-            "node_version": "26.13.1", "node_abi": 147, "packed_bytes": self.artifact.stat().st_size,
+            "node_version": node_version, "node_abi": 147, "packed_bytes": self.artifact.stat().st_size,
             "unpacked_bytes": verifier.measure(self.artifact),
         }))
         (self.work / verifier.SUMS).write_text("".join(
@@ -119,12 +119,13 @@ class ReleaseTests(unittest.TestCase):
             attest.assert_not_called()
 
     def test_assets_attest_only_the_checksums_for_the_source_commit(self):
-        self.make_release()
+        self.make_release(node_version="28.2.1")
         with patch.object(verifier.subprocess, "run") as attest:
             metadata = verifier.verify_assets(self.work, self.tag, self.commit)
             subjects = [call.args[0][3].name for call in attest.call_args_list]
             self.assertEqual(subjects, [verifier.SUMS])
         self.assertEqual(metadata["fork_commit"], self.commit)
+        self.assertEqual(metadata["node_version"], "28.2.1")
 
     def test_commit_and_signer_are_passed_to_the_attestation_verifier(self):
         self.make_release()
@@ -187,6 +188,7 @@ class ReleaseTests(unittest.TestCase):
         (standalone / "node_modules/test/package.json").write_text(json.dumps({
             "name": "test", "version": "4.5.7", "license": "MIT",
             "repository": "https://example.test/test", "gitHead": self.commit,
+            "_resolved": "https://example.test/test-4.5.7.tgz",
         }))
         (self.work / "package-lock.json").write_text(json.dumps({"packages": {
             "node_modules/test": {"version": "0.0.1", "license": "ISC"},
@@ -202,6 +204,13 @@ class ReleaseTests(unittest.TestCase):
         nested = standalone / "node_modules/test/node_modules/@scope/child"
         nested.mkdir(parents=True)
         (nested / "package.json").write_text('{"name": "@scope/child", "version": "2.0.0"}')
+        next_package = standalone / "node_modules/next"
+        compiled = next_package / "dist/compiled"
+        (compiled / "next-server").mkdir(parents=True)
+        (compiled / "next-server/app-page.runtime.prod.js").touch()
+        (compiled / "webpack").mkdir()
+        (compiled / "webpack/package.json").write_text('{"name": "webpack", "license": "MIT"}')
+        (next_package / "package.json").write_text('{"name": "next", "version": "16.4.6"}')
         self.git("init")
         self.git("add", "LICENSE", "package-lock.json")
         commit = self.git_commit("Package fixture")
@@ -216,7 +225,8 @@ class ReleaseTests(unittest.TestCase):
         notice = (assets / verifier.NOTICE).read_bytes()
         self.assertEqual((self.destination / verifier.NOTICE).read_bytes(), notice)
         inventory = json.loads(notice)
-        self.assertCountEqual([item["name"] for item in inventory["components"]], ["test", "test-unknown", "@scope/child"])
+        self.assertCountEqual([item["name"] for item in inventory["components"]],
+                              ["test", "test-unknown", "@scope/child", "next", "webpack"])
         components = {item["name"]: item for item in inventory["components"]}
         self.assertIn("lockfile", inventory["client_bundles"])
         self.assertEqual(components["@scope/child"]["version"], "2.0.0")
@@ -224,6 +234,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(components["test"]["license"], "MIT")
         self.assertEqual(components["test"]["source_repository"], "https://example.test/test")
         self.assertEqual(components["test"]["source_revision"], self.commit)
+        self.assertNotIn("package_distribution", components["test"])
         self.assertFalse(components["test"]["missing_metadata"])
         self.assertIn("version", components["test-unknown"]["missing_metadata"])
 
@@ -247,6 +258,7 @@ class ReleaseTests(unittest.TestCase):
 
         for event, merge_sha, upstream_tag in [
             ("push", "", ""), ("workflow_dispatch", merged, "v0.7.0"),
+            ("workflow_dispatch", merged, "v0.8.0"),
             ("workflow_dispatch", run_commit, ""),
         ]:
             with self.subTest(event=event, merge_sha=merge_sha):

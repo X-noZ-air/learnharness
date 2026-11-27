@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       upstream_tag:
-        description: Stable upstream release tag at merge_sha, e.g. v0.7.0
+        description: Optional upstream release tag from M2.1 (informational)
         required: false
         type: string
 
@@ -49,7 +49,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ inputs.merge_sha }}
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
         run: |
           UPSTREAM_TAG=$(bash scripts/werft-release-target.sh)
 
@@ -192,7 +191,10 @@ jobs:
 
           # Creating (never updating) the ref reserves this revision, including
           # when an upload later fails and the draft is left for inspection.
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"; then
+            printf '::error::Could not create release tag %s for run commit %s. Publication stopped.\n' "$RELEASE_TAG" "$GITHUB_SHA"
+            exit 1
+          fi
           gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false \
             --title "LearnHarness $RELEASE_TAG" \
             --notes "Linux x64 standalone and corresponding source for commit $GITHUB_SHA." "$assets"/*

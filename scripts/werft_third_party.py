@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+NEXT_COMPILED = Path("node_modules/next/dist/compiled")
+
 
 def metadata(path):
     if path.is_symlink():
@@ -18,8 +20,7 @@ def string(value):
     return value if isinstance(value, str) and value.strip() else None
 
 
-def component(standalone, path, package_name):
-    installed = metadata(standalone / path / "package.json")
+def component(path, package_name, installed):
     repository = installed.get("repository")
     if not isinstance(repository, dict):
         repository = {"url": repository}
@@ -33,7 +34,6 @@ def component(standalone, path, package_name):
         "source_repository": string(repository.get("url")),
         "source_directory": string(repository.get("directory")),
         "source_revision": string(installed.get("gitHead")),
-        "package_distribution": string(installed.get("_resolved")),
         "path": path.as_posix(),
     }
     fields["missing_metadata"] = [
@@ -44,15 +44,15 @@ def component(standalone, path, package_name):
     return fields
 
 
-def package_name(path):
+def package_location(path):
     if path.name.startswith((".", "@")):
         return None
     name, parent = path.name, path.parent
     if parent.name.startswith("@"):
         name = f"{parent.name}/{name}"
         parent = parent.parent
-    if parent.name == "node_modules" or parent == Path("node_modules/next/dist/compiled"):
-        return name
+    if parent.name == "node_modules" or parent == NEXT_COMPILED:
+        return name, parent
     return None
 
 
@@ -60,9 +60,13 @@ def generate_notice(standalone):
     components = []
     for directory, _, _ in os.walk(standalone):
         path = Path(directory).relative_to(standalone)
-        name = package_name(path)
-        if name:
-            components.append(component(standalone, path, name))
+        location = package_location(path)
+        if location is None:
+            continue
+        name, parent = location
+        installed = metadata(standalone / path / "package.json")
+        if parent != NEXT_COMPILED or string(installed.get("name")):
+            components.append(component(path, name, installed))
 
     return json.dumps({
         "components": sorted(components, key=lambda item: item["path"]),
