@@ -26,6 +26,7 @@ const { deliverJobResult, discardChatDeliveries, reconcileUserSteers, registerLi
 const chatRoute = await import("../app/api/chat/route.ts");
 const steerRoute = await import("../app/api/chats/[id]/steer/route.ts");
 const tokenRoute = await import("../app/api/stt/token/route.ts");
+const modelRoute = await import("../app/api/models/route.ts");
 
 const chats: string[] = [];
 const question = {
@@ -192,11 +193,6 @@ test("a wait that ends without readiness resumes the server and keeps the distin
 	assert.equal(maintenanceStatus().mode, "open");
 	assert.equal((await steer("chat_unknown", "after the postponed switch")).status, 404, "writes reach their handler again");
 
-	const kept = await cli("drain", "--timeout-ms", "0", "--keep-hold");
-	assert.equal(kept.code, 2);
-	assert.equal(kept.status.mode, "draining");
-	assert.equal((await steer("chat_unknown", "during the kept hold")).status, 503);
-	assert.equal((await cli("resume", "--generation", kept.status.generation)).status.mode, "open");
 	lesson.end();
 });
 
@@ -227,6 +223,46 @@ test("a dictation token stays available during a hold", async (t) => {
 	assert.equal(response.status, 200);
 	assert.deepEqual(await response.json(), { token: "fixture-token" });
 	control("resume", held.generation);
+});
+
+test("the configured API-key model catalog stays readable during a hold", async (t) => {
+	const previousKey = process.env.ANTHROPIC_API_KEY;
+	process.env.ANTHROPIC_API_KEY = "fixture-key";
+	t.after(() => {
+		if (previousKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+		else process.env.ANTHROPIC_API_KEY = previousKey;
+	});
+	const before = await (await modelRoute.GET()).json();
+	assert(before.models.some((model: { provider: string }) => model.provider === "anthropic"));
+
+	const held = control("drain");
+	const response = await modelRoute.GET();
+	assert.equal(response.status, 200);
+	assert.deepEqual(await response.json(), before);
+	assert.equal(control("status", held.generation).drained, true);
+});
+
+test("an admitted chat request reconciles its saved question after a hold begins", async () => {
+	const owner = chat();
+	const occurrence = { messageId: "saved-question", contentIndex: 0, toolCallId: "saved-call", toolName: "old_plugin_question" };
+	const saved = {
+		...question, id: occurrence.messageId,
+		content: [{ type: "toolCall", id: occurrence.toolCallId, name: occurrence.toolName, arguments: {} }],
+		lhQuestions: { "0": { protocolVersion: 99, occurrence } },
+	} as unknown as LhMessage;
+	stores.chatStore.saveMessages(owner.id, [saved]);
+
+	const body = Promise.withResolvers<void>();
+	class DelayedRequest extends Request {
+		override async json() { await body.promise; return super.json(); }
+	}
+	const sending = chatRoute.POST(new DelayedRequest(post("http://test/api/chat", { chatId: owner.id, input: { type: "text", text: "Continue after the old question" } })));
+	const held = control("drain");
+	assert.equal(held.counts["write-request"], 1);
+	body.resolve();
+	assert.equal((await sending).status, 503, "the request reaches the unconfigured model gate");
+	assert.equal(stores.chatStore.getChat(owner.id)!.messages.find(message => message.role === "toolResult")?.details?.reason, "unreadable-protocol");
+	assert.equal(control("status", held.generation).drained, true);
 });
 
 test("a failed plugin runtime composition leaves no startup work behind", () => {

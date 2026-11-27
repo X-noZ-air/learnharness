@@ -124,6 +124,7 @@ export function control(op: string, generation?: string, holdMs: number = HOLD_M
 	if (generation !== undefined && generation !== s.generation) throw new Error("Stale maintenance generation");
 	if (op === "drain") {
 		if (!Number.isSafeInteger(holdMs) || holdMs < 1 || holdMs > MAX_HOLD_MS) throw new Error("Invalid hold period");
+		if (s.mode === "draining" && generation === undefined) throw new Error("Drain renewal requires its generation");
 		if (s.mode === "open") {
 			s.mode = "draining";
 			s.generation = randomUUID();

@@ -57,6 +57,8 @@ test("a living holder keeps its hold by repeating the drain", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const held = control("drain", undefined, 1000);
 	t.mock.timers.tick(900);
+	assert.throws(() => control("drain", undefined, 1), /requires its generation/);
+	assert.throws(() => control("drain", "other-generation", 1), /Stale/);
 	assert.equal(control("drain", held.generation, 1000).generation, held.generation);
 	t.mock.timers.tick(900);
 	assert.equal(control("status", held.generation).drained, true);

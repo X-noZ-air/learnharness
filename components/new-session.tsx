@@ -76,7 +76,7 @@ export function DraftShell({
 	text,
 	onChange,
 	onSend,
-	startError = false,
+	startError,
 	setupCta,
 	mode = "teach",
 	picks = [],
@@ -88,7 +88,7 @@ export function DraftShell({
 	text: string;
 	onChange: (v: string) => void;
 	onSend: () => void;
-	startError?: boolean | string;
+	startError?: string;
 	/** The practice draft (owner, 2026-10-04): ?mode=practice — the
 	 *  created session carries kind:"practice" and the copy changes
 	 *  (the practice agent opens; no probing). */
@@ -199,7 +199,7 @@ export function DraftShell({
 										setup={setupCta}
 									/>
 								</div>
-								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{typeof startError === "string" ? startError : OPENING_PROMPT_FAILURE}</p>}
+								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{startError}</p>}
 								<div data-attachment-composer="" className={`pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)] ${startError ? "narrow:short:flex-1" : ""}`}>
 									<Composer
 										busy={busy}

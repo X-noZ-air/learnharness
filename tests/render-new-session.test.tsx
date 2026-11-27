@@ -97,7 +97,7 @@ describe("startDraftSession — the create-on-send contract", () => {
 
 describe("DraftShell — the sessionless surface", () => {
 	it("storage failure leaves the full draft editable beside the approved error", () => {
-		const html = renderToStaticMarkup(<DraftShell busy={false} text="keep all my text" onChange={() => {}} onSend={() => {}} startError />);
+		const html = renderToStaticMarkup(<DraftShell busy={false} text="keep all my text" onChange={() => {}} onSend={() => {}} startError={OPENING_PROMPT_FAILURE} />);
 		assert.ok(html.includes('role="alert"'));
 		assert.ok(html.includes(OPENING_PROMPT_FAILURE));
 		assert.match(html, /<div[^>]*role="textbox"[^>]*contentEditable="true"[^>]*>keep all my text<\/div>/);

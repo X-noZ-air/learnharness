@@ -2,6 +2,15 @@
 
 A drain holds admission closed while work already accepted by this process finishes. Use it before a controlled stop of a server that exclusively owns its profile. Readiness applies only to this process and the generation in the response. An independent process with access to the same files is outside the contract.
 
+## First switch from M1
+
+Identify the old service, its data root and its auth directory from the service configuration. Include subscription credentials beside the auth file and any plugin data roots in the profile inventory. Make the first switch in one of these two situations:
+
+* **Verified unused profile.** Verify from the service setup and access records that the profile has never been opened to learners, and inspect the configured paths for any sessions, jobs, settings or credentials from prior use. Keep learner access closed. Stop any M1 instance and verify that its processes and other profile writers have exited before starting the new server.
+* **Controlled maintenance window.** Use this path for a used profile or if its history cannot be verified. Schedule a window, block new learner traffic, and have the learner confirm that active sessions, jobs and sign-ins have finished and queued input has appeared in the saved session. Stop the old service and verify that its process, its children and any other profile writers have exited. Take a consistent snapshot of the stopped profile before starting the new server.
+
+The unchanged M1 process provides no atomic readiness check. In either case, keep learner access closed, start the new server with the startup hold, verify the expected profile configuration and confirm `startup-hold` with the socket's `status` command. Release that generation before reopening access. If the switch fails, stop the replacement and restore the compatible program/profile pair while access is still closed.
+
 ## Enable local control
 
 Set `LH_MAINTENANCE_SOCKET` to an absolute Unix socket path in an existing directory owned by the service user with mode 0700. Use a private runtime directory outside the profile. The socket is mode 0600. Leave this variable unset for ordinary operation. The control protocol is local to the socket.
@@ -25,11 +34,11 @@ The client writes one JSON object on stdout. An idle, held server can return
 {"version":1,"generation":"0ef24084-c188-4c38-b09e-d7fef5990abd","mode":"draining","counts":{},"reasons":[],"drained":true}
 ```
 
-The socket accepts one JSON line per connection with an `op`, an optional `generation` and, for `drain`, an optional `holdMs`, and returns one JSON line. The supported operations are `status`, `drain`, `resume` and `release`. A generation changes on entry to and exit from a hold, and on process replacement. Repeating a drain during a hold observes its current generation and renews the hold. Supplying a stale generation fails the command. Serialize operator actions for each profile.
+The socket accepts one JSON line per connection with an `op`, a `generation` when required and, for `drain`, an optional `holdMs`, and returns one JSON line. The supported operations are `status`, `drain`, `resume` and `release`. A generation changes on entry to and exit from a hold, and on process replacement. Renewing an active drain requires its current generation. Supplying a stale generation fails the command. Serialize operator actions for each profile.
 
 * `drain` closes admission before returning its first status. The CLI waits for the same generation to report `drained: true`. Exit code 0 means the requested hold is ready. Exit code 2 returns the busy counts or a reason a guarantee is unavailable. Exit code 1 indicates a command or connection error.
 * A drain hold has a deadline in the server. It lasts `holdMs` after the most recent `drain` command, 60000 by default and at most 600000. When the deadline passes, the server opens by itself, changes the generation and withdraws any readiness it reported. A caller that crashes or loses its session therefore cannot leave the service refusing writes. `status` does not renew a hold. While it waits, the CLI renews the hold with every poll.
-* When the wait ends without readiness, because `--timeout-ms` elapsed or a reason is present, the CLI resumes the server itself, prints the status after that resume and exits with code 2. Maintenance is postponed and a running lesson or sign-in continues. Pass `--keep-hold` to leave the hold in place until its deadline, for example to inspect the remaining work, and then use `resume` with the matching generation.
+* When the wait ends without readiness, because `--timeout-ms` elapsed or a reason is present, the CLI resumes its confirmed drain, prints the resulting status and exits with code 2. Maintenance is postponed and a running lesson or sign-in continues. If the initial request times out before the server confirms a generation, the CLI reports the timeout on stderr. Any unconfirmed hold expires on the server.
 * `release` opens a startup hold. `resume` opens a drain hold. Either invalidates the corresponding readiness result. An open server reports `drained: false` even when its counts are empty. A startup hold has no deadline and stays closed until it is released.
 * For a switch, stop the process within the hold period after exit code 0, or repeat `drain` with the generation to renew the hold and confirm readiness first. Verify that the process and its writers have exited before using the profile. Manage the snapshot, format compatibility and rollback of the program/profile pair outside the application.
 

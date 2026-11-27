@@ -14,7 +14,7 @@ async function refused(id) {
 	assert.equal(response.status, 503); assert.equal((await response.json()).code, "maintenance");
 }
 async function hold(kind) {
-	const s = await f.cli("drain", ["--timeout-ms", "0", "--keep-hold"], 2);
+	const s = await f.control({ op: "drain" });
 	assert.equal(s.mode, "draining"); assert.ok(s.counts[kind] > 0, JSON.stringify(s)); return s;
 }
 try {
@@ -39,7 +39,7 @@ try {
 	assert.equal(side.status, 200, side.ok ? "" : await side.text());
 	await f.waitForModel();
 	const sideStatus = await hold("side-chat"); assert.ok(!sideStatus.counts["main-turn"]);
-	const drain = f.cli("drain"); f.releaseModel();
+	const drain = f.cli("drain", ["--generation", sideStatus.generation]); f.releaseModel();
 	assert.match(await side.text(), /Synthetic answer/); assert.equal((await drain).drained, true);
 	await f.cli("resume");
 	f.holdModel();
@@ -47,7 +47,7 @@ try {
 	const imported = fetch(f.origin + "/api/graph/import", { method: "POST", body: form });
 	await f.waitForModel();
 	const extract = await hold("extraction"); assert.ok(extract.counts.upload > 0);
-	f.releaseModel(); await (await imported).text(); assert.equal((await f.cli("drain")).drained, true);
+	f.releaseModel(); await (await imported).text(); assert.equal((await f.cli("drain", ["--generation", extract.generation])).drained, true);
 	await f.stop();
 	// A completed plugin computation whose durable marker still needs a session delivery.
 	const job = { id: "job_synthetic", chatId: id, kind: "plugin", toolCallId: "fixture-call", status: "done", activity: "finished",
@@ -70,9 +70,9 @@ try {
 	await f.cli("release");
 	f.holdModel();
 	await f.api("jobs?chatId=" + id);
-	await hold("delivery"); await f.waitForModel(); f.releaseModel();
+	const delivery = await hold("delivery"); await f.waitForModel(); f.releaseModel();
 	// The marker behind the open question is saved and needs the learner, so it does not hold the server.
-	assert.equal((await f.cli("drain")).drained, true);
+	assert.equal((await f.cli("drain", ["--generation", delivery.generation])).drained, true);
 	assert.equal((await f.api("jobs?chatId=" + id)).jobs[0].delivery.status, "delivered");
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
 	await f.cli("resume"); await send(id, "continue after restart"); await f.cli("drain");

@@ -1,4 +1,4 @@
-import { admissionClosed, tracked } from "../core/maintenance.ts";
+import { canStartWork, tracked } from "../core/maintenance.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { ChatInputError } from "../core/input-events.ts";
 import { newMessageId, nativeAnswerContent, pendingPluginQuestionOf, pluginQuestionCallsOf, type LhMessage } from "../core/native-messages.ts";
@@ -230,7 +230,7 @@ export async function reconcilePluginQuestionCompatibility(chatStore: ChatStore,
 	if (isTurnRunning(chatId)) return;
 	const initial = chatStore.getChat(chatId);
 	if (!initial || (!pendingPluginQuestionOf(initial.messages) && !unreadablePending(initial.messages))) return;
-	if (admissionClosed()) return;
+	if (!canStartWork()) return;
 	return tracked("write-request", () => reconcilePending(chatStore, chatId));
 }
 async function reconcilePending(chatStore: ChatStore, chatId: string) {

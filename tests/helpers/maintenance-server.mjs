@@ -85,6 +85,16 @@ export async function fixture() {
 		assert.equal(result.code ?? 0, expected, result.stderr + result.stdout);
 		return JSON.parse(result.stdout);
 	}
+	async function control(command) {
+		const peer = net.createConnection(socket).setEncoding("utf8");
+		peer.setTimeout(5000, () => peer.destroy(new Error("Maintenance socket timed out")));
+		peer.write(JSON.stringify(command) + "\n");
+		let reply = "";
+		for await (const chunk of peer) reply += chunk;
+		const result = JSON.parse(reply);
+		assert.equal(result.version, 1, reply);
+		return result;
+	}
 	/** The operator command as a live process, for a caller that dies while it waits. */
 	function spawnCli(op, args = []) {
 		return spawn(process.execPath, ["scripts/maintenance.mjs", op, "--socket", socket, ...args], { cwd: root, stdio: "ignore" });
@@ -95,7 +105,7 @@ export async function fixture() {
 		return res.json();
 	}
 	function releaseModel() { barrier?.resolve(); barrier = undefined; }
-	return { home, data, origin, start, stop, cli, spawnCli, api, logs: () => logs,
+	return { home, data, origin, start, stop, cli, control, spawnCli, api, logs: () => logs,
 		holdModel() { barrier = Promise.withResolvers(); }, releaseModel,
 		waitForModel: () => until(() => waiting > 0, "local model request"),
 		async close() { releaseModel(); try { await stop(); } finally { model.closeAllConnections(); await new Promise(resolve => model.close(resolve)); await fs.rm(home, { recursive: true, force: true }); } },

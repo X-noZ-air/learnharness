@@ -9,7 +9,7 @@ const headers = { "Cache-Control": "no-store" };
  * model's supported thinking levels. Reads bundled and locally saved
  * metadata; the existing connection catalogs still refresh independently.
  */
-async function handleGet() {
+export async function GET() {
 	await refreshConnectionCatalog();
 	return Response.json(modelCatalog(), { headers });
 }
@@ -22,5 +22,4 @@ async function handlePost() {
 	return Response.json({ outcome, catalog: modelCatalog() } satisfies ModelCatalogRefreshResponse, { headers });
 }
 
-export const GET = mutation(handleGet);
 export const POST = mutation(handlePost);
