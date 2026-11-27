@@ -176,7 +176,7 @@ test("an admitted job takes over a pump parked behind a quiz during drain", { ti
 	const held = control("drain", undefined, undefined, newDrainAttempt());
 	const later = worker.run(() => queueResult(owner.id, "admitted-result"));
 	worker.end();
-	const wakes: SteerMessage[][] = [];
+	const wakes: LhMessage[][] = [];
 	setTurnRunner(async (id, input) => {
 		assert.equal(input.type, "steers");
 		wakes.push(input.steers);
