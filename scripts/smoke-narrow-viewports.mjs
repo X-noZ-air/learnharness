@@ -27,7 +27,7 @@ const open = 'button[aria-label="Open sidebar"]';
 const drawerOpener = open + '[aria-haspopup="dialog"]';
 const close = 'button[aria-label="Close sidebar"]';
 const drawer = '[role="dialog"][aria-label="Sessions"]';
-const inlineSidebar = '[data-testid="sessions-sidebar"][aria-hidden="false"]';
+const inlineSidebar = `[data-testid="sessions-sidebar"][aria-hidden="false"]:not(${drawer} *)`;
 const backdrop = '[data-testid="sidebar-backdrop"]';
 const teaching = '[data-testid="new-session"]';
 const content = "[data-session-surface]";
