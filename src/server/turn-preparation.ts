@@ -5,6 +5,7 @@
  * never aborts preparation or another view.
  */
 import type { PiTurnHandle } from "./pi/ui-stream.ts";
+import { randomUUID } from "node:crypto";
 import { beginTurn, endTurn, handoffTurn, isTurnOwner } from "./turn-liveness.ts";
 import { registerTurn, runningTurn, settledTurnResponse, unregisterTurn } from "./turn-runs.ts";
 
@@ -27,6 +28,7 @@ export function claimPreparingTurn(chatId: string): TurnPreparation | null {
 	const waiting = new Set<() => void>();
 
 	const outer: PiTurnHandle = {
+		turnId: randomUUID(),
 		dismissalHistory: () => real?.dismissalHistory?.(),
 		subscribe() {
 			let cancelled = false;

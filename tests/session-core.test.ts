@@ -1035,11 +1035,11 @@ describe("answer submission recovery", () => {
 		const first = m.dismissQuestion("q1", { ...dismissal, readingThinking: draft }, key);
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
 		refused.resolve(Response.json({ error: "Stale target" }, { status: 400 }));
-		assert.equal(await first, false);
+		await first;
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
 		assert.equal(m.questionDraft(key)?.readingThinking, draft);
 		assert.equal(m.getState().error?.message, "The dismissal failed (400).");
-		assert.equal(await m.dismissQuestion("q1", { ...dismissal, readingThinking: m.questionDraft(key)?.readingThinking }, key), true);
+		await m.dismissQuestion("q1", { ...dismissal, readingThinking: m.questionDraft(key)?.readingThinking }, key);
 		assert.deepEqual(submitted, Array(2).fill({ input: { type: "dismiss", toolCallId: "q1", answer: dismissal } }));
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
 	});

@@ -309,7 +309,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, getDismissalTurnId, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -471,7 +471,7 @@ export function Chat({
 	abortAskRef.current = abortAsk;
 	const pluginAbortTarget = useRef<PluginQuestionDismissalTarget | null>(null);
 	const questionAbortTarget = useRef<ReturnType<typeof pendingQuestionOf>>(null);
-	const problemAbortTarget = useRef<ReturnType<typeof activeProblemOf>>(null);
+	const problemAbortTarget = useRef<{ toolCallId: string; turnId?: string } | null>(null);
 	const pluginDismissal = useRef({ canonicalMessages, reconciliation, stop, dismissPluginQuestion });
 	pluginDismissal.current = { canonicalMessages, reconciliation, stop, dismissPluginQuestion };
 	const closeAbortAsk = useCallback(() => {
@@ -501,7 +501,9 @@ export function Chat({
 				setAbortAsk("question");
 			}
 			else if (target === "problem") {
-				problemAbortTarget.current = activeProblemRef.current;
+				const problem = activeProblemRef.current;
+				if (!problem) return;
+				problemAbortTarget.current = { toolCallId: problem.toolCallId, turnId: getDismissalTurnId() };
 				setAbortAsk("problem");
 			}
 			else if (target === "turn") setAbortAsk("turn");
@@ -511,7 +513,7 @@ export function Chat({
 		};
 		window.addEventListener("lh:kbd-abort-turn", onAbort);
 		return () => window.removeEventListener("lh:kbd-abort-turn", onAbort);
-	}, [controller]);
+	}, [controller, getDismissalTurnId]);
 	const confirmAbort = useCallback(
 		(mode: AbortMode) => {
 			const pluginQuestion = pluginAbortTarget.current;
@@ -547,7 +549,7 @@ export function Chat({
 			// silent marker route; the conclude synthesis rides the user's
 			// next input. Mid-turn the discard also kills the running turn.
 			if (mode === "problem" && problemTarget && activeProblemRef.current?.toolCallId === problemTarget.toolCallId)
-				void dismissProblem(problemTarget.toolCallId);
+				void dismissProblem(problemTarget.toolCallId, problemTarget.turnId);
 		},
 		[abortInFlightTurn, dismissQuestion, dismissProblem, closeAbortAsk],
 	);

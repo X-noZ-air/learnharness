@@ -271,7 +271,7 @@ test("an admitted dismissal aborts only its original turn even when its browser 
 	control("resume", hold.generation);
 	const successor = claim(t, id);
 	browserReply.resolve();
-	assert.equal(await dismissal, true);
+	await dismissal;
 	assert.equal(danglingQuestionOf(model.getState().nativeMessages), null);
 	assert.equal(successor.signal.aborted, false);
 	assert.equal(isTurnRunning(id), true);

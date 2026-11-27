@@ -55,6 +55,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 			if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 			throw err;
 		}
+		if (input.type === "dismiss-problem" && (running ? !current?.turnId || input.turnId !== current.turnId : input.turnId !== undefined)) {
+			return Response.json({ error: "The practice turn changed. Retry the dismissal." }, { status: 409 });
+		}
 		if (running) {
 			if (current !== owner) return Response.json({ error: "The running turn changed. Retry the dismissal." }, { status: 409 });
 			parkDismissal(id, input);

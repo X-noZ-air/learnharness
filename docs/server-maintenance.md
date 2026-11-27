@@ -57,5 +57,16 @@ A message the learner sent into a running lesson is kept only in memory until a 
 
 Loading a community backend makes the process report `unknown-plugin-lifecycle`. Arbitrary backend code can retain a timer or writer after deactivation. Disabling that package cannot establish quiescence for the current process. Audited bundled backends register detached writes through the host's `trackWork` callback. A change that adds a backend writer or a new mutation route must cover its admission and its last write.
 
+## Stop and cancellation controls
+
+| Route | Actions checked during drain |
+| --- | --- |
+| `POST /api/activity/abort` | Stop work of kind `turn`, `plugin-worker`, `job` or `extraction`. Cancelling an orphaned job waits for admission before writing. |
+| `POST /api/chats/[id]/side-chats/[threadId]/stop` | Stop the current side answer. Its owner saves the partial response. |
+| `POST /api/chats/[id]/dismiss` | Dismiss a native question, a practice problem or a plugin question. A running practice dismissal must identify the viewed turn. An idle dismissal waits for admission before saving. |
+| `POST /api/subscriptions` and `/api/subscriptions/browser` | Cancel an existing ChatGPT, Copilot or xAI sign-in. Bound browser and prompt continuations can complete that sign-in. Account, credential and background-consent changes require normal admission. |
+| `POST /api/plugins/[id]/call` | Core Flashcards `cancel-generation` can continue under the targeted batch's owner. If no owner can cover the write, the request waits for admission. The other bundled backend operations require normal admission. |
+| `PUT /api/plugins/[id]`, `POST /api/plugins`, `DELETE /api/chats/[id]` and `PATCH /api/chats/[id]/side-chats/[threadId]` | Plugin enablement and refresh, chat deletion, and side-chat view state change configuration or records. They use normal admission. |
+
 On POSIX, run `node scripts/smoke-maintenance.mjs` in a development checkout to exercise the socket, delayed local model, real HTTP routes and restart with a disposable profile.
 With Chrome installed, run `node scripts/smoke-maintenance-dismissals.mjs` to exercise the chat confirmation dialog during maintenance against live streamed turns.

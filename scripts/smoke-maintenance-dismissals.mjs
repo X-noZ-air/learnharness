@@ -91,6 +91,7 @@ try {
 	assert.equal((await f.cli("status", ["--generation", practiceHold.generation])).drained, true);
 	await f.cli("resume", ["--generation", practiceHold.generation]);
 	f.releaseModel();
+	await practicePage.close();
 
 	const question = await seed("teach", "quiz", quiz);
 	const stalePage = await open(question.id);
@@ -117,6 +118,38 @@ try {
 	assert.ok((await record(question.id)).messages.some(m => m.content?.some?.(part => part.text === successorPrefix + " Synthetic answer.")));
 	assert.deepEqual(abortRequests, []);
 	await f.cli("resume", ["--generation", successorHold.generation]);
+	await stalePage.close();
+	await successor.close();
+
+	const retries = await seed("practice", "problem", { statement: "Prove another synthetic claim.", mode: "recall" });
+	const attempt = text => f.api("chat", { chatId: retries.id, input: { type: "thinking", problemCallId: retries.callId, text } });
+	const firstPrefix = "First practice attempt is streaming.";
+	f.holdModel(firstPrefix);
+	await attempt("First proof");
+	const retryPage = await open(retries.id);
+	await retryPage.waitForFunction(prefix => document.body.textContent.includes(prefix), {}, firstPrefix);
+	await delayDismissal(retryPage);
+	await showConfirmation(retryPage, "Discard this problem?");
+	await retryPage.click(confirm);
+	await retryPage.waitForFunction(() => typeof window.releaseDismissal === "function");
+	f.releaseModel();
+	await until(async () => !(await record(retries.id)).turnInFlight, "first practice attempt settlement");
+	const retryPrefix = "Second practice attempt is streaming.";
+	f.holdModel(retryPrefix);
+	await attempt("Second proof");
+	const retrySuccessor = await open(retries.id);
+	await retrySuccessor.waitForFunction(prefix => document.body.textContent.includes(prefix), {}, retryPrefix);
+	const retryHold = await drain();
+	const staleAttempt = retryPage.waitForResponse(res => res.url().endsWith("/dismiss"));
+	await retryPage.evaluate(() => window.releaseDismissal());
+	assert.equal((await staleAttempt).status(), 409);
+	assert.equal((await record(retries.id)).turnInFlight, true);
+	f.releaseModel();
+	await until(async () => !(await record(retries.id)).turnInFlight, "second practice attempt settlement");
+	assert.ok((await record(retries.id)).messages.some(m => m.content?.some?.(part => part.text === retryPrefix + " Synthetic answer.")));
+	await f.cli("resume", ["--generation", retryHold.generation]);
+	await retryPage.close();
+	await retrySuccessor.close();
 
 	const delayed = await seed("teach", "quiz", quiz);
 	const sidePage = await open(delayed.id);

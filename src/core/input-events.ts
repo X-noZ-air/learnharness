@@ -101,7 +101,7 @@ export type DismissInput =
 	/** The problem discard (practice, owner 2026-10-04): ask-style — the
 	 *  silent route appends the UI-only marker and wakes nothing; the
 	 *  conclude pair rides the user's NEXT input (inputAppends). */
-	| { type: "dismiss-problem"; problemCallId: string };
+	| { type: "dismiss-problem"; problemCallId: string; turnId?: string };
 
 /** Parse and validate a dismissal event off a request body. */
 export function parseDismissInput(input: unknown): DismissInput {
@@ -115,7 +115,10 @@ export function parseDismissInput(input: unknown): DismissInput {
 		if (typeof i.problemCallId !== "string" || i.problemCallId.length === 0) {
 			throw new ChatInputError("dismiss-problem input requires problemCallId");
 		}
-		return { type: "dismiss-problem", problemCallId: i.problemCallId };
+		if (i.turnId !== undefined && (typeof i.turnId !== "string" || !i.turnId)) {
+			throw new ChatInputError("Invalid practice turn id");
+		}
+		return { type: "dismiss-problem", problemCallId: i.problemCallId, ...(i.turnId === undefined ? {} : { turnId: i.turnId }) };
 	}
 	if (i.type !== "dismiss") throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {

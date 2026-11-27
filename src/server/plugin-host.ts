@@ -1,4 +1,4 @@
-import { tracked, unknownPluginLoaded } from "../core/maintenance.ts";
+import { beginWork, tracked, unknownPluginLoaded, type Lease } from "../core/maintenance.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -75,6 +75,7 @@ interface Activation {
 	controller: AbortController;
 	cleanups: PluginCleanup[];
 	handlers: Map<string, (input: unknown) => unknown | Promise<unknown>>;
+	writers: Map<string, Set<Lease>>;
 	instructions: Set<Instructions>;
 	tools: Set<Tools>;
 	questions: Map<string, QuestionDefinition>;
@@ -231,7 +232,7 @@ export function createPluginHost(deps: PluginHostDependencies) {
 			return;
 		}
 		const manifest = pkg.info.manifest;
-		const activation: Activation = { controller: new AbortController(), cleanups: [], handlers: new Map(), instructions: new Set(), tools: new Set(), questions: new Map(), problems: new Map(), ready: false };
+		const activation: Activation = { controller: new AbortController(), cleanups: [], handlers: new Map(), writers: new Map(), instructions: new Set(), tools: new Set(), questions: new Map(), problems: new Map(), ready: false };
 		pkg.activation = activation;
 		const requireLive = () => { if (!live(pkg, activation)) throw new Error("Plugin activation is no longer active"); };
 		const cleanup = (fn: PluginCleanup) => {
@@ -248,7 +249,19 @@ export function createPluginHost(deps: PluginHostDependencies) {
 				cleanup(() => services.workers.dispose());
 				const ctx: PluginBackendContext = {
 					manifest, directory: pkg.directory, dataDirectory, signal: activation.controller.signal, cleanup, ...services,
-					trackWork: fn => tracked("plugin-writer", fn),
+					async trackWork(fn, batchId) {
+						if (batchId === undefined) return tracked("plugin-writer", fn);
+						const lease = beginWork("plugin-writer");
+						const writers = activation.writers.get(batchId) ?? new Set<Lease>();
+						writers.add(lease);
+						activation.writers.set(batchId, writers);
+						try { return await lease.run(fn); }
+						finally {
+							writers.delete(lease);
+							if (!writers.size) activation.writers.delete(batchId);
+							lease.end();
+						}
+					},
 					createBackgroundTool(context, definition) { requireLive(); return services.createBackgroundTool(context, definition); },
 					registerInstructions(contribution: PluginInstructions) {
 						requireLive();
@@ -574,6 +587,16 @@ export function createPluginHost(deps: PluginHostDependencies) {
 			});
 		},
 		refresh: () => enqueue(async () => { assertOpen(); await initializeInternal(); await discover(readState(stateFile)); change(); }),
+		cancelOwnedFlashcardsBatch(input: unknown): Promise<unknown> | undefined {
+			const pkg = packages.get("flashcards");
+			const activation = pkg?.activation;
+			if (!pkg || pkg.info.origin !== "core" || !pkg.info.enabled || !activation?.ready || !live(pkg, activation)) return;
+			if (!object(input) || typeof input.batchId !== "string" || !input.batchId) throw new PluginHostError(400, "Invalid batch id");
+			const writers = activation.writers.get(input.batchId);
+			const owner = writers && [...writers].find(lease => lease.active);
+			const cancel = activation.handlers.get("cancel-generation");
+			if (owner && cancel) return owner.run(() => tracked("write-request", () => cancel(input)));
+		},
 		async call(id: string, operation: string, input?: unknown): Promise<unknown> {
 			assertOpen();
 			const pkg = get(id), activation = pkg.activation;

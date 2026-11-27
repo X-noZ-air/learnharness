@@ -327,6 +327,7 @@ export class SessionModel {
 	// The single live consume (POST response or reattach stream): a newer
 	// consume cancels the older — one reader at a time.
 	private consumeAbort: AbortController | null = null;
+	private visibleTurn?: { owner: AbortController | null; id: string };
 	/** Retain the latest request across stop(): an opening POST still owns
 	 * its refusal after view detachment, but never after a newer request. */
 	private latestRequest: AbortController | null = null;
@@ -729,6 +730,8 @@ export class SessionModel {
 	 *  terminal (stream-route only) fires the settle hook and ends. */
 	async consumeStream(res: Response, controller = this.consumeAbort, allowRecovery = true): Promise<void> {
 		if (!res.body) throw new Error("The turn stream body is empty.");
+		const id = res.headers.get("x-lh-turn-id");
+		if (this.consumeAbort === controller) this.visibleTurn = id ? { owner: controller, id } : undefined;
 		const reader = res.body.getReader();
 		let sawEvent = false;
 		let sawDone = false;
@@ -762,6 +765,7 @@ export class SessionModel {
 			// A cancelled consume may finish after its replacement has entered
 			// Thinking. Only the current owner can settle shared state.
 			if (this.consumeAbort === controller) {
+				this.visibleTurn = undefined;
 				this.streamingIds = new Set();
 				this.executions = new Map();
 				if (sawDone) {
@@ -1121,10 +1125,10 @@ export class SessionModel {
 	 * toolResult lands optimistically, then the SILENT route persists it
 	 * — no turn, no stream, nothing wakes. The session pauses at the
 	 * user's choice; the next plain send is the wake. */
-	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<boolean> {
-		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return false;
+	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<void> {
+		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return;
 		const subject = pendingQuestionOf(this.nativeHistory());
-		if (!subject || subject.toolCallId !== toolCallId || (questionKey !== undefined && subject.key !== questionKey)) return false;
+		if (!subject || subject.toolCallId !== toolCallId || (questionKey !== undefined && subject.key !== questionKey)) return;
 		if (answer.readingThinking !== undefined) {
 			this.saveQuestionDraft(subject.key, { readingThinking: answer.readingThinking });
 			answer = { ...answer, readingThinking: answer.readingThinking.trim() || undefined };
@@ -1134,16 +1138,21 @@ export class SessionModel {
 			() => pendingQuestionOf(this.nativeHistory())?.key === subject.key);
 	}
 
-	async dismissProblem(problemCallId: string): Promise<boolean> {
+	getDismissalTurnId(): string | undefined {
+		const turn = this.visibleTurn;
+		if (turn && turn.owner === this.consumeAbort) return turn.id;
+	}
+
+	async dismissProblem(problemCallId: string, turnId?: string): Promise<void> {
 		const subject = activeProblemOccurrenceOf(this.nativeHistory());
-		if (subject?.toolCallId !== problemCallId) return false;
-		return this.dismiss({ type: "dismiss-problem", problemCallId }, newProblemDismissedMarker(problemCallId), () => {
+		if (subject?.toolCallId !== problemCallId) return;
+		return this.dismiss({ type: "dismiss-problem", problemCallId, turnId }, newProblemDismissedMarker(problemCallId), () => {
 			const current = activeProblemOccurrenceOf(this.nativeHistory());
 			return current?.messageId === subject.messageId && current.contentIndex === subject.contentIndex && current.toolCallId === problemCallId;
 		});
 	}
 
-	private async dismiss(input: DismissInput, marker: LhMessage, isCurrent: () => boolean): Promise<boolean> {
+	private async dismiss(input: DismissInput, marker: LhMessage, isCurrent: () => boolean): Promise<void> {
 		try {
 			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
 				method: "POST",
@@ -1155,10 +1164,8 @@ export class SessionModel {
 			if (isCurrent()) this.mutate(() => {
 				this.tail = [...this.tail, { ...marker, id: localId() }];
 			});
-			return true;
 		} catch (err) {
 			this.setError((err as Error).message);
-			return false;
 		}
 	}
 

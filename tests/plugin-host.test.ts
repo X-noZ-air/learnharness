@@ -12,6 +12,8 @@ import type { PluginWorkerService } from "../src/core/plugin-workers.ts";
 import type { ServerEvent } from "../src/core/events.ts";
 import { createPluginWorkerService } from "../src/agent/plugin-workers.ts";
 import { createPluginTaskRecordStore } from "../src/store/plugin-task-records.ts";
+import { control, maintenanceStatus } from "../src/core/maintenance.ts";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 
 function fixture(t: TestContext) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-host-"));
@@ -45,6 +47,64 @@ function fixture(t: TestContext) {
 	return { root, directory, host, deps, plugin, history, notifications, listeners, servicesCreated: () => servicesCreated };
 }
 const status = (expected: number) => (e: unknown) => isPluginHostError(e) && e.status === expected;
+
+test("Flashcards cancellation inherits the targeted batch and counts its last write during drain", async t => {
+	const f = fixture(t);
+	const dir = path.join(f.root, "core", "flashcards");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ apiVersion: 1, id: "flashcards", name: "Flashcards", version: "1.0.0", minAppVersion: "0.3.0", backend: "backend.cjs" }));
+	fs.writeFileSync(path.join(dir, "backend.cjs"), `
+		const fs = require('node:fs');
+		const path = require('node:path');
+		exports.activate = ctx => {
+			const owner = Promise.withResolvers();
+			const allowWrite = Promise.withResolvers();
+			ctx.cleanup(() => { owner.resolve(); allowWrite.resolve(); });
+			ctx.handle('start-fixture', () => { void ctx.trackWork(() => owner.promise, 'batch'); });
+			ctx.handle('cancel-generation', async ({ batchId }) => {
+				owner.resolve();
+				await allowWrite.promise;
+				fs.writeFileSync(path.join(ctx.dataDirectory, 'cancelled'), batchId);
+				return batchId;
+			});
+			ctx.handle('allow-write', () => allowWrite.resolve());
+		};
+	`);
+	const dataDirectory = path.join(f.root, "plugin-data");
+	const host = createPluginHost({ ...f.deps, core: { directory: path.dirname(dir), dataDirectory, ids: ["flashcards"] } });
+	t.after(() => host.dispose());
+	const global = globalThis as typeof globalThis & { __lhPlugins?: { host: typeof host; ready: Promise<void> } };
+	const previousHost = global.__lhPlugins;
+	const previousSocket = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const ready = host.initialize();
+	global.__lhPlugins = { host, ready };
+	t.after(() => {
+		const current = maintenanceStatus();
+		if (current.mode === "draining") control("resume", current.generation);
+		if (previousSocket === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previousSocket;
+		global.__lhPlugins = previousHost;
+	});
+	await ready;
+	await host.setEnabled("flashcards", true);
+	const { POST } = await import("../app/api/plugins/[id]/call/route.ts");
+	const call = (operation: string, input?: unknown) => POST(new Request("http://fixture/api/plugins/flashcards/call", {
+		method: "POST", body: JSON.stringify({ operation, input }),
+	}), { params: Promise.resolve({ id: "flashcards" }) });
+	assert.equal((await call("start-fixture")).status, 200);
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	assert.deepEqual(hold.counts, { "plugin-writer": 1 });
+	assert.equal((await call("start-fixture")).status, 503);
+	const cancellation = call("cancel-generation", { batchId: "batch" });
+	const pending = Symbol();
+	assert.equal(await Promise.race([cancellation, new Promise(resolve => setImmediate(() => resolve(pending)))]), pending);
+	assert.deepEqual(maintenanceStatus().counts, { "write-request": 1 });
+	await host.call("flashcards", "allow-write");
+	assert.deepEqual(await (await cancellation).json(), { result: "batch" });
+	assert.equal(fs.readFileSync(path.join(dataDirectory, "flashcards", "cancelled"), "utf8"), "batch");
+	assert.deepEqual(maintenanceStatus().counts, {});
+});
 
 test("host error brand is process-stable, shape-checked and rejects arbitrary numeric status", () => {
 	assert.equal(isPluginHostError(new PluginHostError(404, "missing")), true);

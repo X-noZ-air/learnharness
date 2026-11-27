@@ -122,4 +122,8 @@ export async function getPluginAgentContributions(): Promise<NonNullable<AgentBu
 export async function getPluginQuestionTypeResolver(): Promise<Host["resolveQuestionType"]> {
 	return (await getPluginHost()).resolveQuestionType;
 }
-export const pluginTransport = createPluginTransport({ getHost: getPluginHost, directory: pluginDirectory });
+export const pluginTransport = createPluginTransport({
+	getHost: getPluginHost,
+	cancelOwnedFlashcardsBatch: input => (globalThis as typeof globalThis & PluginGlobal).__lhPlugins?.host.cancelOwnedFlashcardsBatch(input),
+	directory: pluginDirectory,
+});

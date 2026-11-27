@@ -99,6 +99,8 @@ export function createWebSubscriptionOwner(options: {
 		close() { actions.clear(); chatgpt.close(); native.close(); },
 	};
 }
+export function currentWebSubscriptionOwner() { return registry().owner; }
+
 export function webSubscriptionOwner() {
 	if (!webSubscriptionsEnabled()) throw new Error("Web subscription controls are unavailable in desktop-owned mode.");
 	const state = registry();

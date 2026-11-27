@@ -37,6 +37,29 @@ function request(command?: Record<string, unknown>, origin = "http://192.168.1.1
 }
 after(async () => { webSubscriptionOwner().close(); globalThis.fetch = originalFetch; await fs.rm(directory, { recursive: true, force: true }); });
 
+test("cancelling a sign-in during drain does not initialize an absent owner", async t => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const key = Symbol.for("lh.webSubscriptions");
+	const global = globalThis as typeof globalThis & { [key]?: { owner?: unknown } };
+	const previous = global[key];
+	const previousSocket = process.env.LH_MAINTENANCE_SOCKET;
+	const empty = {};
+	global[key] = empty;
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	t.after(() => {
+		control("resume", hold.generation);
+		global[key] = previous;
+		if (previousSocket === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previousSocket;
+	});
+	for (const providerId of ["chatgpt", "github-copilot", "xai"]) {
+		assert.equal((await subscriptionControlsResponse(request({ providerId, op: "cancel" }))).status, 200);
+	}
+	assert.deepEqual(global[key], {});
+	assert.equal(control("status", hold.generation).drained, true);
+});
+
 test("ordinary web restores configured sibling credentials, private runtime leases work for LAN-owned requests", async () => {
 	await refreshConnectionCatalog();
 	assert(chat.chatGPTConnected()); assert(native.nativeSubscriptionConnected("github-copilot")); assert(native.nativeSubscriptionConnected("xai"));

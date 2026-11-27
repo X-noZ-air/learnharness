@@ -1,4 +1,4 @@
-import { mutation } from "../core/maintenance.ts";
+import { admissionClosed, maintenanceRefusal, mutation, waitForOpen } from "../core/maintenance.ts";
 import { isPluginHostError } from "./plugin-host.ts";
 import { apiRequestRefusal } from "./desktop-access.ts";
 import type { PluginFrontendContext, PluginInfo } from "../core/plugins.ts";
@@ -21,7 +21,11 @@ async function objectBody(request: Request): Promise<Record<string, unknown>> {
 	if (!body || typeof body !== "object" || Array.isArray(body)) throw new InputError("Expected a JSON object");
 	return body as Record<string, unknown>;
 }
-export function createPluginTransport(deps: { getHost(): Promise<PluginTransportHost>; directory: string }) {
+export function createPluginTransport(deps: {
+	getHost(): Promise<PluginTransportHost>;
+	cancelOwnedFlashcardsBatch?(input: unknown): Promise<unknown> | undefined;
+	directory: string;
+}) {
 	const guarded = async (handle: () => Promise<Response>) => {
 		try { return await handle(); }
 		catch (error) {
@@ -46,12 +50,25 @@ export function createPluginTransport(deps: { getHost(): Promise<PluginTransport
 			await host.setEnabled(id, body.enabled);
 			return json(catalog(host));
 		}),
-		call: (id: string, request: Request) => guarded(async () => {
-			const body = await objectBody(request);
-			if (typeof body.operation !== "string" || !body.operation.trim()) throw new InputError("operation must be a nonempty string");
-			const host = await deps.getHost();
-			return json({ result: (await host.call(id, body.operation, body.input)) ?? null });
-		}),
+		call(id: string, request: Request) {
+			const handle = (continuationOnly: boolean) => guarded(async () => {
+				const { operation, input } = await objectBody(request);
+				if (typeof operation !== "string" || !operation.trim()) throw new InputError("operation must be a nonempty string");
+				const dispatch = async () => json({ result: (await (await deps.getHost()).call(id, operation, input)) ?? null });
+				if (!continuationOnly) return dispatch();
+				if (id !== "flashcards" || operation !== "cancel-generation") return maintenanceRefusal();
+				if (!input || typeof input !== "object" || !("batchId" in input) || typeof input.batchId !== "string" || !input.batchId)
+					throw new InputError("Invalid batch id");
+				while (admissionClosed()) {
+					if (request.signal.aborted) return new Response(null, { status: 499 });
+					const cancellation = deps.cancelOwnedFlashcardsBatch?.(input);
+					if (cancellation) return json({ result: (await cancellation) ?? null });
+					if (!await waitForOpen(request.signal)) return new Response(null, { status: 499 });
+				}
+				return mutation(dispatch)();
+			});
+			return admissionClosed() ? handle(true) : mutation(() => handle(false))();
+		},
 		convertDocument: (id: string, request: Request) => guarded(async () => json(await (await deps.getHost()).convertDocument(id, request))),
 		asset: (id: string, segments: string[]) => guarded(async () => {
 			const { bytes, contentType } = (await deps.getHost()).asset(id, segments);

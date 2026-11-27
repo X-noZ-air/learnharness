@@ -1,7 +1,7 @@
 import { admissionClosed, MaintenanceError, maintenanceRefusal, mutation } from "../core/maintenance.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
 import { subscriptionRequestOrigin } from "./desktop-access.ts";
-import { webSubscriptionOwner, webSubscriptionsEnabled, webSubscriptionStatus } from "./web-subscriptions.ts";
+import { currentWebSubscriptionOwner, webSubscriptionOwner, webSubscriptionsEnabled, webSubscriptionStatus } from "./web-subscriptions.ts";
 
 // Lives in desktop-access.ts so proxy.ts can share it without loading the
 // subscription runtime; re-exported for existing callers.
@@ -47,10 +47,14 @@ async function parseControl(request: Request, continuationOnly: boolean): Promis
 		if (typeof providerId !== "string" || (providerId !== "chatgpt" && !NATIVE_SUBSCRIPTIONS.some((provider) => provider.providerId === providerId))) return error("Unsupported connection.", 400);
 		const allowed = providerId === "chatgpt" ? ["login", "cancel", "select", "disconnect", "logout", "consent"] : ["login", "cancel", "respond", "open", "retry", "disconnect", "consent"];
 		if (typeof fields.op !== "string" || !allowed.includes(fields.op)) return error("Unsupported control.", 400);
-		const dispatch = async () => Response.json(await webSubscriptionOwner().control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
+		const dispatch = async (owner = webSubscriptionOwner()) => Response.json(await owner.control(providerId, fields, subscriptionRequestOrigin(request)!), { headers: HEADERS });
+		if (fields.op === "cancel") {
+			const owner = currentWebSubscriptionOwner();
+			return owner ? await dispatch(owner) : Response.json({ value: null }, { headers: HEADERS });
+		}
 		// The controller validates the attempt and its exact one-use prompt/action.
 		if (continuationOnly) {
-			if (fields.op === "cancel" || ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt")) return await dispatch();
+			if ((fields.op === "open" || fields.op === "respond") && providerId !== "chatgpt") return await dispatch();
 			return maintenanceRefusal();
 		}
 		return await dispatch();
