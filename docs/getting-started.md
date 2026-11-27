@@ -23,7 +23,11 @@ Use the thinking fields to explain your reasoning, uncertainty, or reaction—no
 
 Choose **Practice** for problems rather than a lesson. Start from selected graph material or describe material directly. Submit your thinking as you work; the model's committed solution is revealed when the problem concludes. Use **Next problem** when ready to continue.
 
-Sessions are saved locally, including earlier messages when context is compacted. The [keyboard guide](keyboard.md) covers submission, focus, question controls, and cancellation.
+Sessions retain earlier messages when context is compacted. Open the same server from another browser to resume the same session. See [network access and its security requirements](development.md#other-devices-on-your-network).
+
+In a browser narrower than 640 CSS pixels, **Open sidebar** opens the session list over the page. The drawer starts closed on reload and closes when you open a session or navigate away. At 640 CSS pixels or wider, the browser uses the inline sidebar and restores its saved open or closed preference. See [drawer keyboard controls](keyboard.md#focus-and-esc) and [known on-screen keyboard limits](development.md#narrow-layout).
+
+The [keyboard guide](keyboard.md) also covers submission, question controls, and cancellation.
 
 ## Dictation
 
@@ -55,7 +59,7 @@ The graph stores propositions and reasoning chains with source provenance, **not
 
 ## Data, privacy, and usage
 
-Chats, graph records, settings, and credentials live on your machine. Packaged desktop data normally lives under:
+Chats, graph records, settings, and credentials live on the machine running LearnHarness. Packaged desktop data normally lives under:
 
 | OS | Learning-data folder |
 | --- | --- |

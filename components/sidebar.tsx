@@ -959,10 +959,8 @@ function SessionsSidebar() {
 							// or the FIRST match when nothing is walked (the
 							// quick-open pattern) — then blurs (focus returns to
 							// the app per the Enter law; the query stays for
-							// re-searching). Esc leaves the search (owner,
-							// keyboard wave): blur back to normal, and claim the
-							// key so the window Esc chain (dictation / abort)
-							// doesn't also fire.
+							// re-searching). Inline search claims Esc when leaving
+							// the field to keep it out of the window's cancel chain.
 							onKeyDown={(e) => {
 								if (e.key === "Escape") {
 									if (narrowViewport) return; // The drawer's modal layer owns Escape.
@@ -1249,7 +1247,7 @@ function SessionsSidebar() {
 	);
 }
 
-/** The app frame: sidebar inline + content. Rendered once in the root layout. */
+/** The app frame owns the sidebar and content for the lifetime of the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
 	const [contentRoot, setContentRoot] = useState<HTMLElement | null>(null);
 	const pathname = usePathname();
