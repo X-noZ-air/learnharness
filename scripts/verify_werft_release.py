@@ -18,11 +18,10 @@ TAG_PATTERN = re.compile(rf"werft-({VERSION})\.([1-9][0-9]*)")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 RUNTIME = "learnharness-linux-x64.tar.gz"
 SOURCE = "learnharness-source.tar.gz"
-NOTICE = "learnharness-third-party-notice.json"
 METADATA = "release-metadata.json"
 SUMS = "SHA256SUMS"
 PROVENANCE = "provenance.json"
-FILES = (RUNTIME, SOURCE, NOTICE, METADATA)
+FILES = (RUNTIME, SOURCE, METADATA)
 ASSETS = (*FILES, SUMS, PROVENANCE)
 
 
@@ -71,7 +70,7 @@ def check_payload(destination, members):
                 require(header.startswith(b"\x7fELF\x02\x01") and header[18:20] == b"\x3e\x00",
                         f"native file is not Linux x64 ELF: {name}")
 
-    for name in ("server.js", "LICENSE", NOTICE, ".next/BUILD_ID", "scripts/plugin-loader.cjs"):
+    for name in ("server.js", "LICENSE", ".next/BUILD_ID", "scripts/plugin-loader.cjs"):
         require((destination / name).is_file(), f"missing standalone file: {name}")
     for name in (".next/static", "public", "node_modules", "core-plugins"):
         directory = destination / name

@@ -8,8 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from verify_werft_release import FILES, METADATA, NOTICE, RUNTIME, SOURCE, SUMS, require, sha256, unpack
-from werft_third_party import generate_notice
+from verify_werft_release import FILES, METADATA, RUNTIME, SOURCE, SUMS, require, sha256, unpack
 
 
 def main():
@@ -33,8 +32,6 @@ def main():
 
     assets.mkdir()
     shutil.copyfile("LICENSE", standalone / "LICENSE")
-    (assets / NOTICE).write_text(generate_notice(standalone))
-    shutil.copyfile(assets / NOTICE, standalone / NOTICE)
     subprocess.run([
         "tar", "--create", "--gzip", "--hard-dereference", "--file", assets / RUNTIME,
         "--directory", standalone, ".",

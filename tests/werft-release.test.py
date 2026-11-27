@@ -50,7 +50,6 @@ class ReleaseTests(unittest.TestCase):
         entries = [
             entry("./server.js"),
             entry("./LICENSE"),
-            entry(f"./{verifier.NOTICE}", b"{}"),
             entry("./.next/BUILD_ID"),
             entry("./.next/static/app.js"),
             entry("./scripts/plugin-loader.cjs"),
@@ -98,7 +97,6 @@ class ReleaseTests(unittest.TestCase):
         actual_unpacked_bytes = self.make_archive()
         with tarfile.open(self.work / verifier.SOURCE, "w:gz", pax_headers={"comment": self.commit}) as source:
             source.addfile(*entry("learnharness/README.md"))
-        (self.work / verifier.NOTICE).write_bytes(b"{}")
         (self.work / verifier.METADATA).write_text(json.dumps({
             "release_tag": self.tag, "fork_commit": self.commit, "upstream_tag": "v0.7.0",
             "upstream_commit": "c" * 40, "package_version": "0.7.0", "os": "linux", "arch": "x64",
@@ -182,7 +180,7 @@ class ReleaseTests(unittest.TestCase):
             metadata = json.loads(stdout.getvalue())
             self.assertEqual((metadata["packed_bytes"], metadata["unpacked_bytes"]), (1, 2))
 
-    def test_packager_ships_the_same_generated_notice_as_the_release_asset(self):
+    def test_packager_records_archive_sizes(self):
         self.make_archive()
         standalone = self.work / ".next/standalone"
         standalone.parent.mkdir()
@@ -190,34 +188,8 @@ class ReleaseTests(unittest.TestCase):
         (self.work / "LICENSE").write_text("fixture license")
         (self.work / "package.json").write_text('{"version": "0.7.0"}')
         (standalone / "package.json").write_text('{"version": "0.7.0"}')
-        (standalone / "node_modules/test/package.json").write_text(json.dumps({
-            "name": "test", "version": "4.5.7", "license": "MIT",
-            "repository": "https://example.test/test", "gitHead": self.commit,
-            "_resolved": "https://example.test/test-4.5.7.tgz",
-        }))
-        (self.work / "package-lock.json").write_text(json.dumps({"packages": {
-            "node_modules/test": {"version": "0.0.1", "license": "ISC"},
-            "node_modules/test-unknown": {"version": "0.0.1"},
-            "node_modules/desktop-only": {"version": "0.0.1"},
-        }}))
-        desktop_only = self.work / "node_modules/desktop-only"
-        desktop_only.mkdir(parents=True)
-        (desktop_only / "package.json").write_text('{"name": "desktop-only", "version": "0.0.1"}')
-        (standalone / "node_modules/test-unknown").mkdir()
-        (standalone / "node_modules/test-unknown/index.js").touch()
-        (standalone / "node_modules/test-alias").symlink_to("test")
-        nested = standalone / "node_modules/test/node_modules/@scope/child"
-        nested.mkdir(parents=True)
-        (nested / "package.json").write_text('{"name": "@scope/child", "version": "2.0.0"}')
-        next_package = standalone / "node_modules/next"
-        compiled = next_package / "dist/compiled"
-        (compiled / "next-server").mkdir(parents=True)
-        (compiled / "next-server/app-page.runtime.prod.js").touch()
-        (compiled / "webpack").mkdir()
-        (compiled / "webpack/package.json").write_text('{"name": "webpack", "license": "MIT"}')
-        (next_package / "package.json").write_text('{"name": "next", "version": "16.4.6"}')
         self.git("init")
-        self.git("add", "LICENSE", "package-lock.json")
+        self.git("add", "LICENSE")
         commit = self.git_commit("Package fixture")
         node_version = subprocess.check_output(["node", "-p", "process.versions.node"], text=True).strip()
 
@@ -227,26 +199,11 @@ class ReleaseTests(unittest.TestCase):
                            **os.environ, "RELEASE_TAG": self.tag, "GITHUB_SHA": commit, "UPSTREAM_TAG": "v0.7.0",
                            "UPSTREAM_COMMIT": self.commit, "NODE_VERSION": node_version,
                        })
-        notice = (assets / verifier.NOTICE).read_bytes()
-        self.assertEqual((self.destination / verifier.NOTICE).read_bytes(), notice)
         release = json.loads((assets / verifier.METADATA).read_text())
         self.assertEqual(release["packed_bytes"], (assets / verifier.RUNTIME).stat().st_size)
         self.assertEqual(release["unpacked_bytes"], sum(
             path.stat().st_size for path in self.destination.rglob("*") if not path.is_symlink() and path.is_file()
         ))
-        inventory = json.loads(notice)
-        self.assertCountEqual([item["name"] for item in inventory["components"]],
-                              ["test", "test-unknown", "@scope/child", "next", "webpack"])
-        components = {item["name"]: item for item in inventory["components"]}
-        self.assertIn("lockfile", inventory["client_bundles"])
-        self.assertEqual(components["@scope/child"]["version"], "2.0.0")
-        self.assertEqual(components["test"]["version"], "4.5.7")
-        self.assertEqual(components["test"]["license"], "MIT")
-        self.assertEqual(components["test"]["source_repository"], "https://example.test/test")
-        self.assertEqual(components["test"]["source_revision"], self.commit)
-        self.assertNotIn("package_distribution", components["test"])
-        self.assertFalse(components["test"]["missing_metadata"])
-        self.assertIn("version", components["test-unknown"]["missing_metadata"])
 
     def test_release_target_builds_the_run_commit_after_werft_advances(self):
         self.git("init")

@@ -74,12 +74,9 @@ Git archive of the same fork commit addressed by the sidebar link. It contains
 the core-plugin projects, local adaptations, build and installation scripts,
 lockfiles and notices.
 
-`learnharness-third-party-notice.json` is available on the release page and
-inside the standalone archive. It lists the packages physically present in
-the payload with their available version, license and source information
-from the shipped package metadata. Incomplete metadata is marked. The client
-bundles are built from the dependencies pinned by the commit's lockfile,
-which is part of the source archive.
+The lockfiles in the source archive define the third-party components and their
+versions, and the release generates no separate inventory. Revisit this approach
+before offering the service to anyone other than its owner.
 
 Extract the Git archive and run these commands from its root with the release's
 Node version. The lockfiles identify the original registry packages used by
