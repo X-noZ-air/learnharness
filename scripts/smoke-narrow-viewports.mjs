@@ -376,20 +376,36 @@ async function submitDraftWithKeyboardOpen(page, text) {
 
 const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 
-async function checkDraftRetryLayout(page) {
+async function checkDraftRetryLayout(page, viewport = keyboardViewport) {
 	const alert = 'main [role="alert"]';
 	await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes("Try sending again"), {}, alert);
 	await page.waitForSelector(send + ":enabled");
 	const message = await bounds(page, alert);
 	assert.ok(!overlaps(message, await bounds(page, drawerOpener, 44)), "the retry alert overlaps the drawer button");
 	await checkVerticalHitTargets(page, alert);
-	await layout(page, keyboardViewport);
+	await layout(page, viewport);
 	await checkVerticalHitTargets(page, input);
 	await checkVerticalHitTargets(page, send);
 	return message;
 }
 
-async function checkHomeDraftRetry(page) {
+async function checkPracticePicker(page, viewport) {
+	const picker = '[data-testid="practice-props-chip"]';
+	await page.$eval(picker, button => button.scrollIntoView({ block: "nearest" }));
+	assert.ok(!overlaps(await bounds(page, picker), await bounds(page, drawerOpener)), "the drawer overlaps the node picker");
+	await checkVerticalHitTargets(page, picker);
+	await action(page, picker, true);
+
+	const closePicker = '[data-testid="chain-table-close"]';
+	await page.waitForSelector('[data-testid="add-source-folder"]', { visible: true });
+	await checkVerticalHitTargets(page, closePicker);
+	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), viewport.width,
+		"the node picker has horizontal overflow");
+	await action(page, closePicker, true);
+	await page.waitForSelector('[data-testid="chain-table-overlay"]', { hidden: true });
+}
+
+async function checkHomeDraftRetry(page, mode = "teach") {
 	const attempts = [];
 	page.on("request", request => {
 		if (request.method() === "POST" && new URL(request.url()).pathname === "/api/chats") {
@@ -399,6 +415,7 @@ async function checkHomeDraftRetry(page) {
 		return request.continue();
 	});
 	await page.setRequestInterception(true);
+	if (mode === "practice") await action(page, '[data-testid="home-mode-practice"]', true);
 	const draft = await typeDraftWithKeyboardOpen(page, opening("short viewport"));
 	await action(page, send, true);
 	const message = await checkDraftRetryLayout(page);
@@ -418,11 +435,21 @@ async function checkHomeDraftRetry(page) {
 	await page.waitForSelector(modelButton + '[aria-expanded="true"]');
 	await page.keyboard.press("Escape");
 	await page.waitForSelector(modelButton + '[aria-expanded="false"]');
+	if (mode === "practice") await checkPracticePicker(page, keyboardViewport);
 	await action(page, send, true);
 	await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
 	assert.equal(attempts.length, 2);
-	assert.equal(JSON.parse(attempts[0]).title, draft);
+	assert.deepEqual(JSON.parse(attempts[0]), { title: draft, ...(mode === "practice" ? { kind: "practice" } : {}) });
 	assert.equal(attempts[1], attempts[0], "the retry sends the original home draft");
+}
+
+async function checkHomePracticeRetry(origin) {
+	const { context, page } = await newClient(origin, phoneViewport);
+	try {
+		await checkHomeDraftRetry(page, "practice");
+	} finally {
+		await context.close();
+	}
 }
 
 async function checkHomeAndChatWithKeyboardOpen(origin) {
@@ -482,13 +509,11 @@ async function checkDraftRetry(origin) {
 		const draft = await typeDraftWithKeyboardOpen(page, "Practice squares after retrying session creation.");
 		await action(page, send, true);
 		await checkDraftRetryLayout(page);
-		const picker = '[data-testid="practice-props-chip"]';
-		await page.$eval(picker, button => button.scrollIntoView({ block: "nearest" }));
-		assert.ok(!overlaps(await bounds(page, picker), await bounds(page, drawerOpener)), "the drawer overlaps the node picker");
-		await checkVerticalHitTargets(page, picker);
-		await action(page, picker, true);
-		await action(page, '[data-testid="chain-table-close"]', true);
-		await page.waitForSelector('[data-testid="chain-table-overlay"]', { hidden: true });
+		await checkPracticePicker(page, keyboardViewport);
+		const narrowKeyboardViewport = { ...keyboardViewport, width: 360 };
+		await page.setViewport(narrowKeyboardViewport);
+		await checkDraftRetryLayout(page, narrowKeyboardViewport);
+		await checkPracticePicker(page, narrowKeyboardViewport);
 
 		await action(page, send, true);
 		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
@@ -663,13 +688,14 @@ try {
 
 	await configureModel(origin, providerPort);
 	await checkHomeAndChatWithKeyboardOpen(origin);
-	console.log("Home and active chat editors at 412x200 passed");
+	await checkHomePracticeRetry(origin);
+	console.log("Home retry and practice picker and active chat editors at 412x200 passed");
 	for (const viewport of viewports) {
 		await checkLesson(origin, viewport);
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
 	}
 	await checkDraftRetry(origin);
-	console.log("Practice draft retry at 412x200 and session rename at 360px passed");
+	console.log("Practice draft retry and picker at 412x200 and 360x200, and session rename at 360px passed");
 	assert.deepEqual(pageErrors, [], "uncaught errors in Chromium");
 } catch (error) {
 	console.error(appLogs);

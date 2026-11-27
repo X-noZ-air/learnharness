@@ -214,42 +214,45 @@ export function Home({
 			    px-4) so nothing shifts when a session starts (owner). */}
 			<div className={`pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)] ${startError ? "narrow:short:pb-0" : ""}`}>
 				<div className={`pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0 ${startError ? "narrow:short:[&>:last-child]:pt-0" : ""}`}>
-					{/* The pick bar (owner vision, 2026-10-04): the chain
-					    table's selection is PERSISTENT — picked
-					    propositions show here as a count + Clear in EITHER
-					    mode (it survives mode switches; only a practice
-					    send consumes it). Practice mode with nothing picked
-					    shows the pick HINT so the affordance is discoverable;
-					    teaching mode with nothing picked renders nothing. */}
-					<div className="contents narrow:short:block narrow:short:overflow-y-auto">
-						<ComposerActions
-							picker={(practiceProps.length > 0 || mode === "practice") && (
-								<NodePickerControl
-									count={practiceProps.length}
-									onOpen={() => setChainSelectOpen(true)}
-									onClear={() => setPracticeProps([])}
-								/>
-							)}
-							setup={zeroKeys ? (
-								<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
-							) : (
-								!configured && (
-									<button
-										type="button"
-										data-testid="setup-cta"
-										onClick={() => setSetupOpen(true)}
-										className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
-									>
-										Set up your models
-									</button>
-								)
-							)}
-						/>
+					{/* In a short viewport, show the retry alert first and let the picker scroll into view. */}
+					<div className={`contents narrow:short:flex narrow:short:overflow-y-auto ${startError ? "narrow:short:flex-col-reverse" : "narrow:short:flex-col"}`}>
+						{/* The pick bar (owner vision, 2026-10-04): the chain
+						    table's selection is PERSISTENT — picked
+						    propositions show here as a count + Clear in EITHER
+						    mode (it survives mode switches; only a practice
+						    send consumes it). Practice mode with nothing picked
+						    shows the pick HINT so the affordance is discoverable;
+						    teaching mode with nothing picked renders nothing. */}
+						<div className="contents narrow:short:block narrow:short:shrink-0">
+							<ComposerActions
+								picker={(practiceProps.length > 0 || mode === "practice") && (
+									<NodePickerControl
+										count={practiceProps.length}
+										onOpen={() => setChainSelectOpen(true)}
+										onClear={() => setPracticeProps([])}
+									/>
+								)}
+								setup={zeroKeys ? (
+									<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
+								) : (
+									!configured && (
+										<button
+											type="button"
+											data-testid="setup-cta"
+											onClick={() => setSetupOpen(true)}
+											className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+										>
+											Set up your models
+										</button>
+									)
+								)}
+							/>
+							{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+						</div>
 					</div>
-					{startError && <p role="alert" className="mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:shrink-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
 					<form
 						data-attachment-composer=""
-						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg narrow:short:min-h-[3.625rem]"
+						className={`flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg narrow:short:min-h-[3.625rem] ${startError ? "narrow:short:h-[3.625rem] narrow:short:shrink-0" : ""}`}
 					onSubmit={(e) => {
 						e.preventDefault();
 						void start();

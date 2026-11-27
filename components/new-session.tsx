@@ -187,8 +187,8 @@ export function DraftShell({
 								/>
 							</ConversationContent>
 						</Conversation>
-						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:h-4 narrow:short:shrink-0" />
-						<div className={`bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:max-h-[calc(100%-1rem)] narrow:short:shrink-0 narrow:short:flex-col ${startError ? "narrow:short:pb-0" : ""}`}>
+						<div className={`h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:shrink-0 ${startError ? "narrow:short:h-0" : "narrow:short:h-4"}`} />
+						<div className={`bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:shrink-0 narrow:short:flex-col ${startError ? "narrow:short:max-h-full narrow:short:pb-0" : "narrow:short:max-h-[calc(100%-1rem)]"}`}>
 							<div className={`${DOCK} narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0`}>
 								{/* Keep the retry dock's actions and alert clear of the floating sidebar toggle. */}
 								<div className={`contents narrow:short:pointer-events-auto narrow:short:block narrow:short:overflow-y-auto ${startError ? "narrow:short:ml-12" : ""}`}>
