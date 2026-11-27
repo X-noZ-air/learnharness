@@ -188,9 +188,10 @@ export function DraftShell({
 							</ConversationContent>
 						</Conversation>
 						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:h-4 narrow:short:shrink-0" />
-						<div className="bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:max-h-[calc(100%-1rem)] narrow:short:shrink-0 narrow:short:flex-col">
+						<div className={`bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:max-h-[calc(100%-1rem)] narrow:short:shrink-0 narrow:short:flex-col ${startError ? "narrow:short:pb-0" : ""}`}>
 							<div className={`${DOCK} narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0`}>
-								<div className="contents narrow:short:pointer-events-auto narrow:short:block narrow:short:overflow-y-auto">
+								{/* Keep the retry dock's actions and alert clear of the floating sidebar toggle. */}
+								<div className={`contents narrow:short:pointer-events-auto narrow:short:block narrow:short:overflow-y-auto ${startError ? "narrow:short:ml-12" : ""}`}>
 									<ComposerActions
 										picker={(picks.length > 0 || mode === "practice") && (
 											<NodePickerControl count={picks.length} onOpen={onOpenPicker} onClear={onClearPicks} />
@@ -198,9 +199,8 @@ export function DraftShell({
 										setup={setupCta}
 									/>
 								</div>
-								{/* A short draft can reach the floating sidebar toggle's row. */}
-								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:ml-12 narrow:short:shrink-0">{OPENING_PROMPT_FAILURE}</p>}
-								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)]">
+								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+								<div data-attachment-composer="" className={`pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)] ${startError ? "narrow:short:flex-1" : ""}`}>
 									<Composer
 										busy={busy}
 										value={text}

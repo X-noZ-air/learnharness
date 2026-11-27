@@ -402,10 +402,15 @@ async function checkHomeDraftRetry(page) {
 	const draft = await typeDraftWithKeyboardOpen(page, opening("short viewport"));
 	await action(page, send, true);
 	const message = await checkDraftRetryLayout(page);
+	const title = await bounds(page, "main ::-p-text(Knowledge graph)");
+	for (const selector of ['[data-testid="open-chain-table"]', '[data-testid="import-notes"]']) {
+		assert.ok(!overlaps(title, await bounds(page, selector)), `${selector} overlaps the graph title`);
+	}
+	assert.ok(!overlaps(title, message), "the retry alert overlaps the graph title");
 	const guidance = await page.evaluate(() =>
 		Array.from(document.querySelectorAll("main p"))
 			.filter(p => p.textContent === "Start a session to begin learning." || p.textContent.startsWith("Attach your material"))
-			.filter(p => getComputedStyle(p).visibility === "visible")
+			.filter(p => p.getClientRects().length > 0 && getComputedStyle(p).visibility === "visible")
 			.map(p => p.getBoundingClientRect().toJSON()));
 	assert.ok(guidance.every(rect => !overlaps(rect, message)), "graph guidance overlaps the retry alert");
 	await bounds(page, '[data-testid="home-mode-switch"]');
@@ -477,6 +482,13 @@ async function checkDraftRetry(origin) {
 		const draft = await typeDraftWithKeyboardOpen(page, "Practice squares after retrying session creation.");
 		await action(page, send, true);
 		await checkDraftRetryLayout(page);
+		const picker = '[data-testid="practice-props-chip"]';
+		await page.$eval(picker, button => button.scrollIntoView({ block: "nearest" }));
+		assert.ok(!overlaps(await bounds(page, picker), await bounds(page, drawerOpener)), "the drawer overlaps the node picker");
+		await checkVerticalHitTargets(page, picker);
+		await action(page, picker, true);
+		await action(page, '[data-testid="chain-table-close"]', true);
+		await page.waitForSelector('[data-testid="chain-table-overlay"]', { hidden: true });
 
 		await action(page, send, true);
 		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));

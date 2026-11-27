@@ -1511,12 +1511,12 @@ export function GraphView({
 		<div className="relative h-full w-full">
 			{isEmpty ? (
 				// The empty graph keeps the first action clear without zero-valued statistics.
-				<div className="flex h-full w-full items-center justify-center px-4 narrow:short:pb-44 narrow:short:pt-12">
+				<div className={`flex h-full w-full items-center justify-center px-4 ${sessionStartFailed ? "narrow:short:items-start narrow:short:pt-11" : "narrow:short:pb-44 narrow:short:pt-12"}`}>
 					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground narrow:short:gap-1">
 						<WaypointsIcon className="size-10 opacity-40 narrow:short:hidden" strokeWidth={1.25} />
-						<div className="text-lg font-medium text-foreground">Knowledge graph</div>
-						{/* The short home dock uses this space for the retry message. */}
-						<div className={`max-w-sm text-sm ${sessionStartFailed ? "narrow:short:invisible" : ""}`}>
+						<div className={`text-lg font-medium text-foreground ${sessionStartFailed ? "narrow:short:text-sm narrow:short:leading-4" : ""}`}>Knowledge graph</div>
+						{/* Keep the title between the graph toolbar and the short retry dock. */}
+						<div className={`max-w-sm text-sm ${sessionStartFailed ? "narrow:short:hidden" : ""}`}>
 							<p>Start a session to begin learning.</p>
 							<p className="mt-1 text-xs">Attach your material with the paperclip or drag and drop.</p>
 						</div>
