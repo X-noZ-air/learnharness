@@ -273,13 +273,17 @@ async function enterSidebar(page, viewport) {
 	else await waitForInlineSidebar(page);
 }
 
-async function openDrawerWithShortcut(page) {
-	await page.evaluate(() => document.activeElement.blur());
-	await waitForFocus(page, "body");
+async function toggleDrawerWithShortcut(page) {
 	const modifier = await page.evaluate(() => /mac/i.test(navigator.platform || navigator.userAgent) ? "Meta" : "Control");
 	await page.keyboard.down(modifier);
 	await page.keyboard.press("b");
 	await page.keyboard.up(modifier);
+}
+
+async function openDrawerWithShortcut(page) {
+	await page.evaluate(() => document.activeElement.blur());
+	await waitForFocus(page, "body");
+	await toggleDrawerWithShortcut(page);
 	await waitForFocus(page, drawer + " aside");
 }
 
@@ -292,7 +296,7 @@ async function checkDrawerRotation(page, focusTarget = `${inlineSidebar} ${close
 	await sidebarClosed(page);
 }
 
-async function checkSidebarContextMenuRotation(page, chatId) {
+async function checkSidebarContextMenus(page, chatId) {
 	await openDrawer(page);
 	await action(page, '[data-testid="sidebar-add-folder"]', true);
 	await page.type('[data-testid="sidebar-new-folder-row"] input', "Rotation fixture");
@@ -304,9 +308,19 @@ async function checkSidebarContextMenuRotation(page, chatId) {
 	];
 	for (const [kind, row] of rows) {
 		const menu = `[data-testid="${kind}-context-menu"]`;
+		const openMenu = async () => {
+			await page.waitForSelector(row, { visible: true });
+			await page.click(row, { button: "right" });
+			await page.waitForSelector(menu, { visible: true });
+		};
+		await openMenu();
+		await toggleDrawerWithShortcut(page);
+		await sidebarClosed(page);
+		await action(page, drawerOpener, true);
+		await page.waitForSelector(drawer + '[aria-modal="true"]');
 		await page.waitForSelector(row, { visible: true });
-		await page.click(row, { button: "right" });
-		await page.waitForSelector(menu, { visible: true });
+		assert.equal(await page.$(menu), null, `${kind} context menu stays closed when the drawer reopens`);
+		await openMenu();
 		await page.setViewport(rotatedPhoneViewport);
 		await waitForInlineSidebar(page);
 		assert.equal(await page.$(menu), null, `${kind} context menu closes when the drawer becomes inline`);
@@ -443,7 +457,7 @@ async function checkLesson(origin, viewport) {
 		assert.ok(modelRequests.some(body => body?.includes(followUp(name))));
 
 		if (viewport === phoneViewport) {
-			await checkSidebarContextMenuRotation(page, route.split("/").at(-1));
+			await checkSidebarContextMenus(page, route.split("/").at(-1));
 			await openDrawerWithShortcut(page);
 			await page.keyboard.press("Escape");
 			await sidebarClosed(page);
