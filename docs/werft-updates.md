@@ -90,5 +90,3 @@ Replay uses a separate state branch, posts checks in the fork, and skips release
 dispatch. Re-run the same inputs to verify that no extra pull request is opened.
 After recording results, close any outstanding test pull requests and remove
 the temporary ruleset, test branches, and test state refs.
-
-<!-- Temporary validation of the Werft CI gate before checks finish. -->
