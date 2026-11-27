@@ -33,11 +33,12 @@ order. Each poll looks for the entire backlog.
 Each release gets one integration branch and one pull request. The branch is
 built as a two-parent merge of the current base and the upstream tag. The poller
 dispatches **CI** on its own trusted ref with the exact candidate SHA, base SHA,
-and pull request. The quality job and all three platform jobs use that candidate
-with read-only permissions, no persisted checkout credentials, and npm caching
-disabled. CI retries the full plan-label browser smoke up to twice on each
-platform. Three failed attempts leave the affected job red. The trusted
-poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
+and pull request. The quality job and the Linux x64 and Windows x64 standalone
+jobs use that candidate with read-only permissions, no persisted checkout
+credentials, and npm caching disabled. CI retries the full plan-label browser
+smoke up to twice on each platform. Three failed attempts leave the affected job
+red. The trusted poller posts `werft/ci` only after it verifies the dispatched
+run and its jobs.
 The separate **Werft feature CI status** reporter sets that context for ordinary
 pull requests, including changes to workflows and scripts, when CI succeeds.
 Firstmate reviews delivery automation before merging those pull requests. The

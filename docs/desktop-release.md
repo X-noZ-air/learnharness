@@ -51,7 +51,7 @@ npx electron-builder --linux --x64 --publish never # Linux
 
 ## CI and release modes
 
-[CI](../.github/workflows/ci.yml) runs typecheck/tests/lint on Ubuntu, plus standalone/native checks on macOS, Windows, and Linux. Its `macos-15` job does not compile the release icon.
+[CI](../.github/workflows/ci.yml) runs typecheck, tests, and lint on Ubuntu, plus standalone and native checks on Windows x64 and Linux x64. For optional macOS coverage, manually dispatch the desktop release workflow.
 
 [Desktop release](../.github/workflows/release.yml) has two modes:
 
