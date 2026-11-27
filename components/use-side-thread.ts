@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { serializeCitation, sideSegmentId, type LhMessage, type TextSelector, type SideChatMessage, type SideChatThread } from "@/src/core";
 import { useServerEvent, useServerResync } from "./server-events";
+import { maintenanceMessage } from "../lib/maintenance-response";
 
 export type SideThreadAnchor = { kind: "range"; range: Range } | { kind: "element"; element: HTMLElement } | { kind: "composer" };
 export interface SidePassage { text: string; sourceMessageId: string; selector?: Omit<TextSelector, "text"> }
@@ -34,6 +35,7 @@ export type SideThreadAction =
 	| { type: "accepted"; threadId: string }
 	| { type: "text"; threadId: string; text: string }
 	| { type: "error"; threadId: string; error: string; question?: string }
+	| { type: "stop-refused"; threadId: string; error: string }
 	| { type: "done"; thread: SideChatThread }
 	| { type: "mode"; mode: "popover" | "panel" }
 	| { type: "close" };
@@ -60,6 +62,7 @@ export function sideThreadReducer(state: SideThreadState | null, action: SideThr
 	if (action.type === "start") return { ...state, answering: true, streamText: "", error: undefined, failedQuestion: undefined };
 	if (action.type === "accepted") return { ...state, pendingPassage: undefined };
 	if (action.type === "text") return { ...state, answering: true, streamText: action.text };
+	if (action.type === "stop-refused") return { ...state, error: action.error };
 	return { ...state, answering: false, error: action.error, failedQuestion: action.question };
 }
 
@@ -203,9 +206,15 @@ export function useSideThread(chatId: string, messages: readonly LhMessage[], ge
 			return false;
 		}
 	}, [chatId, consume, refresh]);
-	const stop = useCallback(() => {
+	const stop = useCallback(async () => {
 		const current = stateRef.current;
-		if (current) void fetch(`/api/chats/${chatId}/side-chats/${current.threadId}/stop`, { method: "POST" }).catch(() => {});
+		if (!current) return;
+		try {
+			const response = await fetch(`/api/chats/${chatId}/side-chats/${current.threadId}/stop`, { method: "POST" });
+			if (response.status !== 503) return;
+			const error = maintenanceMessage(await response.text());
+			if (error) dispatch({ type: "stop-refused", threadId: current.threadId, error });
+		} catch { return; }
 	}, [chatId]);
 	return { state, threads, open, close, ask, stop, draftFor, saveDraft, currentSegmentId: sideSegmentId(messages),
 		expand: () => dispatch({ type: "mode", mode: "panel" }),

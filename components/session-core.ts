@@ -15,6 +15,8 @@
 
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { maintenanceMessage } from "../lib/maintenance-response.ts";
+import type { DismissInput } from "../src/core/input-events.ts";
 import {
 	needsContinuation,
 	activeProblemOf,
@@ -263,15 +265,6 @@ export interface SessionModelOptions extends SessionModelDeps {
 	/** The reattach settled terminal (turn-settled): no turn running, the
 	 *  record is current — the caller refetches it. */
 	onReattachSettled?: () => void;
-}
-
-/** Keep structured setup errors available to their existing UI handlers. */
-function maintenanceMessage(text: string): string | undefined {
-	try {
-		const body = JSON.parse(text);
-		if (body?.code === "maintenance" && typeof body.error === "string") return body.error;
-	} catch { /* Other transports can return plain text. */ }
-	return undefined;
 }
 
 export class SessionModel {
@@ -1127,64 +1120,49 @@ export class SessionModel {
 	/** The dismissal path (owner design 2026-10-03, "A2"): the skipped
 	 * toolResult lands optimistically, then the SILENT route persists it
 	 * — no turn, no stream, nothing wakes. The session pauses at the
-	 * user's choice; the next plain send is the wake. On failure the
-	 * durable record wins: the error surfaces, the record-changed sync
-	 * (or any later refetch) replaces the optimistic append with truth. */
+	 * user's choice; the next plain send is the wake. */
 	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<boolean> {
 		if (!this.readyRef || pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return false;
 		const subject = pendingQuestionOf(this.nativeHistory());
-		if (questionKey !== undefined && (subject?.key !== questionKey || subject.toolCallId !== toolCallId)) return false;
-		if (subject?.toolCallId === toolCallId && answer.readingThinking !== undefined) {
+		if (!subject || subject.toolCallId !== toolCallId || (questionKey !== undefined && subject.key !== questionKey)) return false;
+		if (answer.readingThinking !== undefined) {
 			this.saveQuestionDraft(subject.key, { readingThinking: answer.readingThinking });
 			answer = { ...answer, readingThinking: answer.readingThinking.trim() || undefined };
 		}
 		const tool = pendingCallTool(this.nativeHistory(), toolCallId) ?? "quiz";
-		const optimistic = { ...newAnswerResult(toolCallId, tool, answer), id: localId() };
-		this.invalidateCanonicalReads();
-		this.mutate(() => {
-			this.tail = [...this.tail, optimistic];
+		return this.dismiss({ type: "dismiss", toolCallId, answer }, newAnswerResult(toolCallId, tool, answer),
+			() => pendingQuestionOf(this.nativeHistory())?.key === subject.key);
+	}
+
+	async dismissProblem(problemCallId: string): Promise<boolean> {
+		if (!this.readyRef) return false;
+		const subject = activeProblemOccurrenceOf(this.nativeHistory());
+		if (subject?.toolCallId !== problemCallId) return false;
+		return this.dismiss({ type: "dismiss-problem", problemCallId }, newProblemDismissedMarker(problemCallId), () => {
+			const current = activeProblemOccurrenceOf(this.nativeHistory());
+			return current?.messageId === subject.messageId && current.contentIndex === subject.contentIndex && current.toolCallId === problemCallId;
 		});
+	}
+
+	private async dismiss(input: DismissInput, marker: LhMessage, isCurrent: () => boolean): Promise<boolean> {
 		try {
 			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ input: { type: "dismiss", toolCallId, answer } }),
+				body: JSON.stringify({ input }),
 			});
 			if (!res.ok) {
 				const explanation = res.status === 503 ? maintenanceMessage(await res.text()) : undefined;
-				if (explanation !== undefined) {
-					this.mutate(() => { this.tail = this.tail.filter(message => message.id !== optimistic.id); });
-				}
 				throw new Error(explanation || `The dismissal failed (${res.status}).`);
 			}
 			this.invalidateCanonicalReads();
+			if (isCurrent()) this.mutate(() => {
+				this.tail = [...this.tail, { ...marker, id: localId() }];
+			});
 			return true;
 		} catch (err) {
 			this.setError((err as Error).message);
 			return false;
-		}
-	}
-
-	/** The problem discard (practice sessions, owner 2026-10-04): the
-	 *  ask-style dismissal — the UI-only marker lands optimistically, then
-	 *  the SILENT route persists it (no turn, no wake). The composer
-	 *  returns; the conclude synthesis rides the user's next input. */
-	async dismissProblem(problemCallId: string): Promise<void> {
-		if (!this.readyRef) return;
-		this.invalidateCanonicalReads();
-		this.mutate(() => {
-			this.tail = [...this.tail, { ...newProblemDismissedMarker(problemCallId), id: localId() }];
-		});
-		try {
-			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ input: { type: "dismiss-problem", problemCallId } }),
-			});
-			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
-			this.invalidateCanonicalReads();
-		} catch (err) {
-			this.setError((err as Error).message);
 		}
 	}
 

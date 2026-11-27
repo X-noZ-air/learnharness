@@ -527,19 +527,14 @@ export function Chat({
 				).then(accepted => {
 					if (!accepted) return;
 					void closeSideThreadRef.current(); // its note lands after the skip
-					if (busyRef.current) abortInFlightTurn();
 				});
 				return;
 			}
 			// The practice discard (owner, 2026-10-04): ask-style — the
 			// silent marker route; the conclude synthesis rides the user's
-			// next input. The composer returns immediately. Mid-turn the
-			// discard also kills the running turn (same park + settle law).
+			// next input. Mid-turn the discard also kills the running turn.
 			const problem = activeProblemRef.current;
-			if (problem) {
-				void dismissProblem(problem.toolCallId);
-				if (busyRef.current) abortInFlightTurn();
-			}
+			if (problem) void dismissProblem(problem.toolCallId);
 		},
 		[abortInFlightTurn, dismissQuestion, dismissProblem, closeAbortAsk],
 	);

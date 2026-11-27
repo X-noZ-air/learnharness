@@ -1033,7 +1033,7 @@ describe("answer submission recovery", () => {
 		const draft = "  Keep this reasoning.  ";
 		const dismissal = { ...dismissedAnswer("quiz", "Q?"), readingThinking: draft.trim() };
 		const first = m.dismissQuestion("q1", { ...dismissal, readingThinking: draft }, key);
-		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
+		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
 		refused.resolve(Response.json({ code: "maintenance", error: "Try again after maintenance." }, { status: 503 }));
 		assert.equal(await first, false);
 		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
@@ -1150,10 +1150,13 @@ describe("answer submission recovery", () => {
 		assert.equal(m.getState().nativeMessages.length, 2, "no optimistic answer targets the newer question");
 	});
 
-	it("uses the newest occurrence's tool for optimistic answers and dismissals", async () => {
+	it("uses the newest occurrence's tool for optimistic answers and confirmed dismissals", async () => {
 		const older = { ...question, id: "old-ask", content: [{ type: "toolCall", id: "q1", name: "ask_user_question", arguments: {} }] } as LhMessage;
 		for (const dismiss of [false, true]) {
-			const m = model({ initialMessages: [older, question], fetch: async () => { throw new TypeError("offline"); } });
+			const m = model({ initialMessages: [older, question], fetch: async () => {
+				if (dismiss) return Response.json({ ok: true });
+				throw new TypeError("offline");
+			} });
 			const key = pendingQuestionOf([older, question])!.key;
 			let optimisticTool: string | undefined;
 			m.onChange = () => {

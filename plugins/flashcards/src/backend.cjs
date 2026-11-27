@@ -190,7 +190,6 @@ function activate(ctx) {
       applicationErrors.delete(chunkId);
     } catch (error) { applicationErrors.set(chunkId, `Result could not be saved: ${error.message}`); notify('batch-changed'); }
   }
-  const trackWork = ctx.trackWork ?? (fn => fn());
   function watch(batchId, chunkId, taskId) {
     if (observers.has(taskId)) return;
     let last = '';
@@ -199,7 +198,7 @@ function activate(ctx) {
       if (current !== last) { last = current; notify('batch-changed'); }
     });
     observers.set(taskId, unsubscribe);
-    trackWork(() => ctx.workers.wait(taskId, ctx.signal).then(() => {
+    ctx.trackWork(() => ctx.workers.wait(taskId, ctx.signal).then(() => {
       if (disposed || ctx.signal.aborted) return;
       applyOutcome(batchId, chunkId, ctx.workers.get(taskId));
       observers.get(taskId)?.(); observers.delete(taskId);
@@ -450,7 +449,7 @@ function activate(ctx) {
     } catch (error) { if (newSource && !Object.hasOwn(store.get().fileSources ?? {}, plan.sourceId)) store.removeSource(plan.sourceId); throw error; }
     preflights.delete(preflightId);
     // Dispatch is backend-owned; navigation cannot stop accepted work.
-    trackWork(() => Promise.resolve().then(() => {
+    ctx.trackWork(() => Promise.resolve().then(() => {
       const chunks = store.get().batches.find(b => b.id === batchId).chunks;
       chunks.forEach((chunk, index) => {
         if (disposed || ctx.signal.aborted) return;

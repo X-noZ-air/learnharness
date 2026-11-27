@@ -6,6 +6,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { collectCitations, type LhMessage, type SideChatThread } from "../src/core/index.ts";
 import { ServerEventsProvider, type NotifySource } from "../components/server-events.tsx";
 import { useSideThread } from "../components/use-side-thread.ts";
+import { SideThreadBody } from "../components/side-thread.tsx";
 
 test("a delayed GET cannot rewind newer streamed text; selected quote retains its actual native source", async () => {
 	const { document, window } = parseHTML("<html><body><div id='root'></div></body></html>");
@@ -17,7 +18,8 @@ test("a delayed GET cannot rewind newer streamed text; selected quote retains it
 	let getCount = 0; let requestBody: Record<string, unknown> | undefined;
 	let release!: (response: Response) => void;
 	const delayed = new Promise<Response>((resolve) => { release = resolve; });
-	const fakeFetch: typeof fetch = async (_url, options) => {
+	const fakeFetch: typeof fetch = async (url, options) => {
+		if (String(url).endsWith("/stop")) return Response.json({ code: "maintenance", error: "Try again after maintenance." }, { status: 503 });
 		if (options?.method === "POST") { requestBody = JSON.parse(String(options.body)); return new Response(stream); }
 		return ++getCount === 1 ? Response.json({ threads: [], answering: {} }) : delayed;
 	};
@@ -34,7 +36,11 @@ test("a delayed GET cannot rewind newer streamed text; selected quote retains it
 	const thread: SideChatThread = { id: "side_work", anchor: { messageId: "work", partId: "work-t0", blockIndex: 0, blockText: "Segment" }, open: true, createdAt: "2026-11-06T00:00:00Z",
 		messages: [{ id: "ask", role: "user", text: "Clarify", at: "2026-11-06T00:00:00Z" }] };
 	let side!: ReturnType<typeof useSideThread>;
-	function Harness() { side = useSideThread("chat_test", messages); return null; }
+	function Harness() {
+		side = useSideThread("chat_test", messages);
+		return side.state && <SideThreadBody state={side.state} onAsk={side.ask} onStop={side.stop}
+			onExpand={side.expand} onFloat={side.float} onClose={side.close} />;
+	}
 	const { createRoot } = await import("react-dom/client");
 	const root = createRoot(document.getElementById("root")!);
 	try {
@@ -50,6 +56,14 @@ test("a delayed GET cannot rewind newer streamed text; selected quote retains it
 		await act(async () => frame({ type: "text", text: "New streamed tail" }));
 		await act(async () => release(Response.json({ threads: [thread], answering: { side_work: "Older partial" } })));
 		assert.equal(side.state!.streamText, "New streamed tail"); assert.equal(side.state!.answering, true);
+		await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Stop side answer"]')!.click());
+		assert.equal(side.state!.error, "Try again after maintenance.");
+		assert.equal(document.querySelector('[role="alert"]')?.textContent, "Try again after maintenance.");
+		assert.equal(side.state!.answering, true);
+		assert.equal(side.state!.streamText, "New streamed tail");
+		await act(async () => frame({ type: "text", text: "Continued after refusal" }));
+		assert.equal(side.state!.streamText, "Continued after refusal");
+		assert.match(document.querySelector('[data-testid="side-streaming-answer"]')?.textContent ?? "", /Continued after refusal/);
 		side.saveDraft(thread.id, "Saved old-step draft");
 		messages.push({ id: "answer", role: "user", content: "Main answer", timestamp: 2 }, { ...fauxAssistantMessage("A new explanation"), id: "next" });
 		await act(async () => side.expand());

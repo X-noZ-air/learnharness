@@ -16,15 +16,15 @@
  * dismissal). A RUNNING turn no longer refuses (owner, 2026-10-04 — the
  * GLM practice-loop incident): the dismissal is PARKED server-side and
  * the turn's settle path applies it against the persisted record, so
- * ESC-discard now doubles as the turn abort's bookkeeper. Builtin
- * dismissals retain the client-abort contract; plugin dismissals validate
- * the current saved occurrence, then park and abort the owner here.
+ * ESC-discard now doubles as the turn abort's bookkeeper. Plugin
+ * dismissals additionally validate the current saved occurrence.
  */
 import { assertPluginQuestionInputAllowed, ChatInputError, dismissAppends, emit, parseDismissInput } from "@/src/core";
-import { mutation, abortTurn, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility } from "@/src/server";
+import { mutation, runningTurn, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility } from "@/src/server";
 
 async function handlePost(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
+	const owner = runningTurn(id);
 	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
 	let chat = getChat(id);
 	if (!chat) return Response.json({ error: "Unknown chat" }, { status: 404 });
@@ -55,14 +55,11 @@ async function handlePost(req: Request, ctx: { params: Promise<{ id: string }> }
 		throw err;
 	}
 
-	// A running turn owns persistence. Native targets can still materialize
-	// at settle, so retain their park-only behavior. Plugin targets were
-	// validated above: no await separates that check, the park, and abort.
-	// Preparation keeps ownership until its actual callback cleanup; the
-	// existing settle/finally path applies the parked cancellation.
+	// A running turn owns persistence. Native targets can still materialize at settle.
 	if (isTurnRunning(id)) {
+		if (runningTurn(id) !== owner) return Response.json({ error: "The running turn changed. Retry the dismissal." }, { status: 409 });
 		parkDismissal(id, input);
-		if (input.type === "dismiss-plugin-question") abortTurn(id);
+		owner?.abort();
 		return Response.json({ ok: true, parked: true }, { status: 202 });
 	}
 
