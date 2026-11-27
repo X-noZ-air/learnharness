@@ -965,7 +965,6 @@ export function observeNodeCardPosition(card: HTMLDivElement, container: HTMLDiv
 
 export function GraphView({
 	chainSelectOpen = false,
-	sessionStartFailed = false,
 	practiceSelection,
 	onPracticeSelectionChange,
 	onChainSelectClose,
@@ -980,7 +979,6 @@ export function GraphView({
 	 *  reflects it live. chainSelectOpen still drives the picker mode
 	 *  (Done instead of Delete). */
 	chainSelectOpen?: boolean;
-	sessionStartFailed?: boolean;
 	practiceSelection?: ReadonlySet<string>;
 	onPracticeSelectionChange?: (nodes: { id: string; name: string; statement: string }[]) => void;
 	onChainSelectClose?: () => void;
@@ -1511,12 +1509,11 @@ export function GraphView({
 		<div className="relative h-full w-full">
 			{isEmpty ? (
 				// The empty graph keeps the first action clear without zero-valued statistics.
-				<div className={`flex h-full w-full items-center justify-center px-4 ${sessionStartFailed ? "narrow:short:items-start narrow:short:pt-11" : "narrow:short:pb-44 narrow:short:pt-12"}`}>
+				<div className="flex h-full w-full items-center justify-center px-4 narrow:short:absolute narrow:short:inset-x-0 narrow:short:top-11 narrow:short:bottom-0 narrow:short:h-auto narrow:short:[container:empty-graph/size]">
 					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground narrow:short:gap-1">
 						<WaypointsIcon className="size-10 opacity-40 narrow:short:hidden" strokeWidth={1.25} />
-						<div className={`text-lg font-medium text-foreground ${sessionStartFailed ? "narrow:short:text-sm narrow:short:leading-4" : ""}`}>Knowledge graph</div>
-						{/* Keep the title between the graph toolbar and the short retry dock. */}
-						<div className={`max-w-sm text-sm ${sessionStartFailed ? "narrow:short:hidden" : ""}`}>
+						<div className="text-lg font-medium text-foreground narrow:short:text-sm narrow:short:leading-4">Knowledge graph</div>
+						<div className="max-w-sm text-sm [@container_empty-graph_(height<4.75rem)]:hidden">
 							<p>Start a session to begin learning.</p>
 							<p className="mt-1 text-xs">Attach your material with the paperclip or drag and drop.</p>
 						</div>

@@ -139,7 +139,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
 	useEffect(() => {
-		if (typeof window.matchMedia !== "function") return;
+		if (IS_ELECTRON || typeof window.matchMedia !== "function") return;
 		const query = window.matchMedia(NARROW_QUERY);
 		const apply = () => {
 			setNarrowViewport(query.matches);

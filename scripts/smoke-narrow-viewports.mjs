@@ -455,6 +455,12 @@ async function checkHomeDraftRetry(page, mode = "teach") {
 	await page.keyboard.press("Escape");
 	await page.waitForSelector(modelButton + '[aria-expanded="false"]');
 	if (mode === "practice") await checkPracticePicker(page, keyboardViewport);
+	const tallerViewport = { ...keyboardViewport, height: 400 };
+	await page.setViewport(tallerViewport);
+	const tallerMessage = await checkDraftRetryLayout(page, tallerViewport);
+	const attachmentHint = await bounds(page, "main ::-p-text(Attach your material)");
+	assert.ok(attachmentHint.bottom <= tallerMessage.top, "the attachment hint fits above the retry alert");
+	await page.setViewport(keyboardViewport);
 	await action(page, send, true);
 	await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname));
 	assert.equal(attempts.length, 2);
