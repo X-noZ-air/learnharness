@@ -188,8 +188,8 @@ export function DraftShell({
 							</ConversationContent>
 						</Conversation>
 						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent narrow:short:h-4 narrow:short:shrink-0" />
-						<div className="bg-background pb-4 narrow:short:shrink-0">
-							<div className={DOCK}>
+						<div className="bg-background pb-4 narrow:short:flex narrow:short:min-h-0 narrow:short:max-h-[calc(100%-1rem)] narrow:short:shrink-0 narrow:short:flex-col">
+							<div className={`${DOCK} narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:not([data-attachment-composer])]:shrink-0`}>
 								<ComposerActions
 									picker={(picks.length > 0 || mode === "practice") && (
 										<NodePickerControl count={picks.length} onOpen={onOpenPicker} onClear={onClearPicks} />
@@ -197,7 +197,7 @@ export function DraftShell({
 									setup={setupCta}
 								/>
 								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-0 narrow:short:grid-rows-[minmax(0,1fr)] narrow:short:[&_[data-file-path-input]]:self-stretch">
 									<Composer
 										busy={busy}
 										value={text}

@@ -1,12 +1,24 @@
-// Keep the CSS width fixed across orientations so each landscape case
-// exercises the narrow layout with less vertical room.
+export const phoneViewport = { width: 412, height: 915, isMobile: true, hasTouch: true, isLandscape: false };
+export const rotatedPhoneViewport = { ...phoneViewport, width: phoneViewport.height, height: phoneViewport.width, isLandscape: true };
+export const desktopViewport = { width: 1280, height: 800 };
+export const ultrawideViewport = { width: 3440, height: 1440 };
+
+const portraits = [
+	{ ...phoneViewport, width: 360, height: 800 },
+	{ ...phoneViewport, width: 390, height: 844 },
+	phoneViewport,
+	{ ...phoneViewport, width: 430, height: 932 },
+];
+
 export const viewports = [
-	...[360, 390, 412, 430].flatMap((width, index) => [
-		{ width, height: [800, 844, 915, 932][index], isMobile: true, hasTouch: true, isLandscape: false },
-		{ width, height: 320, isMobile: true, hasTouch: true, isLandscape: true },
+	...portraits.flatMap(portrait => [
+		portrait,
+		{ ...portrait, height: 320, isLandscape: true },
 	]),
 	{ width: 640, height: 480 },
-	{ width: 1280, height: 800 },
+	rotatedPhoneViewport,
+	desktopViewport,
+	ultrawideViewport,
 ];
 
 export const modelId = "synthetic-viewport";

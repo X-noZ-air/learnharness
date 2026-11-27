@@ -1,35 +1,25 @@
 /** Browser acceptance for the narrow layout. Run after npm run build:
- *  node scripts/smoke-narrow-viewports.mjs [--out DIR] [--viewport WIDTHxHEIGHT]
- *  Pass --dev to use Next dev and local font fixtures.
+ *  node scripts/smoke-narrow-viewports.mjs
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import puppeteer from "puppeteer-core";
 import { stopOwnedSmokeServer } from "./lib/owned-smoke-lifetime.mjs";
-import { answer, followUp, lesson, modelId, opening, viewports } from "../tests/fixtures/narrow-viewports.mjs";
+import {
+	answer, desktopViewport, followUp, lesson, modelId, opening,
+	phoneViewport, rotatedPhoneViewport, ultrawideViewport, viewports,
+} from "../tests/fixtures/narrow-viewports.mjs";
 
 assert.notEqual(process.platform, "win32", "Run the viewport smoke on Linux or macOS");
 const root = path.resolve(import.meta.dirname, "..");
-const dev = process.argv.includes("--dev");
-const option = name => {
-	const index = process.argv.indexOf(name);
-	if (index === -1) return undefined;
-	const value = process.argv[index + 1];
-	assert.ok(value && !value.startsWith("--"), `${name} requires a value`);
-	return value;
-};
-const out = option("--out");
 const nameOf = ({ width, height }) => `${width}x${height}`;
-const only = option("--viewport");
-const cases = only ? viewports.filter(viewport => nameOf(viewport) === only) : viewports;
-assert.ok(cases.length, `Unknown viewport: ${only}`);
+const isNarrow = viewport => viewport.width < 640;
 
 const input = "main [data-file-path-input]";
 const send = 'main button:is([aria-label="Send"], [aria-label="Start session"])';
@@ -49,7 +39,6 @@ let browser;
 let appLogs = "";
 const pageErrors = [];
 const modelRequests = [];
-const shot = (page, name, stage) => out && page.screenshot({ path: path.join(out, `${name}-${stage}.png`) });
 
 const stub = createServer(async (request, response) => {
 	if (request.method === "GET" && request.url === "/v1/models") {
@@ -92,19 +81,7 @@ async function startApp() {
 		TMPDIR: profile, LH_DATA_DIR: path.join(profile, "data"), LH_AUTH_FILE: path.join(profile, "auth.json"),
 		LH_IGNORE_ENV_KEYS: "1", NEXT_TELEMETRY_DISABLED: "1",
 	};
-	if (dev) {
-		const require = createRequire(import.meta.url);
-		const { getFontAxes } = require("next/dist/compiled/@next/font/dist/google/get-font-axes.js");
-		const { getGoogleFontsUrl } = require("next/dist/compiled/@next/font/dist/google/get-google-fonts-url.js");
-		const fonts = Object.fromEntries(["JetBrains Mono", "Source Sans 3"].map(family => [
-			getGoogleFontsUrl(family, getFontAxes(family, ["variable"], ["normal"]), "swap"),
-			`@font-face { font-family: '${family}'; src: local('Arial'); font-weight: 100 900; }`,
-		]));
-		const fontFile = path.join(profile, "fonts.cjs");
-		await fs.writeFile(fontFile, `module.exports = ${JSON.stringify(fonts)};\n`);
-		env.NEXT_FONT_GOOGLE_MOCKED_RESPONSES = fontFile;
-	}
-	app = spawn(process.execPath, ["node_modules/next/dist/bin/next", dev ? "dev" : "start",
+	app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start",
 		"--hostname", "127.0.0.1", "--port", String(port)], {
 		cwd: root, env, detached: true, stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -180,16 +157,34 @@ async function bounds(page, selector, minimum = 0) {
 	return rect;
 }
 
+async function waitForInlineSidebar(page) {
+	await page.waitForSelector(inlineSidebar, { visible: true });
+	await page.$eval(inlineSidebar, async sidebar => {
+		await Promise.all(sidebar.getAnimations().map(animation => animation.finished));
+	});
+}
+
 async function layout(page, viewport) {
-	const size = viewport.isMobile ? 44 : 0;
+	const size = isNarrow(viewport) ? 44 : 0;
 	const editor = await bounds(page, input, size);
-	await bounds(page, send, size);
+	const sendButton = await bounds(page, send, size);
 	await bounds(page, modelButton, size);
 	const documentWidth = await page.evaluate(() => document.documentElement.scrollWidth);
 	assert.equal(editor.windowWidth, viewport.width);
 	assert.equal(documentWidth, viewport.width, "document has horizontal overflow");
 	const meta = await page.$eval('meta[name="viewport"]', tag => tag.content);
 	assert.match(meta, /interactive-widget=resizes-content/);
+
+	if (viewport === ultrawideViewport) {
+		const sidebar = await bounds(page, inlineSidebar);
+		const composer = await bounds(page, "main [data-attachment-composer]");
+		assert.equal(sidebar.left, 0);
+		assert.equal(sidebar.width, 288);
+		assert.equal(composer.width, 704);
+		assert.ok(Math.abs((composer.left + composer.right) / 2 - (sidebar.right + viewport.width) / 2) < 8,
+			"ultrawide composer stays centered in the content column");
+		assert.equal(sendButton.height, 40);
+	}
 }
 
 async function sidebarClosed(page, narrow = true) {
@@ -203,7 +198,10 @@ async function openDrawer(page, touch = true) {
 	await page.waitForFunction(selector => document.activeElement === document.querySelector(selector), {}, drawer + " aside");
 }
 
-async function checkDrawer(page, name) {
+const waitForFocus = (page, selector) => page.waitForFunction(target =>
+	document.activeElement === document.querySelector(target), {}, selector);
+
+async function checkDrawer(page) {
 	await sidebarClosed(page);
 	await bounds(page, open, 44);
 	const initialEditor = await bounds(page, input);
@@ -211,17 +209,15 @@ async function checkDrawer(page, name) {
 	await bounds(page, close, 44);
 	await bounds(page, teaching, 44);
 	assert.equal((await bounds(page, input)).width, initialEditor.width, "drawer must overlay the editor");
-	await shot(page, name, "drawer");
 	await action(page, close, true);
 	await sidebarClosed(page);
-	const focusReturned = () => page.waitForFunction(selector => document.activeElement === document.querySelector(selector), {}, open);
-	await focusReturned();
+	await waitForFocus(page, open);
 
 	await openDrawer(page);
 	const edge = await page.$eval(backdrop, node => node.getBoundingClientRect().right - 10);
 	await page.touchscreen.tap(edge, 30);
 	await sidebarClosed(page);
-	await focusReturned();
+	await waitForFocus(page, open);
 
 	await page.keyboard.press("Enter");
 	await page.waitForSelector(drawer + '[aria-modal="true"]');
@@ -230,7 +226,7 @@ async function checkDrawer(page, name) {
 	await page.focus('[data-testid="session-search"]');
 	await page.keyboard.press("Escape");
 	await sidebarClosed(page);
-	await focusReturned();
+	await waitForFocus(page, open);
 	assert.equal(await page.evaluate(() => localStorage.getItem("lh:sidebar-open")), null);
 }
 
@@ -271,9 +267,31 @@ async function submit(page, text, touch) {
 	await action(page, send, touch);
 }
 
-async function enterSidebar(page, touch) {
-	if (touch) await openDrawer(page);
-	else await page.waitForSelector(inlineSidebar);
+async function enterSidebar(page, viewport) {
+	if (isNarrow(viewport)) await openDrawer(page, viewport.hasTouch);
+	else await waitForInlineSidebar(page);
+}
+
+async function checkDrawerRotation(page) {
+	await openDrawer(page);
+	await page.setViewport(rotatedPhoneViewport);
+	await page.waitForSelector(drawer, { hidden: true });
+	await waitForFocus(page, `${inlineSidebar} ${close}`);
+	await page.setViewport(phoneViewport);
+	await sidebarClosed(page);
+}
+
+async function submitDraftWithKeyboardOpen(page, text) {
+	await action(page, input, true);
+	const viewport = { ...phoneViewport, height: 200 };
+	await page.setViewport(viewport);
+	await page.keyboard.sendCharacter([text, ...Array(20).fill("Draft line")].join("\n"));
+	await page.waitForSelector(send + ":enabled");
+	assert.ok(await page.$eval(input, editor => editor.scrollHeight > editor.clientHeight),
+		"long draft scrolls within the editor");
+	await layout(page, viewport);
+	await action(page, send, true);
+	await page.setViewport(phoneViewport);
 }
 
 async function verifyDesktopPreference(page, viewport) {
@@ -289,6 +307,7 @@ async function verifyDesktopPreference(page, viewport) {
 	await openDrawer(page, false);
 	await page.setViewport(viewport);
 	await sidebarClosed(page, false);
+	await waitForFocus(page, open);
 	assert.equal(await page.evaluate(() => localStorage.getItem("lh:sidebar-open")), "0");
 	await action(page, open, false);
 	await page.waitForSelector(inlineSidebar);
@@ -300,23 +319,24 @@ async function verifyDesktopPreference(page, viewport) {
 async function checkLesson(origin, viewport) {
 	const name = nameOf(viewport);
 	const touch = Boolean(viewport.hasTouch);
+	const narrow = isNarrow(viewport);
 	const { context, page } = await newClient(origin, viewport);
 	try {
-		if (touch) await checkDrawer(page, name);
-		await enterSidebar(page, touch);
+		if (narrow) await checkDrawer(page);
+		if (viewport === phoneViewport) await checkDrawerRotation(page);
+		await enterSidebar(page, viewport);
 		await action(page, teaching, touch);
 		await page.waitForFunction(() => location.pathname === "/chat/new");
 		await page.waitForSelector('main h3');
-		if (touch) await sidebarClosed(page);
+		if (narrow) await sidebarClosed(page);
 		await layout(page, viewport);
-		await shot(page, name, "new-session");
 
-		await submit(page, opening(name), touch);
+		if (viewport === phoneViewport) await submitDraftWithKeyboardOpen(page, opening(name));
+		else await submit(page, opening(name), touch);
 		await page.waitForFunction(() => /^\/chat\/chat_/.test(location.pathname) && !location.search);
 		const route = new URL(page.url()).pathname;
 		await readText(page, lesson);
 		await layout(page, viewport);
-		await shot(page, name, "lesson");
 
 		await action(page, modelButton, touch);
 		await bounds(page, '[data-testid="model-menu"]');
@@ -327,37 +347,37 @@ async function checkLesson(origin, viewport) {
 		assert.ok(modelRequests.some(body => body?.includes(opening(name))));
 		assert.ok(modelRequests.some(body => body?.includes(followUp(name))));
 
-		if (touch) await openDrawer(page);
+		if (narrow) await openDrawer(page);
 		await page.reload({ waitUntil: "domcontentloaded" });
-		if (touch) await sidebarClosed(page);
-		else await page.waitForSelector(inlineSidebar);
+		if (narrow) await sidebarClosed(page);
+	else await waitForInlineSidebar(page);
 		await readText(page, lesson);
 		await readText(page, answer);
 		await layout(page, viewport);
 
-		const second = await newClient(origin, viewport);
+		const secondViewport = touch ? desktopViewport : phoneViewport;
+		const second = await newClient(origin, secondViewport);
 		try {
 			assert.equal(await second.page.evaluate(() => localStorage.getItem("lh:sidebar-open")), null);
-			if (touch) await sidebarClosed(second.page);
-			await enterSidebar(second.page, touch);
+			if (isNarrow(secondViewport)) await sidebarClosed(second.page);
+			await enterSidebar(second.page, secondViewport);
 			const row = `[data-session-id="${route.split("/").at(-1)}"]`;
-			if (touch) {
+			if (isNarrow(secondViewport)) {
 				await second.page.waitForSelector(row);
 				await second.page.$eval(row, element => element.scrollIntoView({ block: "nearest" }));
 				await bounds(second.page, row, 44);
 			}
-			await action(second.page, row, touch);
+			await action(second.page, row, secondViewport.hasTouch);
 			await second.page.waitForFunction(value => location.pathname === value, {}, route);
-			if (touch) await sidebarClosed(second.page);
+			if (isNarrow(secondViewport)) await sidebarClosed(second.page);
 			await readText(second.page, lesson);
 			await readText(second.page, answer);
-			await layout(second.page, viewport);
+			await layout(second.page, secondViewport);
 		} finally {
 			await second.context.close();
 		}
-		if (!touch) await verifyDesktopPreference(page, viewport);
+		if (!narrow) await verifyDesktopPreference(page, viewport);
 	} catch (error) {
-		await shot(page, name, "failure");
 		throw new Error(`Viewport ${name}: ${error.message}`, { cause: error });
 	} finally {
 		await context.close();
@@ -367,7 +387,6 @@ async function checkLesson(origin, viewport) {
 try {
 	await fs.mkdir(path.join(profile, "data"));
 	await fs.writeFile(path.join(profile, "auth.json"), "{}\n", { mode: 0o600 });
-	if (out) await fs.mkdir(out, { recursive: true });
 	const providerPort = await listen(stub);
 	const origin = await startApp();
 	browser = await puppeteer.launch({
@@ -380,16 +399,14 @@ try {
 		],
 	});
 
-	for (const viewport of cases) {
+	for (const viewport of viewports) {
 		const { context, page } = await newClient(origin, viewport);
 		try {
 			await page.waitForFunction(() => !!document.querySelector('[data-testid="setup-cta"], [data-testid="setup-cta-keys"]'));
-			if (viewport.hasTouch) await sidebarClosed(page);
-			else await page.waitForSelector(inlineSidebar);
+			if (isNarrow(viewport)) await sidebarClosed(page);
+			else await waitForInlineSidebar(page);
 			await layout(page, viewport);
-			await shot(page, nameOf(viewport), "start");
 		} catch (error) {
-			await shot(page, nameOf(viewport), "start-failure");
 			throw new Error(`Empty profile at ${nameOf(viewport)}: ${error.message}`, { cause: error });
 		} finally {
 			await context.close();
@@ -397,7 +414,7 @@ try {
 	}
 
 	await configureModel(origin, providerPort);
-	for (const viewport of cases) {
+	for (const viewport of viewports) {
 		await checkLesson(origin, viewport);
 		console.log(`${nameOf(viewport)}: start, new session, lesson, answer, sidebar, reload, and second client passed`);
 	}
