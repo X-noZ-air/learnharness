@@ -30,7 +30,7 @@ async function listen(socket: string) {
 			peer.pause();
 			try {
 				const request = JSON.parse(buffer);
-				const result = control(request.op, request.generation, request.holdMs);
+				const result = control(request.op, request.generation, request.holdMs, request.attempt);
 				peer.end(JSON.stringify(result) + "\n");
 			} catch { peer.end('{"error":"Invalid command, hold or generation"}\n'); }
 		});

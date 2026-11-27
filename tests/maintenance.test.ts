@@ -94,6 +94,19 @@ test("the open generation cannot start a drain", () => {
 	assert.deepEqual(control("status"), open);
 });
 
+test("cancellation applies only to the matching timely drain attempt", () => {
+	const expired = { id: "expired", startByMs: Date.now() - 1 };
+	assert.throws(() => control("drain", undefined, 60000, expired), /expired/);
+	const attempt = { id: "timely", startByMs: Date.now() + 60000 };
+	const held = control("drain", undefined, 60000, attempt);
+	try {
+		assert.deepEqual(control("cancel-drain", undefined, undefined, expired), held);
+		assert.equal(control("cancel-drain", undefined, undefined, attempt).mode, "open");
+	} finally {
+		if (maintenanceStatus().mode === "draining") control("resume", held.generation);
+	}
+});
+
 test("an ended owner counts again only while admission is open", () => {
 	const owner = beginWork("delivery");
 	owner.end();

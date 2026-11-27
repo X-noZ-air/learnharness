@@ -110,6 +110,9 @@ interface QueuedSteer {
 	handedTo?: Agent;
 }
 
+type OwnedPump = { mode: "open" | "idle"; lease: Lease };
+type PumpState = OwnedPump | { mode: "drain-requested" };
+
 interface WakeState {
 	turnRunner?: TurnRunner;
 	respawn?: JobRespawn;
@@ -129,7 +132,7 @@ interface WakeState {
 	 *  markers to this agent's follow-up queue. */
 	liveAgents: Map<string, Agent>;
 	/** Chats whose pump loop is currently active (serialization per chat). */
-	pumping: Map<string, Lease>;
+	pumping: Map<string, PumpState>;
 	/** Throttle bookkeeping for the stale-job sweep. */
 	lastSweepAt: number;
 	stopConnectionWatch?: () => void;
@@ -230,7 +233,7 @@ function finalizeSteer(steer: SteerMessage): void {
  * wake-acceptance/error semantics. Workers never await this promise. */
 export function deliverJobResult(steer: SteerMessage): Promise<void> {
 	const chatId = chatIdOf(steer);
-	const entry = queueSteer(chatId, steer);
+	const entry = queueSteer(chatId, steer, !canStartWork());
 	void pump(chatId);
 	return entry.promise;
 }
@@ -314,7 +317,7 @@ export function registerLiveAgent(chatId: string, agent: Agent, allowDeferred = 
 	state().liveAgents.set(chatId, agent);
 	restorePendingDeliveries(chatId);
 	for (const entry of state().queues.get(chatId) ?? []) {
-		if (allowDeferred && deliveryAdmitted(entry)) entry.deferred = false;
+		if (allowDeferred) entry.deferred = false;
 		if (entry.waking && wakeSteerIds?.has(entry.steer.id)) entry.wakeAgent = agent;
 	}
 	handOffEligible(chatId, agent);
@@ -506,18 +509,32 @@ function chatIdOf(steer: SteerMessage): string {
  * more to do here until settlement re-pumps); otherwise the IDLE WAKE
  * fires ONE turn carrying every pending marker as its input appends.
  */
+function pumpWhenOpen(chatId: string): void {
+	const { pumping } = state();
+	if (pumping.get(chatId)?.mode === "drain-requested") return;
+	const pending = { mode: "drain-requested" } as const;
+	pumping.set(chatId, pending);
+	whenOpen(() => {
+		if (pumping.get(chatId) !== pending) return;
+		pumping.delete(chatId);
+		void pump(chatId);
+	});
+}
+
 function pump(chatId: string): Promise<void> {
 	const s = state();
 	const queue = s.queues.get(chatId);
-	if (!chatId || !queue?.length || s.pumping.has(chatId)) return Promise.resolve();
+	if (!chatId || !queue?.length || s.pumping.get(chatId)?.mode === "open") return Promise.resolve();
 	// A marker outlives a hold its caller does not own. Delivery continues when it opens.
-	if (!canStartWork() || !queue.some(deliveryAdmitted)) { whenOpen(() => void pump(chatId)); return Promise.resolve(); }
+	if (!canStartWork() || !queue.some(deliveryAdmitted)) { pumpWhenOpen(chatId); return Promise.resolve(); }
 	const lease = beginWork("delivery");
-	return lease.run(() => pumpQueue(chatId, lease)).finally(() => lease.end());
+	const owner: OwnedPump = { mode: "open", lease };
+	s.pumping.set(chatId, owner);
+	return lease.run(() => pumpQueue(chatId, owner)).finally(() => lease.end());
 }
-async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
+
+async function pumpQueue(chatId: string, owner: OwnedPump): Promise<void> {
 	const s = state();
-	s.pumping.set(chatId, lease);
 	let parked = false;
 	try {
 		for (let attempt = 0; ; ) {
@@ -570,7 +587,7 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 				}
 				if (handable.length > 0) {
 					await delay(POLL_MS);
-					if (!(await waitForIdle(chatId, lease))) break;
+					if (!(await waitForIdle(chatId, owner))) break;
 					continue;
 				}
 			}
@@ -578,7 +595,7 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 			// VEHICLE 2 — THE IDLE WAKE: one server-side turn carrying EVERY
 			// pending marker as its input appends (the handler write-ahead
 			// persists them under the wake's own turn claim).
-			if (!(await waitForIdle(chatId, lease))) break;
+			if (!(await waitForIdle(chatId, owner))) break;
 
 			// Re-fetch AFTER the gates open — waitForIdle can wait out a quiz
 			// answer (minutes), and sending the pre-wait snapshot would clobber
@@ -661,16 +678,17 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 		// Admission closed while only the learner could continue. The markers
 		// stay queued and saved, and delivery continues when it opens.
 		parked = true;
-		whenOpen(() => void pump(chatId));
 	} finally {
-		s.pumping.delete(chatId);
-		// A steer may have arrived between the last check and the finally —
-		// restart the pump rather than strand it. Entries already handed to
-		// a live run are NOT stragglers (settleSteers owns their resurrection)
-		// — restarting for them would just park in waitForIdle forever.
-		const q = state().queues.get(chatId) ?? [];
-		if (q.some(entry => !deliveryAdmitted(entry) && !entry.deferred)) whenOpen(() => void pump(chatId));
-		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some(readyForWake)) void pump(chatId);
+		if (s.pumping.get(chatId) === owner) {
+			s.pumping.delete(chatId);
+			// A steer may have arrived between the last check and the finally —
+			// restart the pump rather than strand it. Entries already handed to
+			// a live run are NOT stragglers (settleSteers owns their resurrection)
+			// — restarting for them would just park in waitForIdle forever.
+			const q = s.queues.get(chatId) ?? [];
+			if (admissionClosed() && q.some(entry => !entry.deferred && entry.parked)) pumpWhenOpen(chatId);
+			if (!parked && automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId)) && q.some(readyForWake)) void pump(chatId);
+		}
 	}
 }
 
@@ -680,7 +698,7 @@ async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 refuseDrainWhile("parked-probe-handoff", () => {
 	const s = state();
 	for (const [chatId, queue] of s.queues) {
-		if (!s.pumping.get(chatId)?.active && queue.some(entry => entry.steer.customType === "probe-handoff")) return true;
+		if (s.pumping.get(chatId)?.mode !== "open" && queue.some(entry => entry.steer.customType === "probe-handoff")) return true;
 	}
 	return false;
 });
@@ -791,15 +809,18 @@ function restorePendingDeliveries(chatId: string): void {
  * the markers are saved and would be restored by a restart. It counts
  * again before it proceeds. False means admission closed in the meantime.
  */
-async function waitForIdle(chatId: string, lease: Lease): Promise<boolean> {
-	for (;;) {
+async function waitForIdle(chatId: string, owner: OwnedPump): Promise<boolean> {
+	const { pumping } = state();
+	const { lease } = owner;
+	while (pumping.get(chatId) === owner) {
 		const record = stores.chatStore.getChat(chatId);
 		const pending = (state().queues.get(chatId) ?? []).filter(readyForWake);
-		if (!record || pending.length === 0) return lease.renew();
+		if (!record || pending.length === 0) return owner.mode === "open";
 		const running = isTurnRunning(chatId);
 		const blocked = running || hasUnresolvedQuestion(record.messages);
 		if (!blocked) {
 			if (!lease.renew()) return false;
+			owner.mode = "open";
 			for (const entry of pending) entry.parked = false;
 			await delay(GRACE_MS);
 			const recheck = stores.chatStore.getChat(chatId);
@@ -812,10 +833,12 @@ async function waitForIdle(chatId: string, lease: Lease): Promise<boolean> {
 			}
 		} else if (!running) {
 			for (const entry of pending) entry.parked = true;
+			owner.mode = "idle";
 			lease.end();
 		}
 		await delay(POLL_MS);
 	}
+	return false;
 }
 
 // ─── crash recovery ──────────────────────────────────────────────────────────

@@ -39,9 +39,7 @@ disabled. CI retries the full plan-label browser smoke up to twice on each
 platform. Three failed attempts leave the affected job red. The trusted
 poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
 The separate **Werft feature CI status** reporter sets that context for ordinary
-pull requests, including changes to workflows and scripts, when CI succeeds and
-GitHub associates the run with the current pull request and its `werft` base.
-A run with missing or ambiguous PR association cannot set this status.
+pull requests, including changes to workflows and scripts, when CI succeeds.
 Firstmate reviews delivery automation before merging those pull requests. The
 upstream poller refuses upstream releases that change protected automation files.
 

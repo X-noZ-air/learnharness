@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
-import { createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import path from "node:path";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -153,6 +153,86 @@ test("a result that is being delivered counts as work and finishes during the ho
 	assert.equal(wakes.length, 1, "admitted delivery finishes during the hold");
 	await until(() => control("status", held.generation).drained);
 	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
+});
+
+function queueResult(chatId: string, toolCallId: string) {
+	const job = stores.jobStore.createJob({ kind: "research", chatId, toolCallId });
+	const result = { brief: "Fixture research result", sources: [] };
+	const saved = stores.jobStore.updateJob(job.id, { status: "done", result, delivery: { kind: "result", status: "pending" } })!;
+	const marker = buildSubagentSteer(saved, result);
+	return { job, marker, delivered: deliverJobResult(marker) };
+}
+
+test("an admitted job takes over a pump parked behind a quiz during drain", { timeout: 5000 }, async (t) => {
+	const owner = chat(true);
+	const earlier = queueResult(owner.id, "parked-result");
+	assert.deepEqual(maintenanceStatus().counts, {});
+	const answer = beginWork("main-turn", true);
+	const worker = beginWork("job", true);
+	t.after(() => { answer.end(); worker.end(); });
+	assert(beginTurn(owner.id));
+	const held = control("drain");
+	const later = worker.run(() => queueResult(owner.id, "admitted-result"));
+	worker.end();
+	const wakes: SteerMessage[][] = [];
+	setTurnRunner(async (id, input) => {
+		assert.equal(input.type, "steers");
+		wakes.push(input.steers);
+		stores.chatStore.saveMessages(id, [...stores.chatStore.getChat(id)!.messages, ...input.steers]);
+		return 200;
+	});
+	const answered = [question, {
+		id: "answer-message", role: "toolResult", toolCallId: "question-call", toolName: "quiz",
+		content: [{ type: "text", text: "Synthetic answer" }], isError: false, timestamp: 2,
+	}] as LhMessage[];
+	answer.run(() => {
+		stores.chatStore.saveMessages(owner.id, answered);
+		endTurn(owner.id);
+		settleSteers(owner.id, answered);
+	});
+	answer.end();
+	assert.equal(control("status", held.generation).counts.delivery, 1);
+	await later.delivered;
+	await until(() => control("status", held.generation).drained);
+	assert.deepEqual(wakes, [[later.marker]]);
+	assert.equal(stores.jobStore.getJob(earlier.job.id)!.delivery?.status, "pending");
+
+	control("resume", held.generation);
+	await earlier.delivered;
+	assert.deepEqual(wakes, [[later.marker], [earlier.marker]]);
+});
+
+test("a deliberate retry registered during the hold delivers after resume", { timeout: 5000 }, async (t) => {
+	const owner = chat();
+	const failure = Promise.withResolvers<void>();
+	setTurnRunner(async () => { failure.resolve(); return 500; });
+	const { marker, job, delivered } = queueResult(owner.id, "retry-result");
+	await failure.promise;
+	await until(() => Object.keys(maintenanceStatus().counts).length === 0);
+	const answer = beginWork("main-turn", true);
+	t.after(() => answer.end());
+	const held = control("drain");
+	const live = agent();
+	answer.run(() => {
+		assert(beginTurn(owner.id));
+		registerLiveAgent(owner.id, live.value);
+		assert.deepEqual(live.handed, []);
+		unregisterLiveAgent(owner.id);
+		endTurn(owner.id);
+		settleSteers(owner.id, [], false, live.value);
+	});
+	answer.end();
+	assert.equal(control("status", held.generation).drained, true);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
+	setTurnRunner(async (id, input) => {
+		assert.equal(input.type, "steers");
+		stores.chatStore.saveMessages(id, input.steers);
+		return 200;
+	});
+	control("resume", held.generation);
+	assert.equal(maintenanceStatus().counts.delivery, 1);
+	await delivered;
+	assert.deepEqual(stores.chatStore.getChat(owner.id)!.messages, [marker]);
 });
 
 test("a learner message parked behind a question postpones the switch and reaches the next run", async () => {
@@ -381,4 +461,23 @@ test("a stalled renewal releases the confirmed drain generation and exits with c
 		assert.deepEqual(ops, ["drain", "drain", "resume"]);
 		assert.equal(maintenanceStatus().mode, "open");
 	} finally { lesson.end(); }
+});
+
+test("a timed-out first drain releases the hold without receiving its generation", async () => {
+	let accepted = false;
+	const result = await throughDelayedSocket((command, peer) => {
+		const upstream = createConnection(process.env.LH_MAINTENANCE_SOCKET!);
+		upstream.on("error", error => peer.destroy(error));
+		peer.on("close", () => upstream.destroy());
+		upstream.once("connect", () => upstream.write(JSON.stringify(command) + "\n"));
+		if (command.op === "drain") {
+			upstream.once("data", () => { accepted = maintenanceStatus().mode === "draining"; });
+		} else {
+			upstream.pipe(peer);
+		}
+	}, ["--timeout-ms", "250", "--hold-ms", "60000"]);
+	assert.equal(accepted, true);
+	assert.equal(result.code, 2, JSON.stringify(result));
+	assert.equal(maintenanceStatus().mode, "open");
+	assert.equal((await steer("chat_unknown", "after the lost response")).status, 404);
 });

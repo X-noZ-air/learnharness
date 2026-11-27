@@ -313,7 +313,10 @@ describe("workflow action versions", () => {
 					observed.add(step.uses);
 					if (step.uses === "actions/setup-node@v7") {
 						assert.equal(step.with?.["node-version"], "26");
-						if (filename === "release.yml") {
+						if (filename === "ci.yml") {
+							assert.equal(step.with?.cache, "${{ !inputs.candidate_sha && 'npm' || '' }}");
+							assert.equal(step.with?.["package-manager-cache"], "${{ !inputs.candidate_sha }}");
+						} else {
 							assert.equal(step.with?.cache, "npm");
 						}
 					}

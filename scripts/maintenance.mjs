@@ -1,9 +1,11 @@
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 class DrainTimeout extends Error {}
 class SocketTimeout extends Error {}
+const SOCKET_TIMEOUT_MS = 5000;
 
 async function request(socket, command, deadline = Infinity) {
 	const remaining = deadline - performance.now();
@@ -12,8 +14,8 @@ async function request(socket, command, deadline = Infinity) {
 		const peer = createConnection(socket);
 		let reply = "";
 		const timer = setTimeout(() => {
-			peer.destroy(remaining <= 5000 ? new DrainTimeout() : new SocketTimeout("Maintenance socket timed out"));
-		}, Math.min(5000, Math.ceil(remaining)));
+			peer.destroy(remaining <= SOCKET_TIMEOUT_MS ? new DrainTimeout() : new SocketTimeout("Maintenance socket timed out"));
+		}, Math.min(SOCKET_TIMEOUT_MS, Math.ceil(remaining)));
 		peer.once("close", () => clearTimeout(timer));
 		peer.setEncoding("utf8").on("error", reject);
 		peer.on("connect", () => {
@@ -39,9 +41,17 @@ async function drain(socket, generation, holdMs, timeout) {
 	let validUntil;
 	let wallDeadline;
 	let status;
+	let initialAttempt;
 	const renew = () => {
 		wallDeadline = Date.now() + period;
 		validUntil = performance.now() + period;
+		if (generation === undefined) {
+			const now = Date.now();
+			const startWindow = Math.floor(Math.min(SOCKET_TIMEOUT_MS, deadline - performance.now()));
+			if (startWindow <= 0) throw new DrainTimeout();
+			initialAttempt = { id: randomUUID(), startByMs: now + startWindow };
+			return request(socket, { op: "drain", holdMs: period, attempt: initialAttempt }, deadline);
+		}
 		return request(socket, { op: "drain", generation, holdMs: period }, deadline);
 	};
 	try {
@@ -64,7 +74,7 @@ async function drain(socket, generation, holdMs, timeout) {
 			status = await renew();
 		}
 	} catch (error) {
-		if (!(error instanceof DrainTimeout) && !(error instanceof SocketTimeout && generation)) throw error;
+		if (!(error instanceof DrainTimeout) && !(error instanceof SocketTimeout)) throw error;
 	}
 	process.exitCode = 2;
 	if (generation && (!status || status.mode === "draining")) {
@@ -75,6 +85,10 @@ async function drain(socket, generation, holdMs, timeout) {
 			console.error("Drain release could not be confirmed:", error.message);
 			return;
 		}
+	}
+	if (!status && initialAttempt) {
+		try { return await request(socket, { op: "cancel-drain", attempt: { id: initialAttempt.id } }); }
+		catch (error) { console.error("Drain cancellation could not be confirmed:", error.message); return; }
 	}
 	if (!status) console.error("Drain timed out before the server confirmed a hold");
 	return status;

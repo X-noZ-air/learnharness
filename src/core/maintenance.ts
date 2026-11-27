@@ -19,6 +19,7 @@ const key = Symbol.for("learnharness.maintenance.v1");
 /** A drain hold lasts this long after its last drain command unless the command names a period. */
 const HOLD_MS = 60_000;
 const MAX_HOLD_MS = 600_000;
+type DrainAttempt = { id: string; startByMs?: number };
 function createState() {
 	return {
 		mode: (process.env.LH_MAINTENANCE_STARTUP_HOLD === "1" ? "startup-hold" : "open") as Mode,
@@ -27,6 +28,7 @@ function createState() {
 		unknownPlugin: false,
 		refusals: new Map<string, () => boolean>(),
 		holdTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+		drainAttemptId: undefined as string | undefined,
 		context: new AsyncLocalStorage<Lease>(),
 		onOpen: new Set<() => void>(),
 	};
@@ -110,6 +112,7 @@ export function maintenanceStatus() {
 function open(s: ReturnType<typeof state>) {
 	clearTimeout(s.holdTimer);
 	s.holdTimer = undefined;
+	s.drainAttemptId = undefined;
 	s.mode = "open";
 	s.generation = randomUUID();
 	const callbacks = [...s.onOpen];
@@ -119,22 +122,30 @@ function open(s: ReturnType<typeof state>) {
 		catch (error) { console.error("[maintenance] Work deferred by a hold failed to continue:", error); }
 	}
 }
-export function control(op: string, generation?: string, holdMs: number = HOLD_MS) {
+export function control(op: string, generation?: string, holdMs: number = HOLD_MS, attempt?: DrainAttempt) {
 	const s = state();
 	if (generation !== undefined && generation !== s.generation) throw new Error("Stale maintenance generation");
+	if (attempt !== undefined && (typeof attempt?.id !== "string" || !attempt.id)) throw new Error("Invalid drain attempt");
 	if (op === "drain") {
 		if (s.mode === "startup-hold") throw new Error("Release the startup hold before draining");
 		if (!Number.isSafeInteger(holdMs) || holdMs < 1 || holdMs > MAX_HOLD_MS) throw new Error("Invalid hold period");
 		if (s.mode === "draining" && generation === undefined) throw new Error("Drain renewal requires its generation");
 		if (s.mode === "open") {
 			if (generation !== undefined) throw new Error("A generation can only renew an active drain");
+			if (attempt && (typeof attempt.startByMs !== "number" || !Number.isSafeInteger(attempt.startByMs) || Date.now() >= attempt.startByMs)) {
+				throw new Error("Drain attempt expired before admission");
+			}
 			s.mode = "draining";
 			s.generation = randomUUID();
+			s.drainAttemptId = attempt?.id;
 		}
 		// Only its holder keeps a drain alive. A caller that dies cannot leave admission closed.
 		clearTimeout(s.holdTimer);
 		s.holdTimer = setTimeout(() => { if (s.mode === "draining") open(s); }, holdMs);
 		s.holdTimer.unref();
+	} else if (op === "cancel-drain") {
+		if (!attempt) throw new Error("Cancelling a drain requires its attempt");
+		if (s.mode === "draining" && s.drainAttemptId === attempt.id) open(s);
 	} else if (op === "release" || op === "resume") {
 		if (generation === undefined) throw new Error("Releasing a hold requires its generation");
 		if (s.mode !== (op === "release" ? "startup-hold" : "draining")) throw new Error("Command does not match the active hold");
