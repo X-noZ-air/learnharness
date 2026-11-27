@@ -14,7 +14,7 @@ The client uses the same environment variable or an explicit `--socket PATH`.
 
 ```sh
 node scripts/maintenance.mjs status
-node scripts/maintenance.mjs drain --timeout-ms 30000
+node scripts/maintenance.mjs drain --timeout-ms 30000 --hold-ms 60000
 node scripts/maintenance.mjs resume --generation "$DRAIN_GENERATION"
 node scripts/maintenance.mjs release --generation "$STARTUP_GENERATION"
 ```
@@ -25,18 +25,23 @@ The client writes one JSON object on stdout. An idle, held server can return
 {"version":1,"generation":"0ef24084-c188-4c38-b09e-d7fef5990abd","mode":"draining","counts":{},"reasons":[],"drained":true}
 ```
 
-The socket accepts one JSON line per connection with an `op` and an optional `generation`, and returns one JSON line. The supported operations are `status`, `drain`, `resume` and `release`. A generation changes on entry to and exit from a hold, and on process replacement. Repeating a drain during a hold observes its current generation. Supplying a stale generation fails the command. Serialize operator actions for each profile.
+The socket accepts one JSON line per connection with an `op`, an optional `generation` and, for `drain`, an optional `holdMs`, and returns one JSON line. The supported operations are `status`, `drain`, `resume` and `release`. A generation changes on entry to and exit from a hold, and on process replacement. Repeating a drain during a hold observes its current generation and renews the hold. Supplying a stale generation fails the command. Serialize operator actions for each profile.
 
 * `drain` closes admission before returning its first status. The CLI waits for the same generation to report `drained: true`. Exit code 0 means the requested hold is ready. Exit code 2 returns the busy counts or a reason a guarantee is unavailable. Exit code 1 indicates a command or connection error.
-* A timeout leaves the hold in place. Read the current status and use `resume` with the matching generation to postpone maintenance. A running lesson or sign-in continues.
-* `release` opens a startup hold. `resume` opens a drain hold. Either invalidates the corresponding readiness result. An open server reports `drained: false` even when its counts are empty.
-* For a switch, retain the hold, stop the process, and verify that it and its writers have exited before using the profile. Manage the snapshot, format compatibility and rollback of the program/profile pair outside the application.
+* A drain hold has a deadline in the server. It lasts `holdMs` after the most recent `drain` command, 60000 by default and at most 600000. When the deadline passes, the server opens by itself, changes the generation and withdraws any readiness it reported. A caller that crashes or loses its session therefore cannot leave the service refusing writes. `status` does not renew a hold. While it waits, the CLI renews the hold with every poll.
+* When the wait ends without readiness, because `--timeout-ms` elapsed or a reason is present, the CLI resumes the server itself, prints the status after that resume and exits with code 2. Maintenance is postponed and a running lesson or sign-in continues. Pass `--keep-hold` to leave the hold in place until its deadline, for example to inspect the remaining work, and then use `resume` with the matching generation.
+* `release` opens a startup hold. `resume` opens a drain hold. Either invalidates the corresponding readiness result. An open server reports `drained: false` even when its counts are empty. A startup hold has no deadline and stays closed until it is released.
+* For a switch, stop the process within the hold period after exit code 0, or repeat `drain` with the generation to renew the hold and confirm readiness first. Verify that the process and its writers have exited before using the profile. Manage the snapshot, format compatibility and rollback of the program/profile pair outside the application.
 
 ## What the counts cover
 
 The keys are bounded work categories. Status omits session, plugin, provider and file identifiers. An upload or write request covers the route from admission through completion, including reading its request body. The server also counts main turns, side chats, jobs, delivery, compaction, extraction, plugin tasks and writes, sign-in, private subscription operations that may refresh credentials, and startup. Counts can overlap during handoff. A closed browser tab or an acknowledged HTTP request can leave an active owner behind.
 
-A new external mutation receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. A valid continuation of a pending sign-in remains usable during a drain. New sign-ins wait for normal service. If a delivery or sign-in needs learner input, an operator can time out and resume.
+A new external mutation receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. A valid continuation of a pending sign-in remains usable during a drain. New sign-ins wait for normal service. If a sign-in needs learner input, the wait times out and the server resumes.
+
+`delivery` counts only a result that is being delivered. A finished background result that cannot continue until the learner acts holds no count: it waits behind an open question, a dismissed question, a failed automatic start or missing background consent. Its marker is already saved with the job in the profile. It stays there through a stop and is delivered after the restart, once the learner continues the session.
+
+A message the learner sent into a running lesson is kept only in memory until a lesson run saves it. If that run ended before it took the message, for example at a question or when the learner stopped it, the server reports the reason `parked-learner-steer` and `drained: false`. Stopping now would lose the accepted message, so an unattended switch is postponed. The reason clears when the learner's next run in that session saves the message.
 
 Loading a community backend makes the process report `unknown-plugin-lifecycle`. Arbitrary backend code can retain a timer or writer after deactivation. Disabling that package cannot establish quiescence for the current process. Audited bundled backends register detached writes through the host's `trackWork` callback. A change that adds a backend writer or a new mutation route must cover its admission and its last write.
 

@@ -1,4 +1,4 @@
-import { tracked } from "../core/maintenance.ts";
+import { beginWork, type Lease } from "../core/maintenance.ts";
 import { randomUUID } from "node:crypto";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, JsonValue, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
@@ -138,7 +138,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 		s.partial = undefined;
 		commit(s, { ...s.record, status: s.record.pending.length ? "waiting" : "interrupted", error: "Run cancelled" });
 	};
-	const launch = (s: Session, d: PluginAgentDefinition, purpose: PluginCallPurpose) => {
+	const launch = (s: Session, d: PluginAgentDefinition, purpose: PluginCallPurpose, lease: Lease) => {
 		const run: Run = { controller: new AbortController(), cancelled: false };
 		s.run = run; // Reserve the writer before engine resolution or any other await.
 		const active = () => {
@@ -146,7 +146,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 				throw new Error("Plugin agent run cancelled or unavailable");
 			}
 		};
-		void tracked("plugin-task", async () => {
+		void lease.run(async () => {
 			try {
 				const engine = await deps.engineFor(clone(d.model), purpose);
 				active();
@@ -257,7 +257,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 				if (s.run === run) s.run = undefined;
 				if (!disposed) { s.partial = undefined; notify(s); }
 			}
-		});
+		}).finally(() => lease.end());
 	};
 	const accept = (s: Session, options: PluginAgentInputOptions) => {
 		open();
@@ -271,6 +271,13 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 	};
 	const accepted = (s: Session, options: PluginAgentInputOptions, patch: Partial<PluginAgentRecord>) => {
 		commit(s, { ...s.record, ...patch, error: undefined, acceptedInputs: [...s.record.acceptedInputs, options.requestId] });
+	};
+	// Admission precedes acceptance: a refused run reaches its caller with nothing saved.
+	const startRun = (s: Session, d: PluginAgentDefinition, options: PluginAgentInputOptions, patch: Partial<PluginAgentRecord>, purpose: PluginCallPurpose) => {
+		const lease = beginWork("plugin-task");
+		try { accepted(s, options, patch); }
+		catch (error) { lease.end(); throw error; }
+		launch(s, d, options.purpose ?? purpose, lease);
 	};
 	const service: PluginAgentService = {
 		register(input) {
@@ -316,8 +323,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 			if (!accept(s, options)) return snapshot(s);
 			if (typeof text !== "string" || !text.trim()) throw new Error("Explicit nonempty prompt required");
 			if (s.record.pending.length) throw new Error("External inputs are pending; answer all pending calls before sending");
-			accepted(s, options, { status: "running", messages: [...s.record.messages, { role: "user", content: text, timestamp: Date.now() }] });
-			launch(s, definition(s), options.purpose ?? "user");
+			startRun(s, definition(s), options, { status: "running", messages: [...s.record.messages, { role: "user", content: text, timestamp: Date.now() }] }, "user");
 			return snapshot(s);
 		},
 		async answer(id, toolCallId, value, options) {
@@ -344,8 +350,8 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 			const insertion = messages.findIndex((m, i) => i > start && m.role === "toolResult" && order.indexOf(m.toolCallId) > order.indexOf(toolCallId));
 			messages.splice(insertion < 0 ? messages.length : insertion, 0, { role: "toolResult", toolCallId, toolName: tool.name,
 				content: result.content, details: result.details === undefined ? undefined : JSON.parse(JSON.stringify(result.details)), usage: result.usage, isError: false, timestamp: Date.now() });
-			accepted(s, options, { messages, pending: remaining, status: remaining.length ? "waiting" : "running" });
-			if (!remaining.length) launch(s, d, options.purpose ?? "user");
+			if (remaining.length) accepted(s, options, { messages, pending: remaining, status: "waiting" });
+			else startRun(s, d, options, { messages, pending: remaining, status: "running" }, "user");
 			return snapshot(s);
 		},
 		async run(id, options) {
@@ -354,8 +360,7 @@ export function createPluginAgentService(deps: PluginAgentServiceDeps): PluginAg
 			if (s.record.pending.length) throw new Error("External inputs are pending; answer all pending calls before resuming");
 			modelHistory(s.record.messages); // Reject unsafe side-effect replay before acceptance.
 			if (!s.record.messages.length || s.record.messages.at(-1)?.role === "assistant") throw new Error("No runnable persisted input; use .send(id, explicitPrompt, {requestId, purpose:'background'}) to start a task");
-			accepted(s, options, { status: "running" });
-			launch(s, definition(s), options.purpose ?? "background");
+			startRun(s, definition(s), options, { status: "running" }, "background");
 			return snapshot(s);
 		},
 		abort(id) { open(); cancel(session(id)); },

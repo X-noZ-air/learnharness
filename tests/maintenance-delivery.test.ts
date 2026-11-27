@@ -1,0 +1,251 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { after, afterEach, test } from "node:test";
+import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { LhMessage } from "../src/core/native-messages.ts";
+import { buildSubagentSteer, type SteerMessage } from "../src/core/contracts.ts";
+
+// Install isolation and the private control socket before importing any storage composition.
+const root = path.resolve(import.meta.dirname, "..");
+const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "lh-maintenance-delivery-"));
+process.env.LH_DATA_DIR = path.join(directory, "data");
+process.env.LH_AUTH_FILE = path.join(directory, "auth.json");
+process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "control.sock");
+fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
+const { beginWork, control, maintenanceStatus } = await import("../src/core/maintenance.ts");
+const { listenForMaintenance } = await import("../src/server/maintenance-socket.ts");
+await listenForMaintenance();
+const { stores } = await import("../src/server/stores.ts");
+const { createJobRunner, researchModelOverride } = await import("../src/agent/subagents/runner.ts");
+const { beginTurn, endTurn } = await import("../src/server/turn-liveness.ts");
+const { deliverJobResult, discardChatDeliveries, reconcileUserSteers, registerLiveAgent, settleSteers, setTurnRunner, unregisterLiveAgent } = await import("../src/server/jobs.ts");
+const chatRoute = await import("../app/api/chat/route.ts");
+const steerRoute = await import("../app/api/chats/[id]/steer/route.ts");
+const tokenRoute = await import("../app/api/stt/token/route.ts");
+
+const chats: string[] = [];
+const question = {
+	id: "question-message", role: "assistant", content: [{ type: "toolCall", id: "question-call", name: "quiz", arguments: {} }],
+	api: "openai-completions", provider: "faux", model: "faux", timestamp: 1,
+} as unknown as LhMessage;
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+async function until(predicate: () => boolean): Promise<void> {
+	const end = Date.now() + 8000;
+	while (!predicate()) { assert(Date.now() < end, "fixture condition timed out"); await delay(10); }
+}
+function chat(blocked = false) {
+	const value = stores.chatStore.createChat("Isolated maintenance fixture");
+	chats.push(value.id);
+	if (blocked) stores.chatStore.saveMessages(value.id, [question]);
+	return value;
+}
+function agent() {
+	const handed: LhMessage[] = [];
+	const value = { state: { model: createFauxCore({}).getModel() }, steer: (message: LhMessage) => handed.push(message) };
+	return { handed, value: value as unknown as Parameters<typeof registerLiveAgent>[1] };
+}
+const cliEnvironment = { PATH: process.env.PATH, NODE_ENV: "test" as const, LH_MAINTENANCE_SOCKET: process.env.LH_MAINTENANCE_SOCKET };
+/** The operator command against this process's real control socket. */
+function cli(...args: string[]) {
+	return new Promise<{ code: number; status: ReturnType<typeof maintenanceStatus>; stderr: string }>((resolve) => {
+		execFile(process.execPath, ["scripts/maintenance.mjs", ...args], { cwd: root, env: cliEnvironment }, (error, stdout, stderr) => {
+			resolve({ code: error ? Number(error.code) : 0, status: stdout ? JSON.parse(stdout) : undefined, stderr });
+		});
+	});
+}
+/** A second process on the same profile, as after a restart. Its script reports one value through done(). */
+function freshProcess(script: string, env: Record<string, string>) {
+	const report = "const done = value => process.stdout.write(JSON.stringify(value) + '\\n', () => process.exit(0));";
+	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", report + script], {
+		cwd: root, encoding: "utf8", timeout: 30000,
+		env: { PATH: process.env.PATH, HOME: path.join(directory, "home"), NODE_ENV: "test", LH_AUTH_FILE: process.env.LH_AUTH_FILE, LH_MAINTENANCE_SOCKET: path.join(directory, "unbound.sock"), ...env },
+	});
+	assert.equal(child.status, 0, child.stderr);
+	return JSON.parse(child.stdout.trim().split("\n").at(-1)!);
+}
+const post = (url: string, body: unknown) => new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const steer = (chatId: string, text: string) => steerRoute.POST(
+	post(`http://test/api/chats/${chatId}/steer`, { input: { type: "steer", id: "steer_fixture", text } }), { params: Promise.resolve({ id: chatId }) });
+
+afterEach(() => {
+	if (maintenanceStatus().mode !== "open") control("resume");
+	researchModelOverride.current = undefined;
+	setTurnRunner(async () => 500);
+	for (const id of chats.splice(0)) {
+		unregisterLiveAgent(id); endTurn(id); discardChatDeliveries(id);
+		stores.jobStore.deleteJobsForChat(id); stores.chatStore.deleteChat(id);
+	}
+});
+after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+test("a result finished behind an open question leaves the server ready and is delivered after a restart", async () => {
+	const owner = chat(true);
+	const job = stores.jobStore.createJob({ kind: "research", chatId: owner.id, toolCallId: "behind-question", input: { question: "Fixture question", context: "Fixture context" } });
+	const faux = createFauxCore({});
+	faux.setResponses([fauxAssistantMessage("Fixture brief")]);
+	researchModelOverride.current = { model: faux.getModel(), streamFn: faux.streamSimple };
+	await createJobRunner({ ...stores, deliver: deliverJobResult }).runJob(job.id);
+	assert.equal(stores.jobStore.getJob(job.id)!.status, "done");
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
+
+	const ready = await cli("drain", "--timeout-ms", "3000");
+	assert.equal(ready.code, 0, JSON.stringify(ready));
+	assert.equal(ready.status.drained, true);
+	assert.deepEqual(ready.status.counts, {});
+	const answer = await chatRoute.POST(post("http://test/api/chat", { chatId: owner.id, input: { type: "text", text: "An answer during the hold" } }));
+	assert.equal(answer.status, 503);
+	assert.equal((await answer.json()).code, "maintenance");
+	// The waiting delivery polls for the answer. Polling must not count as work again.
+	await delay(1000);
+	assert.equal((await cli("status", "--generation", ready.status.generation)).status.drained, true);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending", "the marker stays saved");
+
+	const restarted = freshProcess(`
+		const { control } = await import('./src/core/maintenance.ts');
+		const { stores } = await import('./src/server/stores.ts');
+		const { recoverStaleJobs, registerLiveAgent, noteSteersDurable, setTurnRunner, unregisterLiveAgent } = await import('./src/server/jobs.ts');
+		const { beginTurn, endTurn } = await import('./src/server/turn-liveness.ts');
+		const id = ${JSON.stringify(owner.id)};
+		setTurnRunner(async () => 500);
+		recoverStaleJobs();
+		const held = control('drain');
+		control('resume', held.generation);
+		const handed = []; beginTurn(id);
+		registerLiveAgent(id, { steer: marker => handed.push(marker) });
+		const record = stores.chatStore.getChat(id);
+		stores.chatStore.saveMessages(id, [...record.messages, ...handed]);
+		noteSteersDurable(id, handed); unregisterLiveAgent(id); endTurn(id);
+		done({ held, handed: handed.map(marker => marker.id) });
+	`, { LH_DATA_DIR: process.env.LH_DATA_DIR! });
+	assert.equal(restarted.held.drained, true, "the restored marker does not block the next switch either");
+	assert.deepEqual(restarted.held.counts, {});
+	assert.deepEqual(restarted.handed, [`steer_${job.id}`]);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
+	assert.equal(stores.chatStore.getChat(owner.id)!.messages.filter((message) => message.id === `steer_${job.id}`).length, 1);
+	assert.equal((await cli("resume", "--generation", ready.status.generation)).code, 0);
+});
+
+test("a result that is being delivered counts as work and finishes during the hold", async () => {
+	const owner = chat();
+	const job = stores.jobStore.createJob({ kind: "research", chatId: owner.id, toolCallId: "idle-session" });
+	const result = { brief: "Fixture research result", sources: [] };
+	const saved = stores.jobStore.updateJob(job.id, { status: "done", result, activity: "finished", delivery: { kind: "result", status: "pending" } })!;
+	const wakes: SteerMessage[][] = [];
+	setTurnRunner(async (chatId, input) => {
+		const steers = (input as { steers: SteerMessage[] }).steers;
+		wakes.push(steers);
+		stores.chatStore.saveMessages(chatId, [...stores.chatStore.getChat(chatId)!.messages, ...steers]);
+		return 200;
+	});
+	const delivery = deliverJobResult(buildSubagentSteer(saved, result));
+	const held = control("drain");
+	assert.deepEqual(held.counts, { delivery: 1 });
+	assert.equal(held.drained, false);
+	await delivery;
+	assert.equal(wakes.length, 1, "admitted delivery finishes during the hold");
+	await until(() => control("status", held.generation).drained);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
+});
+
+test("a learner message parked behind a question postpones the switch and reaches the next run", async () => {
+	const owner = chat();
+	const live = agent();
+	assert(beginTurn(owner.id));
+	registerLiveAgent(owner.id, live.value);
+	assert.equal((await steer(owner.id, "Accepted before the question")).status, 200);
+	// The run ends at a question before it takes the message.
+	stores.chatStore.saveMessages(owner.id, [question]);
+	unregisterLiveAgent(owner.id); settleSteers(owner.id, [question]); reconcileUserSteers(owner.id, [question]); endTurn(owner.id);
+
+	const postponed = await cli("drain", "--timeout-ms", "3000");
+	assert.equal(postponed.code, 2, JSON.stringify(postponed));
+	assert.deepEqual(postponed.status.reasons, ["parked-learner-steer"]);
+	assert.deepEqual(postponed.status.counts, {});
+	assert.equal(postponed.status.drained, false);
+	assert.equal(postponed.status.mode, "open", "the switch is postponed and the server keeps serving");
+
+	const next = agent();
+	assert(beginTurn(owner.id));
+	registerLiveAgent(owner.id, next.value);
+	assert.equal(next.handed.length, 1);
+	const persisted = [...stores.chatStore.getChat(owner.id)!.messages, ...next.handed];
+	stores.chatStore.saveMessages(owner.id, persisted);
+	unregisterLiveAgent(owner.id); settleSteers(owner.id, persisted); reconcileUserSteers(owner.id, persisted); endTurn(owner.id);
+	assert(JSON.stringify(stores.chatStore.getChat(owner.id)!.messages).includes("Accepted before the question"));
+
+	const ready = await cli("drain", "--timeout-ms", "3000");
+	assert.equal(ready.code, 0, JSON.stringify(ready));
+	assert.deepEqual(ready.status.reasons, []);
+	assert.equal((await cli("resume", "--generation", ready.status.generation)).code, 0);
+});
+
+test("a wait that ends without readiness resumes the server and keeps the distinct exit code", async () => {
+	const lesson = beginWork("main-turn");
+	const postponed = await cli("drain", "--timeout-ms", "300");
+	assert.equal(postponed.code, 2, JSON.stringify(postponed));
+	assert.deepEqual(postponed.status.counts, { "main-turn": 1 });
+	assert.equal(postponed.status.mode, "open");
+	assert.equal(maintenanceStatus().mode, "open");
+	assert.equal((await steer("chat_unknown", "after the postponed switch")).status, 404, "writes reach their handler again");
+
+	const kept = await cli("drain", "--timeout-ms", "0", "--keep-hold");
+	assert.equal(kept.code, 2);
+	assert.equal(kept.status.mode, "draining");
+	assert.equal((await steer("chat_unknown", "during the kept hold")).status, 503);
+	assert.equal((await cli("resume", "--generation", kept.status.generation)).status.mode, "open");
+	lesson.end();
+});
+
+test("a drain whose caller is killed releases the server by itself", async () => {
+	const lesson = beginWork("main-turn");
+	const caller = spawn(process.execPath, ["scripts/maintenance.mjs", "drain", "--timeout-ms", "60000", "--hold-ms", "1200"], { cwd: root, env: cliEnvironment, stdio: "ignore" });
+	try {
+		await until(() => maintenanceStatus().mode === "draining");
+		const { generation } = maintenanceStatus();
+		await delay(2000);
+		assert.equal(maintenanceStatus().generation, generation, "a living caller keeps its hold past the hold period");
+		assert.equal((await steer("chat_unknown", "during the hold")).status, 503);
+		caller.kill("SIGKILL");
+		await once(caller, "exit");
+		assert.equal(maintenanceStatus().mode, "draining");
+		await until(() => maintenanceStatus().mode === "open");
+		assert.notEqual(maintenanceStatus().generation, generation, "the dead caller's readiness is withdrawn");
+		assert.equal((await steer("chat_unknown", "after the caller died")).status, 404, "writes reach their handler again");
+	} finally { caller.kill("SIGKILL"); lesson.end(); }
+});
+
+test("a dictation token stays available during a hold", async (t) => {
+	process.env.DEEPGRAM_API_KEY = "fixture-key";
+	t.after(() => { delete process.env.DEEPGRAM_API_KEY; });
+	t.mock.method(globalThis, "fetch", async () => Response.json({ access_token: "fixture-token" }));
+	const held = control("drain");
+	const response = await tokenRoute.GET();
+	assert.equal(response.status, 200);
+	assert.deepEqual(await response.json(), { token: "fixture-token" });
+	control("resume", held.generation);
+});
+
+test("a failed plugin runtime composition leaves no startup work behind", () => {
+	const code = path.join(root, "core-plugins");
+	const existed = fs.existsSync(code);
+	const misplaced = path.join(code, `profile-inside-code-${process.pid}`);
+	try {
+		const outcome = freshProcess(`
+			const { getPluginHost } = await import('./src/server/plugins.ts');
+			const { maintenanceStatus } = await import('./src/core/maintenance.ts');
+			const failures = [];
+			for (let attempt = 0; attempt < 2; attempt++) await getPluginHost().then(() => failures.push('started'), error => failures.push(error.message));
+			done({ failures, counts: maintenanceStatus().counts });
+		`, { LH_DATA_DIR: misplaced });
+		const refusal = "Core plugin data must be outside app-owned code";
+		assert.deepEqual(outcome.failures, [refusal, refusal]);
+		assert.deepEqual(outcome.counts, {});
+	} finally {
+		fs.rmSync(misplaced, { recursive: true, force: true });
+		if (!existed) fs.rmSync(code, { recursive: true, force: true });
+	}
+});

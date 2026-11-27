@@ -85,13 +85,17 @@ export async function fixture() {
 		assert.equal(result.code ?? 0, expected, result.stderr + result.stdout);
 		return JSON.parse(result.stdout);
 	}
+	/** The operator command as a live process, for a caller that dies while it waits. */
+	function spawnCli(op, args = []) {
+		return spawn(process.execPath, ["scripts/maintenance.mjs", op, "--socket", socket, ...args], { cwd: root, stdio: "ignore" });
+	}
 	async function api(url, body) {
 		const res = await fetch(origin + "/api/" + url, body === undefined ? {} : { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
 		assert.ok(res.ok, res.status + " " + (res.ok ? "" : (await res.text()).slice(0, 500)));
 		return res.json();
 	}
 	function releaseModel() { barrier?.resolve(); barrier = undefined; }
-	return { home, data, origin, start, stop, cli, api, logs: () => logs,
+	return { home, data, origin, start, stop, cli, spawnCli, api, logs: () => logs,
 		holdModel() { barrier = Promise.withResolvers(); }, releaseModel,
 		waitForModel: () => until(() => waiting > 0, "local model request"),
 		async close() { releaseModel(); try { await stop(); } finally { model.closeAllConnections(); await new Promise(resolve => model.close(resolve)); await fs.rm(home, { recursive: true, force: true }); } },

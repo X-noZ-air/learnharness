@@ -1,4 +1,4 @@
-import { beginWork } from "../core/maintenance.ts";
+import { beginWork, type Lease } from "../core/maintenance.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PATHS, GRAPH_FORMAT_FILE, RENDER_SETTINGS_FILE } from "../../config.ts";
@@ -42,6 +42,10 @@ function runtime(): Runtime {
 	const global = globalThis as typeof globalThis & PluginGlobal;
 	if (global.__lhPlugins) return global.__lhPlugins;
 	const startup = beginWork("startup");
+	try { return global.__lhPlugins = compose(startup); }
+	catch (error) { startup.end(); throw error; }
+}
+function compose(startup: Lease): Runtime {
 	const learning = createPluginLearningData({
 		directory: PATHS.data, chatStore: stores.chatStore, graphStore: stores.graphStore,
 		isBusy: isTurnRunning, isCompacting: compactionInFlight,
@@ -101,8 +105,7 @@ function runtime(): Runtime {
 		}
 		await host.initialize();
 	})).finally(() => startup.end());
-	global.__lhPlugins = { host, ready };
-	return global.__lhPlugins;
+	return { host, ready };
 }
 
 export async function initializePlugins(): Promise<void> { await runtime().ready; }

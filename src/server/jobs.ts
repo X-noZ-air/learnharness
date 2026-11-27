@@ -1,4 +1,4 @@
-import { admissionClosed, beginWork, tracked } from "../core/maintenance.ts";
+import { admissionClosed, beginWork, canStartWork, refuseDrainWhile, tracked, whenOpen, type Lease } from "../core/maintenance.ts";
 /**
  * THE WAKE PIPELINE (contracts.ts "THE ASYNC PROTOCOL" §4) — server-side
  * steer delivery for finished sub-agent jobs. Wave C (2026-09-26):
@@ -91,7 +91,6 @@ export function setPluginJobRecovery(recover: PluginJobRecovery): void {
 }
 
 interface QueuedSteer {
-	lease: ReturnType<typeof beginWork>;
 	steer: SteerMessage;
 	promise: Promise<void>;
 	/** Wake cargo remains owned here, but must not steer into its own run. */
@@ -244,11 +243,7 @@ function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
 	const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
 	// Recovery/registration may own an entry with no waiting caller.
 	void promise.catch(() => undefined);
-	const lease = beginWork("delivery");
-	const entry: QueuedSteer = { steer, promise, lease,
-		resolve: () => { lease.end(); resolve(); },
-		reject: error => { lease.end(); reject(error); },
-	};
+	const entry: QueuedSteer = { steer, promise, resolve, reject };
 	queue.push(entry);
 	state().queues.set(chatId, queue);
 	return entry;
@@ -493,11 +488,14 @@ function chatIdOf(steer: SteerMessage): string {
  * fires ONE turn carrying every pending marker as its input appends.
  */
 function pump(chatId: string): Promise<void> {
-	const entry = state().queues.get(chatId)?.[0];
-	if (!entry || !chatId || state().pumping.has(chatId)) return Promise.resolve();
-	return entry.lease.run(() => tracked("delivery", () => pumpQueue(chatId)));
+	const s = state();
+	if (!chatId || !s.queues.get(chatId)?.length || s.pumping.has(chatId)) return Promise.resolve();
+	// A marker outlives a hold its caller does not own. Delivery continues when it opens.
+	if (!canStartWork()) { whenOpen(() => void pump(chatId)); return Promise.resolve(); }
+	const lease = beginWork("delivery");
+	return lease.run(() => pumpQueue(chatId, lease)).finally(() => lease.end());
 }
-async function pumpQueue(chatId: string): Promise<void> {
+async function pumpQueue(chatId: string, lease: Lease): Promise<void> {
 	const s = state();
 	s.pumping.add(chatId);
 	let parked = false;
@@ -548,7 +546,7 @@ async function pumpQueue(chatId: string): Promise<void> {
 				}
 				if (handable.length > 0) {
 					await delay(POLL_MS);
-					await waitForIdle(chatId);
+					if (!(await waitForIdle(chatId, lease))) break;
 					continue;
 				}
 			}
@@ -556,7 +554,7 @@ async function pumpQueue(chatId: string): Promise<void> {
 			// VEHICLE 2 — THE IDLE WAKE: one server-side turn carrying EVERY
 			// pending marker as its input appends (the handler write-ahead
 			// persists them under the wake's own turn claim).
-			await waitForIdle(chatId);
+			if (!(await waitForIdle(chatId, lease))) break;
 
 			// Re-fetch AFTER the gates open — waitForIdle can wait out a quiz
 			// answer (minutes), and sending the pre-wait snapshot would clobber
@@ -628,6 +626,10 @@ async function pumpQueue(chatId: string): Promise<void> {
 				// or settlement. HTTP 200 alone is not a durable marker receipt.
 			}
 		}
+		// Admission closed while only the learner could continue. The markers
+		// stay queued and saved, and delivery continues when it opens.
+		parked = true;
+		whenOpen(() => void pump(chatId));
 	} finally {
 		s.pumping.delete(chatId);
 		// A steer may have arrived between the last check and the finally —
@@ -638,6 +640,13 @@ async function pumpQueue(chatId: string): Promise<void> {
 		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some((e) => e.handedTo === undefined && !e.waking && !e.deferred)) void pump(chatId);
 	}
 }
+
+// An accepted learner steer exists only in this process until a run saves it.
+// With no run to carry it, a stop would lose it.
+refuseDrainWhile("parked-learner-steer", () => {
+	const s = state();
+	return [...s.userSteers.keys()].some((chatId) => !s.liveAgents.has(chatId));
+});
 
 // Connection changes are the only wake for consent-deferred automatic work.
 // No retry timer, inference, or API-key fallback is started while consent is off.
@@ -724,13 +733,19 @@ function restorePendingDeliveries(chatId: string): void {
  * arrives as its tool result, and no turn may run in the window). Poll;
  * the learner may take arbitrarily long to answer, and that is correct —
  * the steer fires right after their answer turn completes.
+ *
+ * While only the learner can continue, the pump stops counting as work:
+ * the markers are saved and would be restored by a restart. It counts
+ * again before it proceeds. False means admission closed in the meantime.
  */
-async function waitForIdle(chatId: string): Promise<void> {
+async function waitForIdle(chatId: string, lease: Lease): Promise<boolean> {
 	for (;;) {
 		const record = stores.chatStore.getChat(chatId);
-		if (!record || !(state().queues.get(chatId) ?? []).some((entry) => !entry.waking && !entry.deferred && !entry.handedTo)) return;
-		const blocked = isTurnRunning(chatId) || hasUnresolvedQuestion(record.messages);
+		if (!record || !(state().queues.get(chatId) ?? []).some((entry) => !entry.waking && !entry.deferred && !entry.handedTo)) return lease.renew();
+		const running = isTurnRunning(chatId);
+		const blocked = running || hasUnresolvedQuestion(record.messages);
 		if (!blocked) {
+			if (!lease.renew()) return false;
 			await delay(GRACE_MS);
 			const recheck = stores.chatStore.getChat(chatId);
 			if (
@@ -738,9 +753,9 @@ async function waitForIdle(chatId: string): Promise<void> {
 				recheck &&
 				!hasUnresolvedQuestion(recheck.messages)
 			) {
-				return;
+				return true;
 			}
-		}
+		} else if (!running) lease.end();
 		await delay(POLL_MS);
 	}
 }
