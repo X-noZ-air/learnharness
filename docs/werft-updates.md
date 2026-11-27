@@ -4,13 +4,31 @@
 Feature branches target `werft` through a pull request and the normal CI matrix.
 The upstream notification jobs are restricted to the original repository.
 
+## Trigger contract
+
+The Werft host updater owns the production polling timer. Each tick sends an
+authenticated `workflow_dispatch` request to **Werft upstream updates** on the
+default branch `werft`. Use an identity with Actions write access to the fork
+and omit the replay inputs.
+
+```text
+POST /repos/X-noZ-air/learnharness/actions/workflows/werft-updates.yml/dispatches
+{"ref":"werft","return_run_details":true}
+```
+
+The response identifies the Actions run. Use the run result and the journal's
+`last_successful_poll_at` to verify a completed poll.
+
+The workflow's GitHub cron at minutes 7, 22, 37, and 52 UTC is a secondary
+trigger. To opt in on a fork, open **Actions**, select **Werft upstream updates**,
+and click **Enable workflow** if GitHub offers it. The host timer is sufficient
+for regular polling.
+
 ## Update and branch protection
 
-**Werft upstream updates** runs at minutes 7, 22, 37, and 52 UTC and accepts manual
-dispatches. It starts at upstream v0.7.0, lists published stable releases, pins
-their GitHub release IDs and peeled commit SHAs, and considers them in version
-order. GitHub can delay or drop scheduled runs. The next poll looks for the
-entire backlog.
+The poller starts at upstream v0.7.0, lists published stable releases, pins
+their GitHub release IDs and peeled commit SHAs, and processes them in version
+order. Each poll looks for the entire backlog.
 
 Each release gets one integration branch and one pull request. The branch is
 built as a two-parent merge of the current base and the upstream tag. The poller
