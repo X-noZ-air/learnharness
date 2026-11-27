@@ -12,13 +12,17 @@ release workflow, verifier and source offer were added on 2026-11-26.
 
 ## Release triggers
 
-A push to the fork's `werft` branch builds the pushed commit. Update automation
-that merges using the built-in GitHub token dispatches
-`.github/workflows/werft-release.yml` on `werft` with the full merged head in
-`merge_sha`. Dispatch while that commit is the branch tip, because GitHub signs
-the dispatch commit. The optional `upstream_tag` defaults to the commit's
-package version with a `v` prefix. The job checks that the tag is a published
-stable release, matches the package version, and is an ancestor of the build.
+Both triggers build the `werft` commit that GitHub assigns to the run. A push
+builds the pushed commit. The M2.1 update automation dispatches
+`.github/workflows/werft-release.yml` on `werft` after merging with the built-in
+GitHub token. It supplies the full merged commit as `merge_sha` and can supply
+`upstream_tag` to identify the upstream version at that merge.
+
+The dispatch accepts the run commit itself or an ancestor as `merge_sha`.
+When `werft` has advanced, the newer run commit covers the merge. For either
+trigger, the workflow derives the upstream tag from the run commit's package
+version, checks that the tag is a published stable release whose commit is
+contained in the run commit, and records both commits in the release metadata.
 
 Release runs queue and skip commits with a published release. The workflow
 allocates `werft-<major>.<minor>.<patch>.<revision>` from existing tags and
@@ -29,11 +33,11 @@ retry. Select published server releases by their versioned `werft-*` tag.
 ## Verify and run
 
 Run the trusted verifier with Python 3.12+, GNU coreutils, curl and GitHub CLI
-with artifact-attestation support. The expected fork SHA comes from the checked
-merge candidate. The destination's parent must exist. The verifier checks the
-public release, tag, SHA-256, source commit, GitHub provenance for the fixed
-workflow, commit and hosted runner, and the exact version and module ABI of
-the supplied Node binary before it stages the server.
+with artifact-attestation support. Use the verified release workflow's run
+commit as the expected fork SHA. The destination's parent must exist. The
+verifier checks the public release, tag, SHA-256, source commit, GitHub
+provenance for the checksum list, and the exact version and module ABI of the
+supplied Node binary before it stages the server.
 
 ```sh
 python3 /trusted/scripts/verify_werft_release.py \
@@ -62,12 +66,11 @@ the core-plugin projects, local adaptations, build and installation scripts,
 lockfiles and notices.
 
 `learnharness-third-party-notice.json` is available on the release page and
-inside the standalone archive. The build generates it from the payload,
-installed package metadata and lockfiles. It lists shipped npm packages and
-installed production dependencies that can be bundled into JavaScript, with
-the available license, source repository, revision and versioned package
-distribution. Packages with incomplete metadata are marked. Bundled
-attribution files list additional vendored assets.
+inside the standalone archive. It lists the packages physically present in
+the payload with their available version, license and source information
+from the shipped package metadata. Incomplete metadata is marked. The client
+bundles are built from the dependencies pinned by the commit's lockfile,
+which is part of the source archive.
 
 Extract the Git archive and run these commands from its root with the release's
 Node version. The lockfiles identify the original registry packages used by

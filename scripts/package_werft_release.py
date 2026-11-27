@@ -33,7 +33,7 @@ def main():
 
     assets.mkdir()
     shutil.copyfile("LICENSE", standalone / "LICENSE")
-    (assets / NOTICE).write_text(generate_notice(Path.cwd(), standalone))
+    (assets / NOTICE).write_text(generate_notice(standalone))
     shutil.copyfile(assets / NOTICE, standalone / NOTICE)
     subprocess.run([
         "tar", "--create", "--gzip", "--hard-dereference", "--file", assets / RUNTIME,

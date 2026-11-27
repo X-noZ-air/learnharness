@@ -14,7 +14,7 @@ import { LhMark } from "@/components/lh-mark";
 import { BrailleSpinner } from "@/components/braille-spinner";
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
 import { SettingsDialogProvider, useSettingsDialog } from "@/components/settings/settings-dialog.tsx";
-import { hasSourceOffer, SourceOffer } from "@/components/source-offer";
+import { SourceOffer } from "@/components/source-offer";
 import { Hint } from "@/components/ui/hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1089,7 +1089,7 @@ function SessionsSidebar() {
 								Settings
 							</button>
 						</Hint>
-						{hasSourceOffer && <div className="px-2 pt-1"><SourceOffer /></div>}
+						<SourceOffer />
 					</div>
 				</div>
 

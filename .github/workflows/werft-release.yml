@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       merge_sha:
-        description: Full commit SHA at the tip of werft when dispatched
+        description: Full SHA of the merged commit contained in werft
         required: true
         type: string
       upstream_tag:
-        description: Stable upstream release tag, e.g. v0.7.0
+        description: Stable upstream release tag at merge_sha, e.g. v0.7.0
         required: false
         type: string
 
@@ -51,16 +51,9 @@ jobs:
           MERGE_SHA: ${{ inputs.merge_sha }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            test "$MERGE_SHA" = "$GITHUB_SHA"
-          fi
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          package_version=$(jq -er .version package.json)
-          UPSTREAM_TAG=${UPSTREAM_TAG:-v$package_version}
-          [[ "$UPSTREAM_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$package_version" = "${UPSTREAM_TAG#v}"
+          UPSTREAM_TAG=$(bash scripts/werft-release-target.sh)
 
-          prefix="werft-$package_version."
+          prefix="werft-${UPSTREAM_TAG#v}."
           published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "$prefix")
           if [[ -n "$published" ]]; then
             echo "Commit $GITHUB_SHA is already published as $published"
@@ -173,7 +166,7 @@ jobs:
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         id: attest
         with:
-          subject-path: ${{ runner.temp }}/release/*
+          subject-path: ${{ runner.temp }}/release/SHA256SUMS
       - name: Verify provenance, upload a unique draft, and verify the draft download
         env:
           GH_TOKEN: ${{ github.token }}

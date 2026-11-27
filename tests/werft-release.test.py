@@ -38,6 +38,14 @@ class ReleaseTests(unittest.TestCase):
         self.commit = "a" * 40
         self.tag = "werft-0.7.0.1"
 
+    def git(self, *args):
+        return subprocess.check_output(["git", *args], cwd=self.work, stderr=subprocess.DEVNULL, text=True).strip()
+
+    def git_commit(self, message):
+        self.git("add", "package.json")
+        self.git("-c", "user.name=Release Test", "-c", "user.email=release@example.test", "commit", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
     def make_archive(self, extra=()):
         with tarfile.open(self.artifact, "w:gz") as archive:
             for info, data in [
@@ -110,12 +118,12 @@ class ReleaseTests(unittest.TestCase):
                 verifier.verify_assets(self.work, self.tag, self.commit)
             attest.assert_not_called()
 
-    def test_assets_bind_checksums_and_runtime_to_the_source_commit(self):
+    def test_assets_attest_only_the_checksums_for_the_source_commit(self):
         self.make_release()
         with patch.object(verifier.subprocess, "run") as attest:
             metadata = verifier.verify_assets(self.work, self.tag, self.commit)
             subjects = [call.args[0][3].name for call in attest.call_args_list]
-            self.assertEqual(subjects, [verifier.SUMS, verifier.RUNTIME])
+            self.assertEqual(subjects, [verifier.SUMS])
         self.assertEqual(metadata["fork_commit"], self.commit)
 
     def test_commit_and_signer_are_passed_to_the_attestation_verifier(self):
@@ -174,24 +182,29 @@ class ReleaseTests(unittest.TestCase):
         standalone.parent.mkdir()
         verifier.unpack(self.artifact, standalone, verifier.measure(self.artifact))
         (self.work / "LICENSE").write_text("fixture license")
+        (self.work / "package.json").write_text('{"version": "0.7.0"}')
         (standalone / "package.json").write_text('{"version": "0.7.0"}')
         (standalone / "node_modules/test/package.json").write_text(json.dumps({
-            "name": "test", "version": "4.5.7", "repository": "https://example.test/test", "gitHead": self.commit,
+            "name": "test", "version": "4.5.7", "license": "MIT",
+            "repository": "https://example.test/test", "gitHead": self.commit,
         }))
         (self.work / "package-lock.json").write_text(json.dumps({"packages": {
-            "node_modules/test": {"version": "4.5.7", "license": "MIT",
-                                  "resolved": "https://example.test/test-4.5.7.tgz"},
+            "node_modules/test": {"version": "0.0.1", "license": "ISC"},
+            "node_modules/test-unknown": {"version": "0.0.1"},
+            "node_modules/desktop-only": {"version": "0.0.1"},
         }}))
+        desktop_only = self.work / "node_modules/desktop-only"
+        desktop_only.mkdir(parents=True)
+        (desktop_only / "package.json").write_text('{"name": "desktop-only", "version": "0.0.1"}')
         (standalone / "node_modules/test-unknown").mkdir()
         (standalone / "node_modules/test-unknown/index.js").touch()
-        def git(*args):
-            return subprocess.check_output(["git", *args], cwd=self.work, stderr=subprocess.DEVNULL, text=True)
-
-        git("init")
-        git("add", "LICENSE", "package-lock.json")
-        git("-c", "user.name=Release Test", "-c", "user.email=release@example.test",
-            "commit", "-m", "Package fixture")
-        commit = git("rev-parse", "HEAD").strip()
+        (standalone / "node_modules/test-alias").symlink_to("test")
+        nested = standalone / "node_modules/test/node_modules/@scope/child"
+        nested.mkdir(parents=True)
+        (nested / "package.json").write_text('{"name": "@scope/child", "version": "2.0.0"}')
+        self.git("init")
+        self.git("add", "LICENSE", "package-lock.json")
+        commit = self.git_commit("Package fixture")
         node_version = subprocess.check_output(["node", "-p", "process.versions.node"], text=True).strip()
 
         assets = self.work / "assets"
@@ -202,13 +215,48 @@ class ReleaseTests(unittest.TestCase):
                        })
         notice = (assets / verifier.NOTICE).read_bytes()
         self.assertEqual((self.destination / verifier.NOTICE).read_bytes(), notice)
-        components = {item["name"]: item for item in json.loads(notice)["components"]}
+        inventory = json.loads(notice)
+        self.assertCountEqual([item["name"] for item in inventory["components"]], ["test", "test-unknown", "@scope/child"])
+        components = {item["name"]: item for item in inventory["components"]}
+        self.assertIn("lockfile", inventory["client_bundles"])
+        self.assertEqual(components["@scope/child"]["version"], "2.0.0")
         self.assertEqual(components["test"]["version"], "4.5.7")
         self.assertEqual(components["test"]["license"], "MIT")
         self.assertEqual(components["test"]["source_repository"], "https://example.test/test")
         self.assertEqual(components["test"]["source_revision"], self.commit)
         self.assertFalse(components["test"]["missing_metadata"])
         self.assertIn("version", components["test-unknown"]["missing_metadata"])
+
+    def test_release_target_builds_the_run_commit_after_werft_advances(self):
+        self.git("init")
+        package = self.work / "package.json"
+        package.write_text('{"version": "0.7.0"}')
+        merged = self.git_commit("Merge the stable release")
+        package.write_text('{"version": "0.8.0"}')
+        run_commit = self.git_commit("Advance werft to a newer stable release")
+        package.write_text('{"version": "0.9.0"}')
+        future_commit = self.git_commit("Commit outside the run history")
+        self.git("checkout", "--detach", run_commit)
+
+        def target(event, merge_sha="", upstream_tag=""):
+            return subprocess.run(["bash", ROOT / "scripts/werft-release-target.sh"], cwd=self.work,
+                                  capture_output=True, text=True, env={
+                                      **os.environ, "GITHUB_EVENT_NAME": event, "GITHUB_SHA": run_commit,
+                                      "MERGE_SHA": merge_sha, "UPSTREAM_TAG": upstream_tag,
+                                  })
+
+        for event, merge_sha, upstream_tag in [
+            ("push", "", ""), ("workflow_dispatch", merged, "v0.7.0"),
+            ("workflow_dispatch", run_commit, ""),
+        ]:
+            with self.subTest(event=event, merge_sha=merge_sha):
+                result = target(event, merge_sha, upstream_tag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "v0.8.0")
+
+        result = target("workflow_dispatch", future_commit, "v0.9.0")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("contained", result.stderr)
 
 
 if __name__ == "__main__":

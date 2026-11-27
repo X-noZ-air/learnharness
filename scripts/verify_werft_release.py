@@ -112,13 +112,12 @@ def verify_assets(assets, tag, commit):
     expected = [f"{sha256(assets / name)}  {name}" for name in FILES]
     require(lines == expected, "SHA-256 mismatch")
 
-    for name in (SUMS, RUNTIME):
-        subprocess.run([
-            "gh", "attestation", "verify", assets / name, "--bundle", assets / PROVENANCE,
-            "--repo", REPO, "--cert-identity", SIGNER,
-            "--source-ref", "refs/heads/werft", "--source-digest", commit,
-            "--signer-digest", commit, "--deny-self-hosted-runners",
-        ], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([
+        "gh", "attestation", "verify", assets / SUMS, "--bundle", assets / PROVENANCE,
+        "--repo", REPO, "--cert-identity", SIGNER,
+        "--source-ref", "refs/heads/werft", "--source-digest", commit,
+        "--signer-digest", commit, "--deny-self-hosted-runners",
+    ], check=True, stdout=subprocess.DEVNULL)
 
     metadata = json.loads((assets / METADATA).read_text())
     require(metadata["release_tag"] == tag and metadata["fork_commit"] == commit, "release identity mismatch")
