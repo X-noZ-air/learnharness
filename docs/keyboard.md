@@ -131,11 +131,12 @@ submission conventions above.
 
 ## Search and menus
 
-- **Sessions search (Mod+Shift+F):** opens the inline sidebar if needed and focuses
-  its search field. In an open drawer, use its search field directly because the
-  modal blocks the global search shortcut. **↑/↓** walk the filtered sessions with
-  wrap. **Enter** opens the walked row or the first match. **Esc** keeps the query
-  and leaves the inline search field or [dismisses the drawer](#focus-and-esc).
+- **Sessions search (Mod+Shift+F):** opens the sidebar if needed and moves focus
+  to search when the field is available. In an open drawer, use its search field
+  directly because the modal blocks the global search shortcut. **↑/↓** walk the
+  filtered sessions with wrap. **Enter** opens the walked row or the first match.
+  **Esc** keeps the query and leaves the inline search field or [dismisses the
+  drawer](#focus-and-esc).
 - **Model search menus:** focus stays in search. **↑/↓** walk filtered results
   without wrap; the first ↓ starts at the first result, the first ↑ at the last.
   **Enter** picks the walked result or the first result. Editing the query resets
