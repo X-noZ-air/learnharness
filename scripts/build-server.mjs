@@ -68,6 +68,7 @@ for (const secret of ["auth.json", ...subscriptionSecrets, ".env", ".env.local"]
 // Copy it explicitly: external plugin entries must be loaded by native Node,
 // not interpreted as build-time imports by webpack/Turbopack.
 copyTree(path.join(ROOT, "scripts", "plugin-loader.cjs"), path.join(STANDALONE, "scripts", "plugin-loader.cjs"));
+copyTree(path.join(ROOT, "scripts", "maintenance.mjs"), path.join(STANDALONE, "scripts", "maintenance.mjs"));
 try {
 	const core = path.join(ROOT, "core-plugins"), packagedCore = path.join(STANDALONE, "core-plugins");
 	validateCorePackages(ROOT, core);

@@ -198,11 +198,11 @@ function activate(ctx) {
       if (current !== last) { last = current; notify('batch-changed'); }
     });
     observers.set(taskId, unsubscribe);
-    ctx.workers.wait(taskId, ctx.signal).then(() => {
+    ctx.trackWork(() => ctx.workers.wait(taskId, ctx.signal).then(() => {
       if (disposed || ctx.signal.aborted) return;
       applyOutcome(batchId, chunkId, ctx.workers.get(taskId));
       observers.get(taskId)?.(); observers.delete(taskId);
-    }).catch(error => { if (!disposed && !ctx.signal.aborted) { applicationErrors.set(chunkId, error.message); notify('batch-changed'); } });
+    }).catch(error => { if (!disposed && !ctx.signal.aborted) { applicationErrors.set(chunkId, error.message); notify('batch-changed'); } }));
   }
   function reconcile() {
     alive(); const tasks = ctx.workers.list();
@@ -449,7 +449,7 @@ function activate(ctx) {
     } catch (error) { if (newSource && !Object.hasOwn(store.get().fileSources ?? {}, plan.sourceId)) store.removeSource(plan.sourceId); throw error; }
     preflights.delete(preflightId);
     // Dispatch is backend-owned; navigation cannot stop accepted work.
-    queueMicrotask(() => {
+    ctx.trackWork(() => Promise.resolve().then(() => {
       const chunks = store.get().batches.find(b => b.id === batchId).chunks;
       chunks.forEach((chunk, index) => {
         if (disposed || ctx.signal.aborted) return;
@@ -467,7 +467,7 @@ function activate(ctx) {
           else { try { change(s => { const b = s.batches.find(b => b.id === batchId), c = b.chunks.find(c => c.id === chunk.id); c.status = 'failed'; c.error = error.message; finishBatch(s, b); }, 'batch-changed'); } catch (failure) { applicationErrors.set(chunk.id, failure.message); } }
         }
       });
-    });
+    }));
     return view();
   });
   register('cancel-generation', ({ batchId }) => {

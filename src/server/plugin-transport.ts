@@ -1,3 +1,4 @@
+import { admissionClosed, drainReadinessReported, maintenanceRefusal, mutation, trackedCancellation } from "../core/maintenance.ts";
 import { isPluginHostError } from "./plugin-host.ts";
 import { apiRequestRefusal } from "./desktop-access.ts";
 import type { PluginFrontendContext, PluginInfo } from "../core/plugins.ts";
@@ -13,6 +14,11 @@ export interface PluginTransportHost {
 	asset(id: string, segments: string[]): { bytes: Uint8Array; contentType: string };
 }
 class InputError extends Error {}
+const coreReads: Readonly<Record<string, readonly string[]>> = {
+	flashcards: ["get-state", "get-catalog", "open-file-deck"],
+	"drawing-pad": ["get-settings", "get-session-poses"],
+	"rich-code-blocks": ["get-settings"],
+};
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 async function objectBody(request: Request): Promise<Record<string, unknown>> {
 	let body: unknown;
@@ -20,7 +26,11 @@ async function objectBody(request: Request): Promise<Record<string, unknown>> {
 	if (!body || typeof body !== "object" || Array.isArray(body)) throw new InputError("Expected a JSON object");
 	return body as Record<string, unknown>;
 }
-export function createPluginTransport(deps: { getHost(): Promise<PluginTransportHost>; directory: string }) {
+export function createPluginTransport(deps: {
+	getHost(): Promise<PluginTransportHost>;
+	getActiveHost?(): PluginTransportHost | undefined;
+	directory: string;
+}) {
 	const guarded = async (handle: () => Promise<Response>) => {
 		try { return await handle(); }
 		catch (error) {
@@ -28,9 +38,10 @@ export function createPluginTransport(deps: { getHost(): Promise<PluginTransport
 			return json({ error: error instanceof Error || isPluginHostError(error) ? error.message : "Plugin request failed" }, status);
 		}
 	};
-	const catalog = (host: PluginTransportHost) => ({ plugins: host.list(), directory: deps.directory, conflicts: host.conflicts() });
+	const catalog = (host: PluginTransportHost | undefined) => ({ plugins: host?.list() ?? [], directory: deps.directory, conflicts: host?.conflicts() ?? [] });
+	const readHost = () => admissionClosed() ? deps.getActiveHost?.() : deps.getHost();
 	return {
-		list: () => guarded(async () => json(catalog(await deps.getHost()))),
+		list: () => guarded(async () => json(catalog(await readHost()))),
 		refresh: (request: Request) => guarded(async () => {
 			const body = await objectBody(request);
 			if (body.action !== "refresh") throw new InputError("Expected action: refresh");
@@ -45,15 +56,28 @@ export function createPluginTransport(deps: { getHost(): Promise<PluginTransport
 			await host.setEnabled(id, body.enabled);
 			return json(catalog(host));
 		}),
-		call: (id: string, request: Request) => guarded(async () => {
-			const body = await objectBody(request);
-			if (typeof body.operation !== "string" || !body.operation.trim()) throw new InputError("operation must be a nonempty string");
-			const host = await deps.getHost();
-			return json({ result: (await host.call(id, body.operation, body.input)) ?? null });
-		}),
+		call(id: string, request: Request) {
+			const handle = (continuationOnly: boolean) => guarded(async () => {
+				const { operation, input } = await objectBody(request);
+				if (typeof operation !== "string" || !operation.trim()) throw new InputError("operation must be a nonempty string");
+				if (!continuationOnly) return json({ result: (await (await deps.getHost()).call(id, operation, input)) ?? null });
+				const read = Object.hasOwn(coreReads, id) && coreReads[id]?.includes(operation);
+				const cancel = id === "flashcards" && operation === "cancel-generation";
+				if (!read && !cancel) return maintenanceRefusal();
+				const host = deps.getActiveHost?.();
+				if (!host?.list().some(plugin => plugin.id === id && plugin.origin === "core" && plugin.status === "active"))
+					return json({ error: "Plugin is disabled or unavailable" }, 409);
+				if (cancel && drainReadinessReported()) return json({ result: (await host.call(id, "get-state", undefined)) ?? null });
+				const invoke = () => host.call(id, operation, input);
+				return json({ result: ((cancel ? await trackedCancellation(invoke) : await invoke()) ?? null) });
+			});
+			return admissionClosed() ? handle(true) : mutation(() => handle(false))();
+		},
 		convertDocument: (id: string, request: Request) => guarded(async () => json(await (await deps.getHost()).convertDocument(id, request))),
 		asset: (id: string, segments: string[]) => guarded(async () => {
-			const { bytes, contentType } = (await deps.getHost()).asset(id, segments);
+			const host = await readHost();
+			if (!host) return json({ error: "Plugin asset is unavailable" }, 404);
+			const { bytes, contentType } = host.asset(id, segments);
 			return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 		}),
 	};
@@ -72,7 +96,7 @@ export function createPluginDocumentRoute(transport: Pick<ReturnType<typeof crea
 		async POST(request: Request, context: { params: Promise<{ id: string }> }) {
 			const denied = refusal(request);
 			if (denied) return denied;
-			return transport.convertDocument((await context.params).id, request);
+			return mutation(async () => transport.convertDocument((await context.params).id, request), "upload")();
 		},
 		OPTIONS: (request: Request) => refusal(request) ?? new Response(null, { status: 204, headers: { Allow: "OPTIONS, POST" } }),
 		GET: unsupported, HEAD: unsupported, PUT: unsupported, PATCH: unsupported, DELETE: unsupported,

@@ -25,6 +25,8 @@ Choose **Practice** for problems rather than a lesson. Start from selected graph
 
 If a session fails to start, submit the retained draft again to retry. If preparing a message fails in an active session, you can scroll a long error above the editor and use **Send** again after addressing it.
 
+If you see **Update in progress. Try again shortly.** when dismissing a quiz question or practice problem, retry after the update. The prompt and any reading notes stay visible.
+
 Sessions retain earlier messages when context is compacted. Open the same server from another browser to resume the same session. See [network access and its security requirements](development.md#other-devices-on-your-network).
 
 In a browser narrower than 640 CSS pixels, **Open sidebar** opens the session list over the page. Use **Close sidebar** or tap outside the drawer to dismiss it. The drawer starts closed on reload and closes when you open a session or navigate away. At 640 CSS pixels or wider, the browser uses the inline sidebar and restores its saved open or closed preference. See [drawer keyboard controls](keyboard.md#focus-and-esc) and [mobile browser coverage](development.md#narrow-layout).

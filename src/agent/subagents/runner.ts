@@ -1,3 +1,4 @@
+import { tracked } from "../../core/maintenance.ts";
 import type { PiEngine } from "../models.ts";
 import type { SearchProvider } from "../../core/search.ts";
 import {
@@ -547,7 +548,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		}
 	}
 
-	return { runJob };
+	return { runJob: (id, input) => tracked("job", () => runJob(id, input)) };
 }
 
 // ─── module-level pure helpers ──────────────────────────────────────────────

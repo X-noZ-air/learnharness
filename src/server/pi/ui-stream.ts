@@ -1,3 +1,4 @@
+import { beginWork } from "../../core/maintenance.ts";
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 import type { ChatGPTRequestCycle } from "../../agent/chatgpt-request-cycle.ts";
@@ -128,6 +129,12 @@ export interface PiTurnHandle {
 }
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
+	const lease = beginWork("main-turn");
+	try { return lease.run(() => startPiTurn(spec, () => lease.end())); }
+	catch (error) { lease.end(); throw error; }
+}
+
+function startPiTurn(spec: PiTurnSpec, finish: () => void): PiTurnHandle {
 	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100, requestCycle } = spec;
 	const uniquifier = usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined;
 	const questions = pluginQuestionLedgerFor(agent);
@@ -305,7 +312,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 			settleWith();
 			closeAll();
 		}
-	})();
+	})().finally(finish);
 
 	return {
 		subscribe() {

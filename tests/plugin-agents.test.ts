@@ -1,3 +1,4 @@
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { Type } from "typebox";
 import type { AssistantMessage, JsonObject, TranscriptContext } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { createPluginAgentService, type PluginAgentServiceDeps } from "../src/agent/plugin-agents.ts";
+import { control, maintenanceStatus, MaintenanceError } from "../src/core/maintenance.ts";
 import { createPluginAgentRecordStore } from "../src/store/plugin-agent-records.ts";
 import type { PluginAgentDefinition, PluginAgentRecord, PluginAgentService, PluginAgentSnapshot, PluginCallPurpose } from "../src/core/plugin-agents.ts";
 import type { PiEngine } from "../src/agent/models.ts";
@@ -392,4 +394,32 @@ test("identifier guards cover operations and store paths; corrupt records fail v
 	writeFileSync(join(f.directory, "agents", `${id}.json`), "{broken");
 	assert.throws(() => f.store.list(), /Unable to read/);
 	writeFileSync(join(f.directory, "agents", `${id}.json`), saved);
+});
+
+test("a run refused during maintenance reaches its caller and leaves the session free", async (t) => {
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = "/unused/plugin-agent-test.sock";
+	t.after(() => {
+		const status = maintenanceStatus();
+		if (status.mode === "draining") control("resume", status.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	const f = fixture(t, [output()]);
+	f.service.register(f.definition);
+	const { id } = f.service.create("helper");
+	const held = control("drain", undefined, undefined, newDrainAttempt());
+	await assert.rejects(f.service.send(id, "Task during the hold", { requestId: "held" }), MaintenanceError);
+	assert.equal(f.service.get(id).status, "idle");
+	assert.deepEqual(f.store.get(id)?.messages, []);
+	assert.deepEqual(f.store.get(id)?.acceptedInputs, []);
+	assert.equal(control("status", held.generation).drained, true);
+	control("resume", held.generation);
+	const accepted = await f.service.send(id, "Task during the hold", { requestId: "held" });
+	assert.equal(accepted.status, "running", "the same request is accepted once the hold ends");
+	assert.deepEqual(maintenanceStatus().counts, { "plugin-task": 1 });
+	assert.equal((await settled(f.service, id)).status, "idle");
+	await tick();
+	assert.deepEqual(maintenanceStatus().counts, {});
+	assert.equal(f.contexts.length, 1);
 });

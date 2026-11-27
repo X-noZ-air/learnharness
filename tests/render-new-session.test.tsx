@@ -97,10 +97,22 @@ describe("startDraftSession — the create-on-send contract", () => {
 
 describe("DraftShell — the sessionless surface", () => {
 	it("storage failure leaves the full draft editable beside the approved error", () => {
-		const html = renderToStaticMarkup(<DraftShell busy={false} text="keep all my text" onChange={() => {}} onSend={() => {}} startError />);
+		const html = renderToStaticMarkup(<DraftShell busy={false} text="keep all my text" onChange={() => {}} onSend={() => {}} startError={OPENING_PROMPT_FAILURE} />);
 		assert.ok(html.includes('role="alert"'));
 		assert.ok(html.includes(OPENING_PROMPT_FAILURE));
 		assert.match(html, /<div[^>]*role="textbox"[^>]*contentEditable="true"[^>]*>keep all my text<\/div>/);
+	});
+	it("keeps a refused opening draft editable with the maintenance explanation", async () => {
+		const draft = "My unsent question";
+		const reason = "Server maintenance is in progress.";
+		const fetchLike = async () => Response.json({ code: "maintenance", error: reason }, { status: 503 });
+		await assert.rejects(startDraftSession(draft, fetchLike), (error: Error) => {
+			assert.equal(error.message, reason);
+			const html = renderToStaticMarkup(<DraftShell busy={false} text={draft} onChange={() => {}} onSend={() => {}} startError={error.message} />);
+			assert.ok(html.includes(reason));
+			assert.match(html, /role="textbox"[^>]*contentEditable="true"[^>]*>My unsent question<\/div>/);
+			return true;
+		});
 	});
 	it("renders the composer blob, the stats bar, and the fresh-chat empty state", () => {
 		const html = renderToStaticMarkup(

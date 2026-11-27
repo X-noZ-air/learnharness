@@ -13,7 +13,7 @@
  * createSideChatService directly.
  */
 import { parseSideAskInput, SideChatInputError } from "@/src/core";
-import { sideChats } from "@/src/server";
+import { mutation, sideChats } from "@/src/server";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
@@ -22,7 +22,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 	return Response.json(listed);
 }
 
-export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+async function handlePost(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
 	let input;
 	try {
@@ -33,3 +33,5 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 	}
 	return sideChats.ask(id, input);
 }
+
+export const POST = mutation(handlePost);

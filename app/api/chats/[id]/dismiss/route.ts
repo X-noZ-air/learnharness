@@ -21,7 +21,7 @@
  * the current saved occurrence, then park and abort the owner here.
  */
 import { assertPluginQuestionInputAllowed, ChatInputError, dismissAppends, emit, parseDismissInput } from "@/src/core";
-import { abortTurn, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility } from "@/src/server";
+import { abortTurn, drainReadinessReported, getChat, isTurnRunning, parkDismissal, stores, preparePluginQuestionDismissal, reconcilePluginQuestionCompatibility } from "@/src/server";
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
@@ -72,6 +72,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 		if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 		throw err;
 	}
+
+	if (drainReadinessReported()) return Response.json({ code: "maintenance", error: "Update in progress. Try again shortly." }, { status: 409 });
 
 	// Write-ahead, turn-less: the record is the only state that moves.
 	// No teacher request runs here. Side exchanges remain pending for the

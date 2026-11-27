@@ -16,7 +16,7 @@ import { StatsBar } from "@/components/stats-bar";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
-import { SessionStarter } from "@/components/start-session";
+import { SessionMaintenanceError, SessionStarter } from "@/components/start-session";
 import type { ChatSettings, GraphSnapshot } from "@/src/core";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
@@ -76,7 +76,7 @@ export function DraftShell({
 	text,
 	onChange,
 	onSend,
-	startError = false,
+	startError,
 	setupCta,
 	mode = "teach",
 	picks = [],
@@ -88,7 +88,7 @@ export function DraftShell({
 	text: string;
 	onChange: (v: string) => void;
 	onSend: () => void;
-	startError?: boolean;
+	startError?: string;
 	/** The practice draft (owner, 2026-10-04): ?mode=practice — the
 	 *  created session carries kind:"practice" and the copy changes
 	 *  (the practice agent opens; no probing). */
@@ -199,7 +199,7 @@ export function DraftShell({
 										setup={setupCta}
 									/>
 								</div>
-								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{OPENING_PROMPT_FAILURE}</p>}
+								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive narrow:short:mb-0 narrow:short:ml-12 narrow:short:shrink-0 narrow:short:leading-4">{startError}</p>}
 								<div data-attachment-composer="" className={`pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg narrow:short:grid narrow:short:min-h-[3.625rem] narrow:short:grid-rows-[minmax(0,1fr)] ${startError ? "narrow:short:flex-1" : ""}`}>
 									<Composer
 										busy={busy}
@@ -257,7 +257,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
-	const [startError, setStartError] = useState(false);
+	const [startError, setStartError] = useState("");
 	// THE PICK BAR (owner round 10): the draft's lifted pick set + the
 	// snapshot the standalone chain-table picker reads. Lazy — the graph
 	// is fetched on FIRST open only, then reused.
@@ -317,17 +317,17 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		}
 		startingRef.current = true;
 		setBusy(true);
-		setStartError(false);
+		setStartError("");
 		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
 			starterRef.current, JSON.stringify(catalog?.slots.strong))
 			.then((target) => {
 				if (target) router.push(target);
 				else { startingRef.current = false; setBusy(false); }
 			})
-			.catch(() => {
+			.catch((error) => {
 				startingRef.current = false;
 				setBusy(false);
-				setStartError(true);
+				setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
 			});
 	}, [router, configured, zeroKeys, catalog, mode]);
 

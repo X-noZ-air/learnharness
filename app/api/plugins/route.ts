@@ -1,6 +1,8 @@
-import { pluginTransport } from "@/src/server";
+import { mutation, pluginTransport } from "@/src/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export function GET() { return pluginTransport.list(); }
-export function POST(request: Request) { return pluginTransport.refresh(request); }
+function handlePost(request: Request) { return pluginTransport.refresh(request); }
+
+export const POST = mutation(handlePost);

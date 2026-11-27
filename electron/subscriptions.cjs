@@ -192,7 +192,8 @@ function createSubscriptions(options) {
 		try {
 			const model = entry.provider.getModels().find((m) => m.id === modelId);
 			if (!model) throw failure("stale");
-			const resolved = await entry.models.getAuth(model);
+			const getAuth = () => entry.models.getAuth(model);
+			const resolved = await (options.trackRefresh ? options.trackRefresh(getAuth) : getAuth());
 			if (!unchanged()) throw failure("stale");
 			if (!validEndpoint(entry.providerId, resolved?.auth, entry.state.credential)) throw failure("unavailable");
 			return {

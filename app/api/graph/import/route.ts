@@ -20,7 +20,7 @@
  * healthy. The dock's chips + graph refetch track progress live through
  * /api/graph/status, as with session runs.
  */
-import { convertPdf, extraction, joinPages, NotesImportError, sourceDirectory } from "@/src/server";
+import { mutation, convertPdf, extraction, joinPages, NotesImportError, sourceDirectory } from "@/src/server";
 import { IMPORT_EXTENSIONS, MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, UNSUPPORTED_TYPE_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
 import { FormBodyLimitError, readBoundedFormData } from "@/lib/bounded-form-data.ts";
 import {
@@ -81,7 +81,7 @@ async function readNotesFile(file: File): Promise<NotesFile> {
 	}
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
 	let form: FormData;
 	try {
 		form = await readBoundedFormData(request, MAX_IMPORT_BODY_BYTES);
@@ -144,3 +144,4 @@ export async function POST(request: Request) {
 	await Promise.all(workers);
 	return Response.json({ results });
 }
+export const POST = mutation(handlePost, "upload");

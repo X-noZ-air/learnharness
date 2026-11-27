@@ -1,3 +1,4 @@
+import { admissionClosed, beginWork, canStartWork, drainReadinessReported, refuseDrainWhile, tracked, whenOpen, type Lease } from "../core/maintenance.ts";
 /**
  * THE WAKE PIPELINE (contracts.ts "THE ASYNC PROTOCOL" §4) — server-side
  * steer delivery for finished sub-agent jobs. Wave C (2026-09-26):
@@ -92,6 +93,7 @@ export function setPluginJobRecovery(recover: PluginJobRecovery): void {
 interface QueuedSteer {
 	steer: SteerMessage;
 	promise: Promise<void>;
+	parked: boolean;
 	/** Wake cargo remains owned here, but must not steer into its own run. */
 	waking?: boolean;
 	/** The constructed vehicle, once startup claims a turn. Until then only
@@ -107,6 +109,9 @@ interface QueuedSteer {
 	 *  CLEARED at settlement for markers the dying run never injected. */
 	handedTo?: Agent;
 }
+
+type OwnedPump = { mode: "open" | "idle"; lease: Lease };
+type PumpState = OwnedPump | { mode: "drain-requested" };
 
 interface WakeState {
 	turnRunner?: TurnRunner;
@@ -127,7 +132,7 @@ interface WakeState {
 	 *  markers to this agent's follow-up queue. */
 	liveAgents: Map<string, Agent>;
 	/** Chats whose pump loop is currently active (serialization per chat). */
-	pumping: Set<string>;
+	pumping: Map<string, PumpState>;
 	/** Throttle bookkeeping for the stale-job sweep. */
 	lastSweepAt: number;
 	stopConnectionWatch?: () => void;
@@ -140,7 +145,7 @@ interface LhWakeGlobal {
 
 function state(): WakeState {
 	const g = globalThis as typeof globalThis & LhWakeGlobal;
-	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Set(), lastSweepAt: 0, automaticDeferred: new WeakSet() });
+	return (g.__lhWakePipeline ??= { queues: new Map(), liveAgents: new Map(), userSteers: new Map(), pumping: new Map(), lastSweepAt: 0, automaticDeferred: new WeakSet() });
 }
 
 /** chat-handler wires this at module init: its adapter around handleChatRequest. */
@@ -228,12 +233,12 @@ function finalizeSteer(steer: SteerMessage): void {
  * wake-acceptance/error semantics. Workers never await this promise. */
 export function deliverJobResult(steer: SteerMessage): Promise<void> {
 	const chatId = chatIdOf(steer);
-	const entry = queueSteer(chatId, steer);
+	const entry = queueSteer(chatId, steer, !canStartWork());
 	void pump(chatId);
 	return entry.promise;
 }
 
-function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
+function queueSteer(chatId: string, steer: SteerMessage, parked = false): QueuedSteer {
 	const queue = state().queues.get(chatId) ?? [];
 	const existing = queue.find((entry) => entry.steer.id === steer.id);
 	if (existing) return existing;
@@ -242,7 +247,7 @@ function queueSteer(chatId: string, steer: SteerMessage): QueuedSteer {
 	const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
 	// Recovery/registration may own an entry with no waiting caller.
 	void promise.catch(() => undefined);
-	const entry: QueuedSteer = { steer, promise, resolve, reject };
+	const entry: QueuedSteer = { steer, promise, parked, resolve, reject };
 	queue.push(entry);
 	state().queues.set(chatId, queue);
 	return entry;
@@ -262,15 +267,27 @@ export function automaticFollowUpAllowed(chatId: string, agent?: Agent): boolean
 	return connectionBackgroundAllowed(provider);
 }
 
+function deliveryAdmitted(entry: QueuedSteer): boolean {
+	return !entry.parked || !admissionClosed();
+}
+
+function readyForWake(entry: QueuedSteer): boolean {
+	return deliveryAdmitted(entry) && !entry.handedTo && !entry.waking && !entry.deferred;
+}
+
 function handOffEligible(chatId: string, agent: Agent): void {
 	const queue = state().queues.get(chatId);
 	// Keep automatic results in their owning registry. Never mix them into a
 	// foreground batch without express account consent. Learner steers below
 	// remain deliverable, including the first poll of an answer run.
-	if (automaticFollowUpAllowed(chatId, agent) && queue && queue.length > 0) {
+	if (queue?.length) {
+		const allowed = automaticFollowUpAllowed(chatId, agent);
 		for (const entry of queue) {
-			if (!entry.waking && !entry.deferred && entry.handedTo !== agent && entry.steer.customType !== "probe-handoff") {
+			if (!allowed) {
+				if (!entry.waking) entry.parked = true;
+			} else if (deliveryAdmitted(entry) && !entry.waking && !entry.deferred && entry.handedTo !== agent && entry.steer.customType !== "probe-handoff") {
 				agent.steer(entry.steer);
+				entry.parked = false;
 				entry.handedTo = agent;
 			}
 		}
@@ -377,7 +394,10 @@ export function restoreUncommittedAutomatic(chatId: string, agent: Agent, automa
 	const s = state();
 	s.automaticDeferred.add(agent);
 	for (const entry of s.queues.get(chatId) ?? []) {
-		if (entry.handedTo === agent && automaticIds.has(entry.steer.id)) entry.handedTo = undefined;
+		if (entry.handedTo === agent && automaticIds.has(entry.steer.id)) {
+			entry.handedTo = undefined;
+			entry.parked = true;
+		}
 	}
 	agent.clearSteeringQueue();
 	for (const entry of s.userSteers.get(chatId) ?? []) {
@@ -412,7 +432,10 @@ export function settleSteers(chatId: string, persisted: { id?: string }[], faile
 			const wakeHere = settledAgent !== undefined && entry.wakeAgent === settledAgent;
 			if (handedHere) entry.handedTo = undefined;
 			if (wakeHere) { entry.waking = false; entry.wakeAgent = undefined; }
-			if (failed && (handedHere || wakeHere) && jobIdOf(entry.steer)) entry.deferred = true;
+			if (failed && (handedHere || wakeHere) && jobIdOf(entry.steer)) {
+				entry.deferred = true;
+				entry.parked = true;
+			}
 			remaining.push(entry);
 		}
 	}
@@ -446,7 +469,7 @@ export interface AbortOutcome {
 export function abortJob(jobId: string): AbortOutcome {
 	const job = stores.jobStore.getJob(jobId);
 	if (!job) return { ok: false, reason: "not_found" };
-	if (job.status !== "running") return { ok: false, reason: "not_running" };
+	if (job.status !== "running" || drainReadinessReported()) return { ok: false, reason: "not_running" };
 	if (job.result) {
 		normalizeLegacyResult(job);
 		return { ok: false, reason: "not_running" };
@@ -486,11 +509,32 @@ function chatIdOf(steer: SteerMessage): string {
  * more to do here until settlement re-pumps); otherwise the IDLE WAKE
  * fires ONE turn carrying every pending marker as its input appends.
  */
-async function pump(chatId: string): Promise<void> {
-	if (!chatId) return;
+function pumpWhenOpen(chatId: string): void {
+	const { pumping } = state();
+	if (pumping.get(chatId)?.mode === "drain-requested") return;
+	const pending = { mode: "drain-requested" } as const;
+	pumping.set(chatId, pending);
+	whenOpen(() => {
+		if (pumping.get(chatId) !== pending) return;
+		pumping.delete(chatId);
+		void pump(chatId);
+	});
+}
+
+function pump(chatId: string): Promise<void> {
 	const s = state();
-	if (s.pumping.has(chatId)) return;
-	s.pumping.add(chatId);
+	const queue = s.queues.get(chatId);
+	if (!chatId || !queue?.length || s.pumping.get(chatId)?.mode === "open") return Promise.resolve();
+	// A marker outlives a hold its caller does not own. Delivery continues when it opens.
+	if (!canStartWork() || !queue.some(deliveryAdmitted)) { pumpWhenOpen(chatId); return Promise.resolve(); }
+	const lease = beginWork("delivery");
+	const owner: OwnedPump = { mode: "open", lease };
+	s.pumping.set(chatId, owner);
+	return lease.run(() => pumpQueue(chatId, owner)).finally(() => lease.end());
+}
+
+async function pumpQueue(chatId: string, owner: OwnedPump): Promise<void> {
+	const s = state();
 	let parked = false;
 	try {
 		for (let attempt = 0; ; ) {
@@ -514,9 +558,13 @@ async function pump(chatId: string): Promise<void> {
 			// (an in-run injection persisted, a wake completed, or a duplicate
 			// deliver raced in). Resolve and flip without re-firing anything.
 			noteSteersDurable(chatId, record.messages);
-			const stillPending = (s.queues.get(chatId) ?? []).filter((entry) => !entry.waking && !entry.deferred);
+			const stillPending = (s.queues.get(chatId) ?? []).filter((entry) => deliveryAdmitted(entry) && !entry.waking && !entry.deferred);
 			if (stillPending.length === 0) { parked = true; return; }
-			if (!automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) { parked = true; return; }
+			if (!automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) {
+				for (const entry of stillPending) entry.parked = true;
+				parked = true;
+				return;
+			}
 
 			// VEHICLE 1 — THE LIVE RUN: pi's steering queue. The agent of the
 			// streaming turn takes every eligible marker; pi injects at the
@@ -539,7 +587,7 @@ async function pump(chatId: string): Promise<void> {
 				}
 				if (handable.length > 0) {
 					await delay(POLL_MS);
-					await waitForIdle(chatId);
+					if (!(await waitForIdle(chatId, owner))) break;
 					continue;
 				}
 			}
@@ -547,7 +595,7 @@ async function pump(chatId: string): Promise<void> {
 			// VEHICLE 2 — THE IDLE WAKE: one server-side turn carrying EVERY
 			// pending marker as its input appends (the handler write-ahead
 			// persists them under the wake's own turn claim).
-			await waitForIdle(chatId);
+			if (!(await waitForIdle(chatId, owner))) break;
 
 			// Re-fetch AFTER the gates open — waitForIdle can wait out a quiz
 			// answer (minutes), and sending the pre-wait snapshot would clobber
@@ -569,7 +617,7 @@ async function pump(chatId: string): Promise<void> {
 			// A live run may have delivered some markers while the gates were
 			// closed — re-check: only still-missing markers ride the wake.
 			noteSteersDurable(chatId, fresh.messages);
-			const fire = (s.queues.get(chatId) ?? []).filter((entry) => !entry.waking && !entry.deferred && !entry.handedTo);
+			const fire = (s.queues.get(chatId) ?? []).filter(readyForWake);
 			if (fire.length === 0) return;
 
 			// THE DISMISSAL PAUSE (owner design 2026-10-03, "A2"): the record
@@ -582,13 +630,17 @@ async function pump(chatId: string): Promise<void> {
 			// An interrupted question-recovery request also waits for explicit
 			// input; a queued job must not restart its replacement turn.
 			if (endsInDismissal(fresh.messages) || endsInQuestionRecovery(fresh.messages) || !automaticFollowUpAllowed(chatId)) {
+				for (const entry of fire) entry.parked = true;
 				parked = true;
 				return;
 			}
 
 			// Keep ownership through the wake. The flag excludes cargo from
 			// its own live-agent handoff while duplicate callers share it.
-			for (const entry of fire) entry.waking = true;
+			for (const entry of fire) {
+				entry.parked = false;
+				entry.waking = true;
+			}
 			const steers = fire.map((e) => e.steer);
 
 			// Fire the wake with cargo still registered. A 409 releases its
@@ -603,7 +655,11 @@ async function pump(chatId: string): Promise<void> {
 			const owned = fire.filter((entry) => s.queues.get(chatId)?.includes(entry));
 			if (status === 403 || status === 409) {
 				for (const entry of owned) { entry.waking = false; entry.wakeAgent = undefined; }
-				if (status === 403) { parked = true; return; }
+				if (status === 403) {
+					for (const entry of owned) entry.parked = true;
+					parked = true;
+					return;
+				}
 				await delay(RETRY_BACKOFF_MS[Math.min(attempt++, RETRY_BACKOFF_MS.length - 1)]!);
 				continue;
 			}
@@ -619,14 +675,45 @@ async function pump(chatId: string): Promise<void> {
 				// or settlement. HTTP 200 alone is not a durable marker receipt.
 			}
 		}
+		// Admission closed while only the learner could continue. The markers
+		// stay queued and saved, and delivery continues when it opens.
+		parked = true;
 	} finally {
-		s.pumping.delete(chatId);
-		// A steer may have arrived between the last check and the finally —
-		// restart the pump rather than strand it. Entries already handed to
-		// a live run are NOT stragglers (settleSteers owns their resurrection)
-		// — restarting for them would just park in waitForIdle forever.
-		const q = state().queues.get(chatId) ?? [];
-		if (!parked && automaticFollowUpAllowed(chatId, state().liveAgents.get(chatId)) && q.some((e) => e.handedTo === undefined && !e.waking && !e.deferred)) void pump(chatId);
+		if (s.pumping.get(chatId) === owner) {
+			s.pumping.delete(chatId);
+			// A steer may have arrived between the last check and the finally —
+			// restart the pump rather than strand it. Entries already handed to
+			// a live run are NOT stragglers (settleSteers owns their resurrection)
+			// — restarting for them would just park in waitForIdle forever.
+			const q = s.queues.get(chatId) ?? [];
+			if (admissionClosed() && q.some(entry => !entry.deferred && entry.parked)) pumpWhenOpen(chatId);
+			if (!parked && automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId)) && q.some(readyForWake)) void pump(chatId);
+		}
+	}
+}
+
+// A job can restore its pending result from disk. A probe handoff has only
+// its queue entry until the teacher takes it. An active pump already counts
+// as work; a parked handoff needs its own reason to postpone a switch.
+refuseDrainWhile("parked-probe-handoff", () => {
+	const s = state();
+	for (const [chatId, queue] of s.queues) {
+		if (s.pumping.get(chatId)?.mode !== "open" && queue.some(entry => entry.steer.customType === "probe-handoff")) return true;
+	}
+	return false;
+});
+
+// An accepted learner steer exists only in this process until a run saves it.
+// With no run to carry it, a stop would lose it.
+refuseDrainWhile("parked-learner-steer", () => {
+	const s = state();
+	return [...s.userSteers.keys()].some((chatId) => !s.liveAgents.has(chatId));
+});
+
+function wakeSubscriptionDeliveries() {
+	const s = state();
+	for (const chatId of s.queues.keys()) {
+		if (automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) void pump(chatId);
 	}
 }
 
@@ -641,13 +728,14 @@ state().stopConnectionWatch = onSubscriptionChange(() => {
 		const pending = (s.queues.get(chatId) ?? []).filter((entry) => entry.handedTo === agent && !consumed.has(entry.steer.id));
 		if (pending.length === 0) continue;
 		agent.clearSteeringQueue();
-		for (const entry of pending) entry.handedTo = undefined;
+		for (const entry of pending) {
+			entry.handedTo = undefined;
+			entry.parked = true;
+		}
 		for (const entry of s.userSteers.get(chatId) ?? []) if (!consumed.has(entry.message.id)) entry.handedTo = undefined;
 		handOffEligible(chatId, agent); // only unconsumed learner input; never replay consumed steers
 	}
-	for (const chatId of s.queues.keys()) {
-		if (automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) void pump(chatId);
-	}
+	whenOpen(wakeSubscriptionDeliveries);
 });
 
 function deferOrReject(chatId: string, entry: QueuedSteer, error: Error): void {
@@ -655,6 +743,7 @@ function deferOrReject(chatId: string, entry: QueuedSteer, error: Error): void {
 	entry.wakeAgent = undefined;
 	if (jobIdOf(entry.steer)) {
 		entry.deferred = true;
+		entry.parked = true;
 		console.error(`[steer ${entry.steer.id}] delivery remains pending:`, error.message);
 	} else {
 		removeEntry(chatId, entry);
@@ -705,7 +794,7 @@ function restorePendingDeliveries(chatId: string): void {
 			: job.result ? buildSubagentSteer(job, job.result as never) : undefined;
 		if (!steer) continue;
 		if (steerDelivered(record.messages, steer.id)) finalizeSteer(steer);
-		else queueSteer(chatId, steer);
+		else queueSteer(chatId, steer, true);
 	}
 }
 
@@ -715,13 +804,24 @@ function restorePendingDeliveries(chatId: string): void {
  * arrives as its tool result, and no turn may run in the window). Poll;
  * the learner may take arbitrarily long to answer, and that is correct —
  * the steer fires right after their answer turn completes.
+ *
+ * While only the learner can continue, the pump stops counting as work:
+ * the markers are saved and would be restored by a restart. It counts
+ * again before it proceeds. False means admission closed in the meantime.
  */
-async function waitForIdle(chatId: string): Promise<void> {
-	for (;;) {
+async function waitForIdle(chatId: string, owner: OwnedPump): Promise<boolean> {
+	const { pumping } = state();
+	const { lease } = owner;
+	while (pumping.get(chatId) === owner) {
 		const record = stores.chatStore.getChat(chatId);
-		if (!record || !(state().queues.get(chatId) ?? []).some((entry) => !entry.waking && !entry.deferred && !entry.handedTo)) return;
-		const blocked = isTurnRunning(chatId) || hasUnresolvedQuestion(record.messages);
+		const pending = (state().queues.get(chatId) ?? []).filter(readyForWake);
+		if (!record || pending.length === 0) return owner.mode === "open";
+		const running = isTurnRunning(chatId);
+		const blocked = running || hasUnresolvedQuestion(record.messages);
 		if (!blocked) {
+			if (!lease.renew()) return false;
+			owner.mode = "open";
+			for (const entry of pending) entry.parked = false;
 			await delay(GRACE_MS);
 			const recheck = stores.chatStore.getChat(chatId);
 			if (
@@ -729,11 +829,16 @@ async function waitForIdle(chatId: string): Promise<void> {
 				recheck &&
 				!hasUnresolvedQuestion(recheck.messages)
 			) {
-				return;
+				return true;
 			}
+		} else if (!running) {
+			for (const entry of pending) entry.parked = true;
+			owner.mode = "idle";
+			lease.end();
 		}
 		await delay(POLL_MS);
 	}
+	return false;
 }
 
 // ─── crash recovery ──────────────────────────────────────────────────────────
@@ -756,6 +861,7 @@ const SWEEP_THROTTLE_MS = 30_000;
 /** Re-run a job's sub-agent loop — exposed for the sweep's tests (the
  *  /api/jobs poll is its only production caller, disabled under NODE_ENV=test). */
 export function recoverStaleJobs(): void {
+	if (admissionClosed()) return;
 	const s = state();
 	const now = Date.now();
 	if (now - s.lastSweepAt < SWEEP_THROTTLE_MS) return;
@@ -773,12 +879,12 @@ export function recoverStaleJobs(): void {
 				} else if (job.status === "running" && !job.result) {
 					if (job.kind === "plugin") {
 						// Canonical task reads only; never respawn plugin tools/code.
-						if (s.recoverPlugin) void s.recoverPlugin(job).catch((error: unknown) => {
+						if (s.recoverPlugin) void tracked("job", () => s.recoverPlugin!(job).catch((error: unknown) => {
 							if (stores.jobStore.getJob(job.id)?.status !== "running") return;
 							const failure = `Plugin job recovery failed: ${String(error)}`;
 							stores.jobStore.updateJob(job.id, { status: "error", error: failure, activity: "recovery failed", delivery: { kind: "failure", status: "pending" } });
 							void deliverJobResult(buildJobFailureSteer(job, failure));
-						});
+						}));
 						continue;
 					}
 					// The sub-agent loop itself died with the process: re-spawn.

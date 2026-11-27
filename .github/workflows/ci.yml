@@ -78,6 +78,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
+      - run: node scripts/smoke-maintenance.mjs
 
   standalone:
     needs: validate-candidate
@@ -136,5 +137,8 @@ jobs:
       - name: Narrow browser layout smoke test
         if: runner.os == 'Linux'
         run: node scripts/smoke-narrow-viewports.mjs
+      - name: Maintenance dismissal browser smoke test
+        if: runner.os == 'Linux'
+        run: node scripts/smoke-maintenance-dismissals.mjs
       - run: node scripts/build-server.mjs
       - run: node scripts/smoke-server.mjs --electron
