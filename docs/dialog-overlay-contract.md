@@ -26,7 +26,8 @@ a focused editor that owns Escape, a menu above a dialog, or a child dialog abov
 - A surface that refuses dismissal still consumes Escape.
 - Explicit editor cancellation, including source/folder/session renaming, retains its
   own semantics. There is no generic search-clear-first rule: model/provider/font/language
-  menus close. See [sessions search](keyboard.md#search-and-menus) for sidebar behavior.
+  menus close. Sessions search keeps its query when Escape leaves the inline search
+  field or dismisses the drawer.
 
 ### Passive tooltips
 
@@ -45,7 +46,7 @@ Explicit application bindings still apply within their eligible scope:
 
 Modal focus scopes do not add boundary looping. Covered fields and thinking controls
 cannot receive these actions. Native-default prevention does not suppress target handlers.
-The sessions drawer handles its own [Tab traversal](keyboard.md#focus-and-esc).
+The sessions drawer handles Tab and Shift+Tab to move through its own controls.
 
 ### Settings fields: Escape retains and commits
 
@@ -122,7 +123,7 @@ does not destroy Settings.
 | Family | Examples | Behavior |
 | --- | --- | --- |
 | Modal dialogs | Settings, setup, confirmations, provider connections, plugin dialogs, keyboard cheat sheet | Modal focus/accessibility/scroll isolation and domain-specific close guards. |
-| Sessions drawer | [Narrow browser session list](getting-started.md#start-a-session) | Uses modal isolation. Session and folder context menus close when the drawer closes or the sidebar switches between drawer and inline presentations. |
+| Sessions drawer | Narrow browser session list | Uses modal isolation. Session and folder context menus close when the drawer closes or the sidebar switches between drawer and inline presentations. |
 | Anchored menus/popups | Model/thinking/provider/font/language menus, context menus, plugin menus, graph/statistics panels | Owner-scoped interaction with each popup's geometry, search/arrows, outside-pointer, scroll-close and focus-return rules. |
 | Content-area views | Chains browser, expanded diagrams/figures, expanded full plan | Main-content bounds with sidebar interaction, not viewport-modal isolation. |
 | Inline/noninteractive UI | Activity disclosures, notifications/update banners, drag previews | No modal interaction layer. |
