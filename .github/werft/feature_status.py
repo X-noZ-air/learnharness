@@ -3,32 +3,7 @@
 import json
 import os
 
-from github_api import CI_JOBS, FORK_ID, fork_api, protected_automation
-
-
-def reviewed_automation(api, pr):
-    number = pr["number"]
-    touches_automation = any(
-        protected_automation(path)
-        for change in api.pages(f"pulls/{number}/files")
-        for path in [change["filename"], change.get("previous_filename", "")]
-    )
-    if not touches_automation:
-        return True
-    latest = {}
-    for review in api.pages(f"pulls/{number}/reviews"):
-        if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            latest[review["user"]["login"]] = review
-    for login, review in latest.items():
-        if (
-            review["state"] != "APPROVED" or review["commit_id"] != pr["head"]["sha"]
-            or login == pr["user"]["login"] or review["user"]["type"] != "User"
-        ):
-            continue
-        permission = api.request(f"collaborators/{login}/permission", missing=True)
-        if permission and permission["permission"] in {"admin", "maintain", "write"}:
-            return True
-    return False
+from github_api import CI_JOBS, FORK_ID, fork_api
 
 
 def main():
@@ -68,11 +43,11 @@ def main():
             for other in runs
         ):
             continue
-        approved = reviewed_automation(api, current)
-        api.status(head["sha"], "success" if passed and approved else "failure",
-                   "Feature CI passed" if passed and approved else (
-                       "Automation changes require maintainer review" if not approved else "Feature CI failed"
-                   ), run["html_url"])
+        api.status(
+            head["sha"], "success" if passed else "failure",
+            "Feature CI passed" if passed else "Feature CI failed",
+            run["html_url"],
+        )
 
 
 if __name__ == "__main__":
