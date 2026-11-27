@@ -146,7 +146,7 @@ export async function verifySessionHelperShortcutOwnership({ page, chord, openSu
 }
 
 /** @param {string} url An already-running disposable server's loopback origin.
- * @param {{executablePath?: string, scratchDirectory?: string, headers?: Record<string, string>, timeoutMs?: number}} [options]
+ * @param {{executablePath?: string, scratchDirectory?: string, headers?: Record<string, string>, timeoutMs?: number, sourceOffer?: string}} [options]
  * @returns {Promise<object>} Full console, network, RPC, and assertion evidence.
  */
 export async function verifyPluginBrowser(url, options = {}) {
@@ -586,6 +586,20 @@ export async function verifyPluginBrowser(url, options = {}) {
 		evidence.stage = "disabled discovery in Settings";
 		const documentResponse = await page.goto(base, { waitUntil: "domcontentloaded" });
 		assert.equal(documentResponse?.status(), 200, "The caller's live app must serve its home screen");
+		if (options.sourceOffer) {
+			const commit = options.sourceOffer;
+			const selector = 'aside [data-testid="source-code-link"]';
+			await page.waitForSelector(selector, { visible: true });
+			const link = await page.$eval(selector, element => ({
+				href: element.href, label: element.querySelector("span")?.textContent,
+				visibleCommit: element.querySelector("code")?.textContent, commit: element.title,
+			}));
+			assert.deepEqual(link, {
+				href: `https://github.com/X-noZ-air/learnharness/archive/${commit}.tar.gz`,
+				label: "Source code of this version", visibleCommit: commit.slice(0, 12), commit,
+			});
+			evidence.assertions.push("Sidebar offers the source archive for the exact packaged commit");
+		}
 		await openPlugins();
 		const warning = await page.$eval('[data-testid="section-plugins"]', element => element.textContent);
 		for (const copy of ["trusted local code", "broad file and network access", "not sandboxed", "restarting LearnHarness", "disabled by default"]) assert.ok(warning.includes(copy), `Missing trust/default-state warning: ${copy}`);
@@ -886,7 +900,12 @@ export async function verifyPluginBrowser(url, options = {}) {
 		await chord(",");
 		await page.waitForSelector('[data-testid="settings-dialog"]', { visible: true });
 		assert.equal(await page.$$eval('[data-testid="settings-dialog"]', nodes => nodes.length), 1);
-		assert.equal(await retainedPicker.evaluate(overlay => overlay.isConnected && !!overlay.closest("[inert]") && getComputedStyle(overlay).display !== "none"), true, "Fresh Settings must cover the same painted picker, not close/remount it");
+		assert.equal(await retainedPicker.evaluate(overlay => {
+			const bounds = overlay.getBoundingClientRect();
+			return overlay.isConnected && bounds.width > 0 && bounds.height > 0
+				&& !!overlay.closest('[aria-hidden="true"]')
+				&& !overlay.contains(document.elementFromPoint(bounds.left + 12, bounds.top + 12));
+		}), true, "Fresh Settings must cover the same painted picker and block interaction with it");
 		assert.equal(await retainedSelection.evaluate(input => input.isConnected && input.checked), true);
 		assert.equal(await page.$eval('[data-testid="settings-dialog"]', dialog => {
 			const bounds = dialog.getBoundingClientRect();
@@ -916,7 +935,7 @@ export async function verifyPluginBrowser(url, options = {}) {
 		await page.waitForFunction(input => document.activeElement === input, { timeout: timeoutMs }, pickerFocus);
 		assert.equal(await retainedPicker.evaluate((overlay, selector) => overlay.isConnected && document.querySelector(selector) === overlay && !overlay.closest("[inert]"), KNOWLEDGE_OVERLAY), true);
 		assert.equal(await retainedSelection.evaluate(input => input.isConnected && input.checked), true, "Resuming the same picker retains the actual selection control");
-		await assertFullWindowPicker();
+		await assertPaneKnowledgePicker(page);
 		await assertKnowledge("closing fresh Settings resumes the mounted picker and its controlled selection", [KNOWLEDGE.premiseId], 1);
 		await screenshot("foreground-settings-picker-resumed");
 		evidence.foreground.push({ label: "Fresh Settings nests above the same picker and returns focus on close", pickerRetained: true, selectionRetained: true, focusRestored: true, ids: [KNOWLEDGE.premiseId] });
@@ -926,7 +945,7 @@ export async function verifyPluginBrowser(url, options = {}) {
 		await page.locator(`${MOUNT} [data-testid="practice-props-clear"]`).click();
 		await assertKnowledge("main selection cleared explicitly after Settings dismissal proof", [], 2);
 		await health();
-		evidence.assertions.push("Global Mod+, opens absent Settings above the same painted/inert picker; its passive tooltip paints in the owned portal and does not intercept the single Escape closing Settings; the mounted picker selection and eligible focus resume, and the next Escape closes only picker");
+		evidence.assertions.push("Global Mod+, opens Settings above the same painted picker pane and blocks interaction with it. Escape closes Settings while its tooltip is visible and restores the picker selection and focus. The next Escape closes the picker.");
 
 		evidence.stage = "custom Settings-origin picker foreground";
 		await openPlugins();
@@ -1363,7 +1382,11 @@ export async function verifyPluginBrowser(url, options = {}) {
 		assert.ok(await page.$('[data-testid="stats-thinking"]'), "Host model-thinking control remains present");
 		assert.ok(await page.$('[data-testid="dictation-toggle"]'), "Host microphone remains present");
 		const draftText = "  exact offline answer\n\tsecond line  \n";
-		await page.locator(questionEditor).fill(draftText);
+		// Insert the draft as text. Locator.fill types short values as keystrokes,
+		// so its first newline would invoke the host's Enter-to-submit shortcut.
+		await page.focus(questionEditor);
+		await page.keyboard.sendCharacter(draftText);
+		assert.equal(await page.$eval(questionEditor, node => node.value), draftText);
 		await page.$eval(questionEditor, node => node.setSelectionRange(3, 8));
 		const editor = await page.$(questionEditor);
 		const beforeFold = await editor.evaluate(node => ({ mount: node.dataset.mount, value: node.value, start: node.selectionStart, end: node.selectionEnd, publishes: node.dataset.publishes }));
@@ -1413,9 +1436,11 @@ export async function verifyPluginBrowser(url, options = {}) {
 		await editor.evaluate(node => node.setSelectionRange(node.value.length, node.value.length));
 		await page.keyboard.press("Tab");
 		assert.equal(await editor.evaluate(node => document.activeElement === node && node.dataset.tabs === "1"), true, "Plain Tab must invoke the current plugin editor once rather than native/global focus traversal");
-		await page.keyboard.press("Enter");
+		await page.keyboard.down("Shift");
+		try { await page.keyboard.press("Enter"); }
+		finally { await page.keyboard.up("Shift"); }
 		const expectedAnswer = draftText + "\t\n";
-		assert.equal(await editor.evaluate(node => node.value), expectedAnswer, "Unclaimed Enter edits the textarea instead of submitting");
+		assert.equal(await editor.evaluate(node => node.value), expectedAnswer, "Unclaimed Shift+Enter inserts a newline in the textarea");
 		const hostThinking = "Host thinking stays separate from the exact answer.";
 		await page.locator(`${questionDock} [contenteditable="true"][aria-label="Your thinking"]`).fill(hostThinking);
 		await editor.focus();
@@ -1818,7 +1843,8 @@ async function verifySessionExtensions({ page, evidence, admissionCall: call, op
 			semanticDisplay: getComputedStyle(node.querySelector('[data-plugin-session-surface]')).display,
 			semanticBounds: box(node.querySelector('[data-plugin-session-surface]')),
 			topbar: box(document.querySelector("main header")), sidebar: box(document.querySelector("aside")),
-			visibleTitle: node.querySelector("h2")?.textContent, closeVisible: !!node.querySelector('button[aria-label="Close"]'),
+			accessibleTitle: node.querySelector('[data-plugin-session-surface][role="region"]')?.getAttribute("aria-label"),
+			closeVisible: !!node.querySelector('button[aria-label="Close"]')?.checkVisibility(),
 			composerCovered: !!document.querySelector('[data-testid="composer"]')?.closest("[inert]") };
 	});
 	evidence.sessionExtensions.push({ label: "surface body geometry", ...regionBounds });
@@ -1828,7 +1854,7 @@ async function verifySessionExtensions({ page, evidence, admissionCall: call, op
 		`Surface must fill the actual native session body boundary (${dimension}): ${JSON.stringify(regionBounds)}`);
 	assert.ok(regionBounds.region.y >= regionBounds.topbar.bottom - 1, "Surface must not cover native topbar");
 	assert.ok(regionBounds.region.x >= regionBounds.sidebar.right - 1, "Surface must not cover sidebar");
-	assert.equal(regionBounds.visibleTitle, "Session extension proof"); assert.equal(regionBounds.closeVisible, true);
+	assert.equal(regionBounds.accessibleTitle, "Session extension proof"); assert.equal(regionBounds.closeVisible, true);
 	assert.equal(regionBounds.composerCovered, true, "Covered native input must not remain interactive");
 	await action("nested");
 	await page.waitForSelector('[data-smoke-session-surface="1"]', { visible: true });
@@ -1899,7 +1925,8 @@ async function verifySessionExtensions({ page, evidence, admissionCall: call, op
 	await page.locator('[data-testid="teach-check-reveal"]').click();
 	await page.waitForSelector('[data-smoke-question-editor]:not(:disabled)', { visible: true });
 	const original = '  function canvasAnswer() {\n\treturn "<svg> & PNG";\n}  \n';
-	await page.locator('[data-smoke-question-editor]').fill(original);
+	await page.focus('[data-smoke-question-editor]');
+	await page.keyboard.sendCharacter(original);
 	await page.locator('[data-testid="plugin-question-dock"] [aria-label="Your thinking"]').fill("Separate answer thinking.");
 	const answerArm = await arm(false);
 	const countBefore = hooks(await status()).length;
@@ -1919,11 +1946,15 @@ async function verifySessionExtensions({ page, evidence, admissionCall: call, op
 	const modelContent = JSON.stringify(state.requests.at(-1).messages);
 	assert.ok(modelContent.includes("reading") && modelContent.includes("thinking"), "Provider projection labels separate thinking channels");
 	await release(SESSION.chatId);
+	const thinkingDisclosure = '[data-testid="your-thinking"] button[aria-expanded="false"]';
+	await page.locator(thinkingDisclosure).click();
 	await page.waitForFunction(() => [...document.querySelectorAll('main img[alt="Submitted image"]')].length === 4);
 	const channelPlacement = await page.$$eval('main img[alt="Submitted image"]', images => images.map(image => ({ src: image.src,
-		thinkingLabel: (() => { let node = image.parentElement; while (node && node.tagName !== "MAIN") { const button = node.querySelector(':scope > button[aria-expanded]'); if (button) return button.textContent.trim(); node = node.parentElement; } return null; })() })));
-	assert.ok(channelPlacement.some(entry => entry.thinkingLabel?.includes("THINKING WHILE READING")), "Reading image has separate visible host container");
-	assert.ok(channelPlacement.some(entry => entry.thinkingLabel?.includes("YOUR THINKING")), "Question-thinking image has visible host thinking container");
+		thinkingBlock: image.closest('[data-testid="reading-thinking-block"], [data-testid="your-thinking"]')?.getAttribute("data-testid") ?? null })));
+	for (const [image, thinkingBlock] of [[answerArm.reading, "reading-thinking-block"], [answerArm.thinking, "your-thinking"], [answerArm.answer, null]]) {
+		assert.ok(channelPlacement.some(entry => entry.thinkingBlock === thinkingBlock
+			&& entry.src === `data:${image.mimeType};base64,${image.data}`), "The transcript displays each image in its own channel");
+	}
 	assert.equal(await page.$eval('[data-smoke-question-answered]', node => node.textContent), original + SESSION.codeSuffix, "Ordinary external renderer preserves transformed code verbatim while host owns images outside it");
 	evidence.sessionExtensions.push({ label: "genuine plugin JSON-string answer transform, code verbatim, three native image channels and actual adapter payload", answerInput, answerResult, channelPlacement, provider: state.requests.at(-1) });
 	await screenshot("session-native-answer-images");

@@ -1,0 +1,192 @@
+name: Werft release
+
+on:
+  push:
+    branches: [werft]
+  workflow_dispatch:
+    inputs:
+      merge_sha:
+        description: Full SHA of the merged commit contained in werft
+        required: true
+        type: string
+      upstream_tag:
+        description: Optional upstream release tag from M2.1 (informational)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: werft-release
+  queue: max
+
+env:
+  NODE_VERSION: "26.13.1"
+  NEXT_TELEMETRY_DISABLED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.target.outputs.release_tag }}
+      upstream_tag: ${{ steps.target.outputs.upstream_tag }}
+      upstream_commit: ${{ steps.target.outputs.upstream_commit }}
+    steps:
+      - name: Require the product branch in the release fork
+        run: |
+          test "$GITHUB_REPOSITORY" = X-noZ-air/learnharness
+          test "$GITHUB_REF" = refs/heads/werft
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select an unpublished commit and bind it to a stable upstream tag
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          UPSTREAM_TAG=$(bash scripts/werft-release-target.sh)
+
+          prefix="werft-${UPSTREAM_TAG#v}."
+          published=$(bash scripts/published-werft-release.sh "$GITHUB_SHA" "$prefix")
+          if [[ -n "$published" ]]; then
+            echo "Published release $published already contains commit $GITHUB_SHA"
+            exit 0
+          fi
+
+          test "$(gh api "repos/amosblomqvist/learnharness/releases/tags/$UPSTREAM_TAG" --jq '.draft or .prerelease')" = false
+          git fetch --no-tags https://github.com/amosblomqvist/learnharness.git "refs/tags/$UPSTREAM_TAG"
+          upstream_commit=$(git rev-parse 'FETCH_HEAD^{commit}')
+          git merge-base --is-ancestor "$upstream_commit" "$GITHUB_SHA"
+
+          revision=$(git tag -l "$prefix*" | python3 -c '
+          import re, sys
+          prefix = sys.argv[1]
+          revisions = [int(tag[len(prefix):]) for line in sys.stdin
+                       if (tag := line.strip()).startswith(prefix)
+                       and re.fullmatch(r"[1-9][0-9]*", tag[len(prefix):])]
+          print(max(revisions, default=0) + 1)
+          ' "$prefix")
+          {
+            echo "release_tag=$prefix$revision"
+            echo "upstream_tag=$UPSTREAM_TAG"
+            echo "upstream_commit=$upstream_commit"
+          } >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: prepare
+    if: needs.prepare.outputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run plugins:setup
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run lint
+      - run: python3 tests/werft-release.test.py
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      UPSTREAM_TAG: ${{ needs.prepare.outputs.upstream_tag }}
+      UPSTREAM_COMMIT: ${{ needs.prepare.outputs.upstream_commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run plugins:setup
+      - name: Build with the exact version's source offer
+        env:
+          NEXT_PUBLIC_LH_SOURCE_OFFER: ${{ github.sha }}
+        run: npm run build
+      - run: node scripts/build-server.mjs
+      - name: Pack and inspect the archive in an empty directory
+        run: python3 scripts/package_werft_release.py "$RUNNER_TEMP/release" "$RUNNER_TEMP/standalone"
+      - name: Boot the extracted archive with Node and run the offline browser smoke
+        run: node scripts/smoke-server.mjs --standalone "$RUNNER_TEMP/standalone" --browser
+        env:
+          EXPECTED_LH_SOURCE_OFFER: ${{ github.sha }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        with:
+          name: werft-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  publish:
+    needs: [prepare, quality, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        id: attest
+        with:
+          subject-path: ${{ runner.temp }}/release/SHA256SUMS
+      - name: Verify provenance, upload a unique draft, and verify the draft download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          assets="$RUNNER_TEMP/release"
+          cp "$BUNDLE" "$assets/provenance.json"
+
+          # Creating (never updating) the ref reserves this revision, including
+          # when an upload later fails and the draft is left for inspection.
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"; then
+            printf '::error::Could not create release tag %s for run commit %s. Publication stopped.\n' "$RELEASE_TAG" "$GITHUB_SHA"
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false \
+            --title "LearnHarness $RELEASE_TAG" \
+            --notes "Linux x64 standalone and corresponding source for commit $GITHUB_SHA." "$assets"/*
+          gh release download "$RELEASE_TAG" --pattern '*' --dir "$RUNNER_TEMP/draft"
+          PYTHONPATH=scripts python3 -c '
+          from pathlib import Path
+          from sys import argv
+          from verify_werft_release import verify_assets
+          verify_assets(Path(argv[1]), argv[2], argv[3])
+          ' "$RUNNER_TEMP/draft" "$RELEASE_TAG" "$GITHUB_SHA"
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false

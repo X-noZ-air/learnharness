@@ -31,6 +31,8 @@ In a browser narrower than 640 CSS pixels, **Open sidebar** opens the session li
 
 The [keyboard guide](keyboard.md) also covers submission, question controls, and cancellation.
 
+For the source of your Werft browser build, see [source and rebuilding](werft-release.md#source-and-rebuilding).
+
 ## Dictation
 
 1. Create a [Deepgram API key](https://console.deepgram.com/) with the **Member role or higher**, required for [short-lived token minting](https://developers.deepgram.com/reference/auth/tokens/grant).

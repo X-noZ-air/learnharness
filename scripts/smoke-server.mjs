@@ -25,6 +25,7 @@
  * way, same day).
  */
 import { spawn } from "node:child_process";
+import assert from "node:assert/strict";
 import { probeEnv, verifyDemoRuntime } from "./smoke-demo-runtime.mjs";
 import { verifyProviderRuntime } from "./smoke-provider-runtime.mjs";
 import { createPluginSmokeFixture, verifyPluginServer } from "./smoke-plugin-runtime.mjs";
@@ -38,11 +39,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SOURCE_STANDALONE = path.join(ROOT, ".next", "standalone");
-const ISOLATED_MODE = process.argv.includes("--isolated");
+const payloadArg = process.argv.indexOf("--standalone");
+const payload = payloadArg === -1 ? undefined : process.argv[payloadArg + 1];
+assert.ok(payloadArg === -1 || (payload && path.isAbsolute(payload)), "--standalone requires an absolute path");
+const SOURCE_STANDALONE = payload ?? path.join(ROOT, ".next", "standalone");
+const ISOLATED_MODE = Boolean(payload) || process.argv.includes("--isolated");
 const BROWSER_MODE = process.argv.includes("--browser");
 let isolatedRoot;
 const ELECTRON_MODE = process.argv.includes("--electron");
+assert.ok(!payload || !BROWSER_MODE || process.env.EXPECTED_LH_SOURCE_OFFER, "Release browser smoke requires the expected source offer");
 const RUNTIME = ELECTRON_MODE ? createRequire(import.meta.url)("electron") : process.execPath;
 
 const POLL_MS = 500;
@@ -85,7 +90,11 @@ function get(url) {
 async function main() {
 	// Optional source-free proof: run a copy outside the checkout, so missing
 	// dependencies cannot resolve upward into development node_modules.
-	if (ISOLATED_MODE) {
+	if (payload) {
+		const realPayload = fs.realpathSync(payload);
+		const relative = path.relative(ROOT, realPayload);
+		assert.ok(relative.startsWith(`..${path.sep}`), "The extracted payload must be outside the checkout");
+	} else if (ISOLATED_MODE) {
 		isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lh-isolated-server-"));
 		// Preserve Next's relative external-package links. cpSync otherwise
 		// rewrites them to absolute links back into the original checkout.
@@ -195,11 +204,18 @@ registerHooks({resolve(specifier,context,next){ const result=next(specifier,cont
 		}
 		await verifyCorePlugins({ root: ROOT, standalone, dataDirectory: dataDir, url });
 		await verifyPluginServer(url, home);
+		if (payload) {
+			const { verifyNativeRenderers } = await import("./smoke-werft-native.mjs");
+			await verifyNativeRenderers(standalone, path.join(ROOT, "tests", "fixtures", "sample-3page.pdf"));
+		}
 		if (BROWSER_MODE) {
 			const { verifyPluginBrowser } = await import("./smoke-plugin-browser.mjs");
 			const evidenceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "lh-plugin-browser-evidence-"));
 			console.log("[smoke-server] browser evidence:", evidenceDirectory);
-			await verifyPluginBrowser(url, { scratchDirectory: evidenceDirectory });
+			await verifyPluginBrowser(url, {
+				scratchDirectory: evidenceDirectory,
+				sourceOffer: payload ? process.env.EXPECTED_LH_SOURCE_OFFER : undefined,
+			});
 		}
 	} catch (err) {
 		failed = err;

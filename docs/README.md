@@ -16,6 +16,8 @@
 - [Prompt composition](../src/agent/prompts/README.md) — source fragments and user overrides.
 - [Tool-content recovery](tool-content-recovery.md) — display-only recovery of model-authored escaping defects.
 - [Desktop builds and releases](desktop-release.md) — packaging, release gates, and updates.
+- [Werft standalone releases](werft-release.md) - Linux server packaging, provenance, and rebuilding from source.
+- [Werft upstream updates](werft-updates.md) - upstream integration, branch protection, and release handoff.
 
 ## Teaching method
 

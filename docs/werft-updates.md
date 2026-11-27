@@ -1,15 +1,15 @@
 # Werft upstream updates
 
-`werft` is the fork's production and default branch. `main` mirrors upstream.
+`werft` is the fork's production branch. `main` mirrors upstream.
 Feature branches target `werft` through a pull request and the normal CI matrix.
 The upstream notification jobs are restricted to the original repository.
 
 ## Trigger contract
 
 The Werft host updater owns the production polling timer. Each tick sends an
-authenticated `workflow_dispatch` request to **Werft upstream updates** on the
-default branch `werft`. Use an identity with Actions write access to the fork
-and omit the replay inputs.
+authenticated `workflow_dispatch` request to **Werft upstream updates** on
+`werft`. Use an identity with Actions write access to the fork and omit the
+replay inputs.
 
 ```text
 POST /repos/X-noZ-air/learnharness/actions/workflows/werft-updates.yml/dispatches
@@ -33,11 +33,12 @@ order. Each poll looks for the entire backlog.
 Each release gets one integration branch and one pull request. The branch is
 built as a two-parent merge of the current base and the upstream tag. The poller
 dispatches **CI** on its own trusted ref with the exact candidate SHA, base SHA,
-and pull request. The quality job and all three platform jobs use that candidate
-with read-only permissions, no persisted checkout credentials, and npm caching
-disabled. CI retries the full plan-label browser smoke up to twice on each
-platform. Three failed attempts leave the affected job red. The trusted
-poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
+and pull request. The quality job and the Linux x64 and Windows x64 standalone
+jobs use that candidate with read-only permissions, no persisted checkout
+credentials, and npm caching disabled. CI retries the full plan-label browser
+smoke up to twice on each platform. Three failed attempts leave the affected job
+red. The trusted poller posts `werft/ci` only after it verifies the dispatched
+run and its jobs.
 The separate **Werft feature CI status** reporter sets that context for ordinary
 pull requests, including changes to workflows and scripts, when CI succeeds.
 Firstmate reviews delivery automation before merging those pull requests. The
@@ -57,11 +58,11 @@ ruleset and query the effective branch rules before the first production replay.
 workflow permissions can be managed through GitHub's API.
 
 The poller rechecks the base and head before requesting a merge with the
-expected head SHA. It verifies the merge parents before dispatching
-`werft-release.yml` with `merge_sha` and `upstream_tag`. The journal records
-`release workflow not present` if the merged commit has no such workflow.
-Release dispatch can be retried if GitHub disconnects before returning a run ID;
-the release workflow should deduplicate by merge SHA.
+expected head SHA. It verifies the merge parents before handing off to the
+[release workflow](werft-release.md#release-triggers). The journal records the
+release run URL or `release workflow not present` if the merged commit has no
+such workflow. A later poll can retry the handoff if GitHub disconnects before
+returning a run ID.
 
 To turn off the update automation, disable **Werft upstream updates** on its
 Actions page, or send `PUT /repos/X-noZ-air/learnharness/actions/workflows/werft-updates.yml/disable`.
