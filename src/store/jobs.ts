@@ -1,4 +1,3 @@
-import { admissionClosed } from "../core/maintenance.ts";
 /**
  * JobStore — the fs JSON adapter: one file per background sub-agent job in
  * data/jobs/ (contracts.ts "THE ASYNC PROTOCOL"). Keyed by toolCallId for
@@ -93,7 +92,6 @@ function updateJob(id: string, patch: JobPatch): JobRecord | null {
 /** All jobs for a chat, newest activity first. */
 function listJobs(chatId: string): JobRecord[] {
 	try {
-		if (!admissionClosed()) fs.mkdirSync(JOBS_DIR, { recursive: true });
 		return fs
 			.readdirSync(/* turbopackIgnore: true */ JOBS_DIR)
 			.filter((f) => f.endsWith(".json"))

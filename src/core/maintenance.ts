@@ -135,6 +135,7 @@ export function control(op: string, generation?: string, holdMs: number = HOLD_M
 		s.holdTimer = setTimeout(() => { if (s.mode === "draining") open(s); }, holdMs);
 		s.holdTimer.unref();
 	} else if (op === "release" || op === "resume") {
+		if (generation === undefined) throw new Error("Releasing a hold requires its generation");
 		if (s.mode !== (op === "release" ? "startup-hold" : "draining")) throw new Error("Command does not match the active hold");
 		open(s);
 	} else if (op !== "status") throw new Error("Unknown maintenance command");

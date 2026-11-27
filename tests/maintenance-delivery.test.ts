@@ -53,7 +53,8 @@ function agent() {
 const cliEnvironment = { PATH: process.env.PATH, NODE_ENV: "test" as const, LH_MAINTENANCE_SOCKET: process.env.LH_MAINTENANCE_SOCKET };
 /** The operator command against this process's real control socket. */
 function cli(...args: string[]) {
-	return new Promise<{ code: number; status: ReturnType<typeof maintenanceStatus>; stderr: string }>((resolve) => {
+	type CliStatus = ReturnType<typeof maintenanceStatus> & { remainingHoldMs?: number; holdExpiresAtMs?: number };
+	return new Promise<{ code: number; status: CliStatus; stderr: string }>((resolve) => {
 		execFile(process.execPath, ["scripts/maintenance.mjs", ...args], { cwd: root, env: cliEnvironment }, (error, stdout, stderr) => {
 			resolve({ code: error ? Number(error.code) : 0, status: stdout ? JSON.parse(stdout) : undefined, stderr });
 		});
@@ -74,7 +75,8 @@ const steer = (chatId: string, text: string) => steerRoute.POST(
 	post(`http://test/api/chats/${chatId}/steer`, { input: { type: "steer", id: "steer_fixture", text } }), { params: Promise.resolve({ id: chatId }) });
 
 afterEach(() => {
-	if (maintenanceStatus().mode !== "open") control("resume");
+	const status = maintenanceStatus();
+	if (status.mode === "draining") control("resume", status.generation);
 	researchModelOverride.current = undefined;
 	setTurnRunner(async () => 500);
 	for (const id of chats.splice(0)) {
@@ -289,12 +291,14 @@ test("a failed plugin runtime composition leaves no startup work behind", () => 
 
 test("the drain command cannot acquire a startup hold", () => {
 	const result = freshProcess(`
+		const { default: assert } = await import('node:assert/strict');
 		const { listenForMaintenance } = await import('./src/server/maintenance-socket.ts');
 		const { control } = await import('./src/core/maintenance.ts');
 		const { execFile } = await import('node:child_process');
 		await listenForMaintenance();
 		const before = control('status');
 		const code = await new Promise(resolve => execFile(process.execPath, ['scripts/maintenance.mjs', 'drain'], error => resolve(error?.code ?? 0)));
+		assert.throws(() => control('release'), /requires its generation/);
 		done({ code, mode: control('status', before.generation).mode, released: control('release', before.generation).mode });
 	`, { LH_DATA_DIR: process.env.LH_DATA_DIR!, LH_MAINTENANCE_STARTUP_HOLD: "1" });
 	assert.deepEqual(result, { code: 1, mode: "startup-hold", released: "open" });
@@ -316,6 +320,39 @@ async function throughDelayedSocket(handle: (command: Command, socket: Socket) =
 	finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 
+test("a delayed ready reply reports only the remaining time for its confirmed generation", async () => {
+	const period = 2000;
+	let receivedAt = 0;
+	const result = await throughDelayedSocket((command, peer) => {
+		receivedAt = Date.now();
+		const status = control(command.op, command.generation, command.holdMs);
+		setTimeout(() => peer.end(JSON.stringify(status) + "\n"), 150);
+	}, ["--timeout-ms", "3000", "--hold-ms", String(period)]);
+	assert.equal(result.code, 0, JSON.stringify(result));
+	assert.equal(control("status", result.status.generation).drained, true);
+	const { remainingHoldMs, holdExpiresAtMs } = result.status;
+	assert(remainingHoldMs && remainingHoldMs <= period - 100);
+	assert(holdExpiresAtMs && Date.now() < holdExpiresAtMs && holdExpiresAtMs <= receivedAt + period);
+
+	const unproven = await throughDelayedSocket((_command, peer) => {
+		peer.end(JSON.stringify({ ...maintenanceStatus(), generation: "unconfirmed" }) + "\n");
+	}, ["--generation", result.status.generation]);
+	assert.equal(unproven.code, 1);
+	assert.equal(unproven.status, undefined);
+});
+
+test("listing chats and jobs on a fresh profile leaves its directories absent", () => {
+	const profile = path.join(directory, "unopened");
+	const result = freshProcess(`
+		const { existsSync } = await import('node:fs');
+		const { stores } = await import('./src/server/stores.ts');
+		const chats = stores.chatStore.listChats();
+		const jobs = stores.jobStore.listJobs('chat_missing');
+		done({ chats, jobs, created: existsSync(process.env.LH_DATA_DIR) });
+	`, { LH_DATA_DIR: profile });
+	assert.deepEqual(result, { chats: [], jobs: [], created: false });
+});
+
 test("a ready reply delivered after its requested hold expired is refused", async () => {
 	const result = await throughDelayedSocket((command, peer) => {
 		try {
@@ -327,6 +364,8 @@ test("a ready reply delivered after its requested hold expired is refused", asyn
 	}, ["--timeout-ms", "3000", "--hold-ms", "20"]);
 	assert.equal(result.code, 2);
 	assert.equal(result.status.mode, "open");
+	assert.equal(result.status.holdExpiresAtMs, undefined);
+	assert.equal(result.status.remainingHoldMs, undefined);
 });
 
 test("a stalled renewal releases the confirmed drain generation and exits with code 2", async () => {

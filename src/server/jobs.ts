@@ -659,6 +659,13 @@ refuseDrainWhile("parked-learner-steer", () => {
 	return [...s.userSteers.keys()].some((chatId) => !s.liveAgents.has(chatId));
 });
 
+function wakeSubscriptionDeliveries() {
+	const s = state();
+	for (const chatId of s.queues.keys()) {
+		if (automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) void pump(chatId);
+	}
+}
+
 // Connection changes are the only wake for consent-deferred automatic work.
 // No retry timer, inference, or API-key fallback is started while consent is off.
 state().stopConnectionWatch?.();
@@ -674,9 +681,7 @@ state().stopConnectionWatch = onSubscriptionChange(() => {
 		for (const entry of s.userSteers.get(chatId) ?? []) if (!consumed.has(entry.message.id)) entry.handedTo = undefined;
 		handOffEligible(chatId, agent); // only unconsumed learner input; never replay consumed steers
 	}
-	for (const chatId of s.queues.keys()) {
-		if (automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) void pump(chatId);
-	}
+	whenOpen(wakeSubscriptionDeliveries);
 });
 
 function deferOrReject(chatId: string, entry: QueuedSteer, error: Error): void {

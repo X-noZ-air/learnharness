@@ -399,7 +399,8 @@ test("a run refused during maintenance reaches its caller and leaves the session
 	const previous = process.env.LH_MAINTENANCE_SOCKET;
 	process.env.LH_MAINTENANCE_SOCKET = "/unused/plugin-agent-test.sock";
 	t.after(() => {
-		if (maintenanceStatus().mode !== "open") control("resume");
+		const status = maintenanceStatus();
+		if (status.mode === "draining") control("resume", status.generation);
 		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previous;
 	});

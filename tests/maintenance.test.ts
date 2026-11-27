@@ -29,10 +29,11 @@ test("an owner hands off through a closed admission gate and finishes after dura
 test("a request owns streamed input until its handler settles", async () => {
 	const done = Promise.withResolvers<void>();
 	const request = mutation(async () => { await done.promise; return new Response(); })();
-	assert.equal(control("drain").counts["write-request"], 1);
+	const held = control("drain");
+	assert.equal(held.counts["write-request"], 1);
 	done.resolve(); await request;
 	assert.equal(control("status").drained, true);
-	control("resume");
+	control("resume", held.generation);
 });
 
 test("a hold whose caller died expires and the server accepts writes again", async (t) => {
@@ -50,7 +51,7 @@ test("a hold whose caller died expires and the server accepts writes again", asy
 	assert.notEqual(reopened.generation, held.generation);
 	assert.equal((await accepted()).status, 200);
 	assert.throws(() => control("status", held.generation), /Stale/, "the earlier readiness is withdrawn");
-	assert.throws(() => control("resume"), /active hold/);
+	assert.throws(() => control("resume", held.generation), /Stale/);
 });
 
 test("a living holder keeps its hold by repeating the drain", async (t) => {
@@ -72,6 +73,19 @@ test("a living holder keeps its hold by repeating the drain", async (t) => {
 	assert.equal(maintenanceStatus().mode, "open");
 	for (const period of [0, -1, 1.5, 600001, "1000", null]) assert.throws(() => control("drain", undefined, period as number), /hold period/);
 	assert.equal(maintenanceStatus().mode, "open", "a refused period closes nothing");
+});
+
+test("resume requires the current drain generation", () => {
+	const previousHold = control("drain");
+	control("resume", previousHold.generation);
+	const held = control("drain");
+	try {
+		assert.throws(() => control("resume"), /requires its generation/);
+		assert.throws(() => control("resume", previousHold.generation), /Stale/);
+		assert.equal(control("status", held.generation).drained, true);
+	} finally {
+		if (maintenanceStatus().mode === "draining") control("resume", held.generation);
+	}
 });
 
 test("an ended owner counts again only while admission is open", () => {
@@ -110,5 +124,5 @@ test("unknown backend lifetime refuses a guarantee even after its request ends",
 	assert.deepEqual(s.counts, {});
 	assert.deepEqual(s.reasons, ["unknown-plugin-lifecycle"]);
 	assert.equal(s.drained, false);
-	control("resume");
+	control("resume", s.generation);
 });

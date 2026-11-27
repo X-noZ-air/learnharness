@@ -17,11 +17,23 @@ async function hold(kind) {
 	const s = await f.control({ op: "drain" });
 	assert.equal(s.mode, "draining"); assert.ok(s.counts[kind] > 0, JSON.stringify(s)); return s;
 }
+async function stopDrained(ready) {
+	assert.equal(ready.drained, true);
+	assert(ready.remainingHoldMs > 0);
+	const status = await f.cli("status", ["--generation", ready.generation]);
+	assert.equal(status.generation, ready.generation);
+	assert.equal(status.mode, "draining");
+	assert.equal(status.drained, true);
+	assert(Date.now() < ready.holdExpiresAtMs, "the confirmed hold expired before stop");
+	await f.stop();
+	assert(Date.now() < ready.holdExpiresAtMs, "the confirmed hold expired before shutdown completed");
+}
 try {
 	await f.start(true);
-	assert.equal((await f.cli("status")).mode, "startup-hold");
+	const startup = await f.cli("status");
+	assert.equal(startup.mode, "startup-hold");
 	await refused("fixture");
-	await f.cli("release");
+	await f.cli("release", ["--generation", startup.generation]);
 	const { id } = await f.api("chats", { title: "Synthetic maintenance session" });
 	const { id: parked } = await f.api("chats", { title: "Synthetic session with an open question" });
 	f.holdModel(); await send(id, "first turn"); await f.waitForModel();
@@ -41,14 +53,14 @@ try {
 	const sideStatus = await hold("side-chat"); assert.ok(!sideStatus.counts["main-turn"]);
 	const drain = f.cli("drain", ["--generation", sideStatus.generation]); f.releaseModel();
 	assert.match(await side.text(), /Synthetic answer/); assert.equal((await drain).drained, true);
-	await f.cli("resume");
+	await f.cli("resume", ["--generation", sideStatus.generation]);
 	f.holdModel();
 	const form = new FormData(); form.append("files", new Blob(["Synthetic note about addition."]), "note.md");
 	const imported = fetch(f.origin + "/api/graph/import", { method: "POST", body: form });
 	await f.waitForModel();
 	const extract = await hold("extraction"); assert.ok(extract.counts.upload > 0);
-	f.releaseModel(); await (await imported).text(); assert.equal((await f.cli("drain", ["--generation", extract.generation])).drained, true);
-	await f.stop();
+	f.releaseModel(); await (await imported).text();
+	await stopDrained(await f.cli("drain", ["--generation", extract.generation]));
 	// A completed plugin computation whose durable marker still needs a session delivery.
 	const job = { id: "job_synthetic", chatId: id, kind: "plugin", toolCallId: "fixture-call", status: "done", activity: "finished",
 		updatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), delivery: { kind: "result", status: "pending" },
@@ -67,7 +79,8 @@ try {
 	assert.deepEqual(restored.messages, record.messages);
 	assert.ok(restored.sideChats[0].messages.some(m => m.text === "Synthetic answer."));
 	assert.equal((await f.api("jobs?chatId=" + id)).jobs[0].delivery.status, "pending");
-	await f.cli("release");
+	const restarted = await f.cli("status");
+	await f.cli("release", ["--generation", restarted.generation]);
 	f.holdModel();
 	await f.api("jobs?chatId=" + id);
 	const delivery = await hold("delivery"); await f.waitForModel(); f.releaseModel();
@@ -75,9 +88,11 @@ try {
 	assert.equal((await f.cli("drain", ["--generation", delivery.generation])).drained, true);
 	assert.equal((await f.api("jobs?chatId=" + id)).jobs[0].delivery.status, "delivered");
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
-	await f.cli("resume"); await send(id, "continue after restart"); await f.cli("drain");
+	await f.cli("resume", ["--generation", delivery.generation]);
+	await send(id, "continue after restart");
+	const continued = await f.cli("drain");
 	assert.ok(JSON.stringify((await f.api("chats/" + id)).messages).includes("continue after restart"));
-	await f.cli("resume");
+	await f.cli("resume", ["--generation", continued.generation]);
 	// A caller that dies while it waits cannot leave the server refusing writes.
 	f.holdModel(); await send(id, "turn during a lost caller"); await f.waitForModel();
 	const lost = f.spawnCli("drain", ["--timeout-ms", "60000", "--hold-ms", "1500"]);
@@ -100,11 +115,12 @@ try {
 	assert.deepEqual(postponed.reasons, ["parked-learner-steer"]); assert.equal(postponed.mode, "open");
 	assert.ok(!JSON.stringify((await f.api("chats/" + id)).messages).includes("Parked synthetic steer"));
 	await send(id, "after the postponed switch");
-	assert.equal((await f.cli("drain")).drained, true);
+	const ready = await f.cli("drain");
+	assert.equal(ready.drained, true);
 	assert.ok(JSON.stringify((await f.api("chats/" + id)).messages).includes("Parked synthetic steer"));
 	// The parked marker survives the stop and is delivered once the learner continues that session.
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
-	await f.stop(); await f.start();
+	await stopDrained(ready); await f.start();
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
 	await f.api("chats/" + parked + "/dismiss", { input: { type: "dismiss", toolCallId: "parked-call",
 		answer: { kind: "quiz", questionText: quiz.question, dontKnow: false, answers: [], dismissed: true, answeredAt: new Date().toISOString() } } });

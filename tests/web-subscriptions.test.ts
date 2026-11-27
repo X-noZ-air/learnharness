@@ -168,7 +168,8 @@ test("drain waits for a device sign-in through its bound browser action and dura
 		assert.equal(control("status", state.generation).drained, true);
 		assert.ok(JSON.parse(await fs.readFile(path.join(scratch, "xai-credentials.json"), "utf8")).credential);
 	} finally {
-		if (control("status").mode === "draining") control("resume");
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
 		owner.close();
 		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previous;
@@ -203,7 +204,8 @@ test("a pending web sign-in remains visible and can finish through its local cal
 		assert.equal((await originalFetch(callback)).status, 200);
 		assert.equal(control("status", hold.generation).drained, true);
 	} finally {
-		if (control("status").mode === "draining") control("resume");
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
 		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previous;
 	}

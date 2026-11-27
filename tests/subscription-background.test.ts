@@ -18,10 +18,10 @@ const { persistTurn } = await import("../src/server/turn-service.ts");
 const originalSend = Object.getOwnPropertyDescriptor(process, "send"), originalConnected = Object.getOwnPropertyDescriptor(process, "connected");
 const marker = process.env.LH_DESKTOP_SERVER, secret = process.env.LH_DESKTOP_API_SECRET;
 let revision = 0;
-function connection(providerId: string, background: boolean) {
+function connection(providerId: string, background: boolean, connected = true) {
 	revision++;
 	(process.emit as (event: string, value: unknown) => boolean)("message", { channel: "lh:subscriptions", op: "changed", snapshot: {
-		statuses: NATIVE_SUBSCRIPTIONS.map((p) => ({ providerId: p.providerId, available: true, connected: true, pending: false, allowBackgroundUse: p.providerId === providerId ? background : true, connectionId: `fixture-${p.providerId}`, epoch: 1, authorityRevision: 1, revision })),
+		statuses: NATIVE_SUBSCRIPTIONS.map((p) => ({ providerId: p.providerId, available: true, connected: p.providerId !== providerId || connected, pending: false, allowBackgroundUse: p.providerId === providerId ? background : true, connectionId: `fixture-${p.providerId}`, epoch: 1, authorityRevision: 1, revision })),
 		models: Object.fromEntries(NATIVE_SUBSCRIPTIONS.map((p) => [p.providerId, piModels().getModels(p.providerId)])),
 	} });
 }
@@ -67,7 +67,8 @@ test("a probe handoff waiting for subscription consent postpones drain and reach
 	const previous = process.env.LH_MAINTENANCE_SOCKET;
 	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "fixture.sock");
 	t.after(() => {
-		if (control("status").mode === "draining") control("resume");
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
 		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
 		else process.env.LH_MAINTENANCE_SOCKET = previous;
 	});
@@ -93,4 +94,46 @@ test("a probe handoff waiting for subscription consent postpones drain and reach
 	await delivered;
 	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, [handoff]);
 	assert.deepEqual(control("status").reasons, []);
+});
+
+test("a subscription change from admitted sign-in wakes parked delivery only after resume", { timeout: 5000 }, async (t) => {
+	const { beginWork, control, maintenanceStatus } = await import("../src/core/maintenance.ts");
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "fixture.sock");
+	const provider = NATIVE_SUBSCRIPTIONS[0]!;
+	connection(provider.providerId, true, false);
+	const chat = stores.chatStore.createChat("Parked subscription delivery");
+	const model = piModels().getModels(provider.providerId)[0]!;
+	stores.chatStore.saveSettings(chat.id, { model: { provider: provider.logicalId, id: model.id } });
+	const job = stores.jobStore.createJob({ kind: "research", chatId: chat.id, toolCallId: "parked-subscription-job" });
+	const result = { brief: "Fixture helper result", sources: [] };
+	stores.jobStore.updateJob(job.id, { status: "done", result, delivery: { kind: "result", status: "pending" } });
+	const steer = buildSubagentSteer(job, result);
+	setTurnRunner(async (id, input) => {
+		if (input.type === "steers") stores.chatStore.saveMessages(id, input.steers);
+		return 200;
+	});
+	const delivered = deliverJobResult(steer);
+	void delivered.catch(() => {});
+	await new Promise(resolve => setImmediate(resolve));
+	const login = beginWork("sign-in", true);
+	const held = control("drain");
+	t.after(() => {
+		login.end();
+		discardChatDeliveries(chat.id);
+		if (maintenanceStatus().mode === "draining") control("resume", held.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	assert.deepEqual(held.counts, { "sign-in": 1 });
+	login.run(() => connection(provider.providerId, true));
+	login.end();
+	assert.equal(control("status", held.generation).drained, true);
+	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, []);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "pending");
+
+	control("resume", held.generation);
+	await delivered;
+	assert.deepEqual(stores.chatStore.getChat(chat.id)!.messages, [steer]);
+	assert.equal(stores.jobStore.getJob(job.id)!.delivery?.status, "delivered");
 });

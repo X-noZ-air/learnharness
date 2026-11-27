@@ -37,22 +37,26 @@ async function drain(socket, generation, holdMs, timeout) {
 	// gives the caller a conservative deadline even for a buffered reply.
 	const period = holdMs ?? 60000;
 	let validUntil;
+	let wallDeadline;
 	let status;
 	const renew = () => {
+		wallDeadline = Date.now() + period;
 		validUntil = performance.now() + period;
 		return request(socket, { op: "drain", generation, holdMs: period }, deadline);
 	};
 	try {
 		status = await renew();
 		while (status.mode === "draining") {
+			if (typeof status.generation !== "string" || !status.generation || (generation !== undefined && status.generation !== generation))
+				throw new Error("Drain response did not confirm the requested hold generation");
 			generation = status.generation;
 			const remaining = Math.min(deadline, validUntil) - performance.now();
 			if (remaining <= 0) break;
-			if (status.drained) {
-				const reply = JSON.stringify(status);
-				if (performance.now() >= Math.min(deadline, validUntil)) break;
-				console.log(reply);
-				return;
+			if (status.drained === true) {
+				const now = Date.now();
+				const remainingHoldMs = Math.floor(Math.min(validUntil - performance.now(), wallDeadline - now));
+				if (remainingHoldMs <= 0 || performance.now() >= deadline) break;
+				return { ...status, holdExpiresAtMs: now + remainingHoldMs, remainingHoldMs };
 			}
 			if (status.reasons.length) break;
 			await delay(Math.min(100, period / 2, Math.ceil(remaining)));
@@ -63,7 +67,6 @@ async function drain(socket, generation, holdMs, timeout) {
 		if (!(error instanceof DrainTimeout) && !(error instanceof SocketTimeout && generation)) throw error;
 	}
 	process.exitCode = 2;
-	if (status?.mode === "draining") generation = status.generation;
 	if (generation && (!status || status.mode === "draining")) {
 		try { return await request(socket, { op: "resume", generation }); }
 		catch (error) {
@@ -87,6 +90,7 @@ try {
 	if (positionals.length !== 1 || !["drain", "resume", "release", "status"].includes(op) || !socket || !Number.isSafeInteger(timeout) || timeout < 0
 		|| (holdMs !== undefined && (op !== "drain" || !Number.isSafeInteger(holdMs) || holdMs < 1)))
 		throw new Error("Usage: maintenance.mjs status|drain|resume|release --socket PATH [--generation ID] [drain: --timeout-ms N --hold-ms N]");
+	if ((op === "resume" || op === "release") && !values.generation) throw new Error(`${op} requires --generation ID`);
 	const status = op === "drain"
 		? await drain(socket, values.generation, holdMs, timeout)
 		: await request(socket, { op, generation: values.generation });
