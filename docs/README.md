@@ -16,6 +16,8 @@
 - [Prompt composition](../src/agent/prompts/README.md) — source fragments and user overrides.
 - [Tool-content recovery](tool-content-recovery.md) — display-only recovery of model-authored escaping defects.
 - [Desktop builds and releases](desktop-release.md) — packaging, release gates, and updates.
+- [Server maintenance](server-maintenance.md) - local drain control and safe process replacement.
+- [Werft upstream updates](werft-updates.md) - fork integration and release handoff.
 
 ## Teaching method
 

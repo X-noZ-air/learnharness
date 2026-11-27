@@ -20,9 +20,9 @@ The response identifies the Actions run. Use the run result and the journal's
 `last_successful_poll_at` to verify a completed poll.
 
 The workflow's GitHub cron at minutes 7, 22, 37, and 52 UTC is a secondary
-trigger. To opt in on a fork, open **Actions**, select **Werft upstream updates**,
-and click **Enable workflow** if GitHub offers it. The host timer is sufficient
-for regular polling.
+trigger. The update job runs only on `X-noZ-air/learnharness`. On that fork,
+open **Actions**, select **Werft upstream updates**, and click **Enable workflow**
+if GitHub offers it. The host timer is sufficient for regular polling.
 
 ## Update and branch protection
 

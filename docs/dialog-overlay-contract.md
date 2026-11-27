@@ -26,8 +26,7 @@ a focused editor that owns Escape, a menu above a dialog, or a child dialog abov
 - A surface that refuses dismissal still consumes Escape.
 - Explicit editor cancellation, including source/folder/session renaming, retains its
   own semantics. There is no generic search-clear-first rule: model/provider/font/language
-  menus close. Sessions search keeps its query when Escape leaves the inline search
-  field or dismisses the drawer.
+  menus close. See [session search](keyboard.md#search-and-menus) for its Escape behavior.
 
 ### Passive tooltips
 

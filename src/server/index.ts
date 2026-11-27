@@ -67,4 +67,4 @@ export { claudeCodeInstallationResponse } from "./claude-code.ts";
 export * from "./custom-provider.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 
-export { mutation } from "../core/maintenance.ts";
+export { drainReadinessReported, mutation } from "../core/maintenance.ts";

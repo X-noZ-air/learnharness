@@ -15,11 +15,11 @@ The unchanged M1 process provides no atomic readiness check. In either case, kee
 
 Set `LH_MAINTENANCE_SOCKET` to an absolute Unix socket path in an existing directory owned by the service user with mode 0700. Use a private runtime directory outside the profile. The socket is mode 0600. Leave this variable unset for ordinary operation. The control protocol is local to the socket.
 
-Choose a fresh path for each server process or have the service manager clean an obsolete runtime directory after verifying that its previous owner has exited. Startup fails if the socket cannot be bound. Setting `LH_MAINTENANCE_STARTUP_HOLD=1` requests closed admission from startup and requires a socket. Plugin activation, recovery and new model requests wait until release.
+Choose a fresh path for each server process or have the service manager clean an obsolete runtime directory after verifying that its previous owner has exited. Startup fails if the socket cannot be bound. Setting `LH_MAINTENANCE_STARTUP_HOLD=1` requests closed admission from startup and requires a socket. Plugin activation, recovery and new model requests wait until release. With web subscriptions enabled, startup initializes the ChatGPT status before the socket can report readiness. For a fresh writable profile this creates the empty credentials file.
 
 ## Operator commands
 
-The client uses the same environment variable or an explicit `--socket PATH`.
+Run the commands from the repository root or from the assembled standalone server directory. The client uses `LH_MAINTENANCE_SOCKET` or an explicit `--socket PATH`.
 
 ```sh
 node scripts/maintenance.mjs status
@@ -28,15 +28,15 @@ node scripts/maintenance.mjs resume --generation "$DRAIN_GENERATION"
 node scripts/maintenance.mjs release --generation "$STARTUP_GENERATION"
 ```
 
-The client writes one JSON object on stdout. A successful `drain` can return
+When the client has a status response, it writes one JSON object on stdout. A successful `drain` can return
 
 ```json
 {"version":1,"generation":"0ef24084-c188-4c38-b09e-d7fef5990abd","mode":"draining","counts":{},"reasons":[],"drained":true,"holdExpiresAtMs":1795795260000,"remainingHoldMs":59823}
 ```
 
-The socket accepts one JSON line per connection and returns one JSON line. Operator operations are `status`, `drain`, `resume` and `release`. An initial `drain` requires an `attempt` with a unique `id` and a future `startByMs` Unix timestamp in milliseconds. A `drain` can specify `holdMs`. A generation changes on entry to and exit from a hold, and on process replacement. A startup hold accepts `status` and `release`. Release it before requesting a drain. Renewing an active drain, resuming a drain and releasing a startup hold each require the active hold's generation. Supplying a stale generation fails the command. Serialize operator actions for each profile.
+The socket accepts one JSON line per connection and returns one JSON line. The CLI exposes `status`, `drain`, `resume` and `release`. The socket also accepts `cancel-drain` to recover an initial drain with an unconfirmed response. An initial `drain` requires an `attempt` with a unique `id` and a future `startByMs` Unix timestamp in milliseconds. A `drain` can specify `holdMs`. A generation changes on entry to and exit from a hold, and on process replacement. A startup hold accepts `status` and `release`. Release it before requesting a drain. Renewing an active drain, resuming a drain and releasing a startup hold each require the active hold's generation. Supplying a stale generation fails the command. Serialize operator actions for each profile.
 
-* `drain` closes admission before returning its first status. The CLI waits for the same generation to report `drained: true`. Exit code 0 means the requested hold is ready. Exit code 2 returns the busy counts or a reason a guarantee is unavailable. Exit code 1 indicates a command or connection error.
+* `drain` closes admission before returning its first status. The CLI waits for the same generation to report `drained: true`. Exit code 0 means the requested hold is ready. Exit code 2 means readiness was unavailable or could not be confirmed in time. Exit code 1 indicates a command or connection error.
 * A drain hold has a deadline in the server. It lasts `holdMs` after the most recent `drain` command, 60000 by default and at most 600000. When the deadline passes, the server opens by itself, changes the generation and withdraws any readiness it reported. A caller that crashes or loses its session therefore cannot leave the service refusing writes. `status` does not renew a hold. While it waits, the CLI renews the hold with every poll. It discards a ready response that arrives after the requested hold could have expired. A transport timeout after confirmation also triggers a generation-bound release attempt and exit code 2.
 * When the wait ends without readiness, because `--timeout-ms` elapsed or a reason is present, the CLI resumes its confirmed drain, prints the resulting status and exits with code 2. Maintenance is postponed and a running lesson or sign-in continues. The CLI sends its first drain with an `attempt` containing a random `id` and a `startByMs` Unix timestamp in milliseconds. If that reply times out, it sends `cancel-drain` with the same attempt ID. The server opens only the hold created by that attempt and rejects initial requests that arrive after their admission deadline. If the socket cannot confirm cancellation, the CLI reports that on stderr and the hold's server-side expiry remains in force.
 * `release` opens a startup hold. `resume` opens a drain hold. Either invalidates the corresponding readiness result. An open server reports `drained: false` even when its counts are empty. A startup hold has no deadline and stays closed until it is released.
@@ -47,7 +47,7 @@ The socket accepts one JSON line per connection and returns one JSON line. Opera
 
 The keys are bounded work categories. Status omits session, plugin, provider and file identifiers. An upload or write request covers the route from admission through completion, including reading its request body. The server also counts main turns, side chats, jobs, delivery, compaction, extraction, plugin tasks and writes, sign-in, private subscription operations that may refresh credentials, and startup. Counts can overlap during handoff. A closed browser tab or an acknowledged HTTP request can leave an active owner behind.
 
-New external work receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. Reads, status requests, and existing stop, abort, cancel and dismiss controls remain available during a drain. After the server first reports readiness for a hold, these controls cannot start a new write. An idle dismissal returns HTTP 409 so it can be retried after maintenance. A pending sign-in can still be continued or canceled. New sign-ins wait for normal service. If a sign-in needs learner input, the wait times out and the server resumes.
+New external work receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. Reads and status requests remain available during a drain. After the server first reports readiness for a hold, [stop and cancellation controls](#stop-and-cancellation-controls) cannot start a new write. If a sign-in needs learner input, the wait times out and the server resumes.
 
 `delivery` counts only a result that is being delivered. A finished background result that cannot continue until the learner acts holds no count: it waits behind an open question, a dismissed question, a failed automatic start or missing background consent. Its marker is already saved with the job in the profile. It stays there through a stop and is delivered after the restart, once the learner continues the session.
 
@@ -55,7 +55,7 @@ A probe-to-teacher handoff lives in memory until delivery. If its delivery pump 
 
 A message the learner sent into a running lesson is kept only in memory until a lesson run saves it. If that run ended before it took the message, for example at a question or when the learner stopped it, the server reports the reason `parked-learner-steer` and `drained: false`. Stopping now would lose the accepted message, so an unattended switch is postponed. The reason clears when the learner's next run in that session saves the message.
 
-Loading a community backend makes the process report `unknown-plugin-lifecycle`. Arbitrary backend code can retain a timer or writer after deactivation. Disabling that package cannot establish quiescence for the current process. Audited bundled backends register detached writes through the host's `trackWork` callback. A change that adds a backend writer or a new mutation route must cover its admission and its last write.
+Loading a community backend makes the process report `unknown-plugin-lifecycle`. Arbitrary backend code can retain a timer or writer after deactivation. Disabling that package cannot establish quiescence for the current process. Audited bundled backends use the host's [`trackWork` callback](plugin-api/plugins.md#pluginbackendcontext-trackwork). A change that adds a backend writer or a new mutation route must cover its admission and its last write.
 
 ## Stop and cancellation controls
 
@@ -63,9 +63,9 @@ Loading a community backend makes the process report `unknown-plugin-lifecycle`.
 | --- | --- |
 | `POST /api/activity/abort` | Stop work of kind `turn`, `plugin-worker`, `job` or `extraction`. |
 | `POST /api/chats/[id]/side-chats/[threadId]/stop` | Stop the current side answer. Its owner saves the partial response. |
-| `POST /api/chats/[id]/dismiss` | Dismiss a native question, a practice problem or a plugin question with the existing route behavior. |
-| `POST /api/subscriptions` and `/api/subscriptions/browser` | Cancel an existing ChatGPT, Copilot or xAI sign-in. Bound browser and prompt continuations can complete that sign-in. Account, credential and background-consent changes require normal admission. |
+| `POST /api/chats/[id]/dismiss` | Dismiss a native question, a practice problem or a plugin question. Once readiness has been reported, an idle dismissal returns HTTP 409 with code `maintenance`. |
+| `POST /api/subscriptions` and `/api/subscriptions/browser` | The subscription controls accept cancellation of an existing ChatGPT, Copilot or xAI sign-in. Attempt-bound browser actions and prompt responses can continue existing sign-ins. Account, credential and background-consent changes require normal admission. |
 | `POST /api/plugins/[id]/call` | Active Core Flashcards accepts `get-state`, `get-catalog`, `open-file-deck` and `cancel-generation`. Cancellation writes are counted through completion. After readiness, cancellation returns the existing state without writing. Active Drawing Pad and Rich Code Blocks also expose their read-only operations during drain. Starting work or activating a plugin requires normal admission. |
 | `PUT /api/plugins/[id]`, `POST /api/plugins`, `DELETE /api/chats/[id]` and `PATCH /api/chats/[id]/side-chats/[threadId]` | Plugin enablement and refresh, chat deletion, and side-chat view state change configuration or records. They use normal admission. |
 
-On POSIX, run `node scripts/smoke-maintenance.mjs` in a development checkout to exercise the socket, admissions, reads, upstream stop and dismissal controls, and restart with a disposable profile.
+See the [maintenance smoke checks](development.md#checks) for regression coverage.

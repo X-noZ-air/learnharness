@@ -40,12 +40,18 @@ async function verifyDismissal(chatId, field, title, draft) {
 	try {
 		await page.goto(f.origin + "/chat/" + chatId, { waitUntil: "domcontentloaded", timeout: 90000 });
 		await page.waitForSelector(field, { visible: true });
-		await page.type(field, draft);
-		await page.waitForFunction(expected => {
-			if (document.querySelector('[data-testid="abort-turn-title"]')?.textContent === expected) return true;
+		const dialogTitle = '[data-testid="abort-turn-title"]';
+		const openDismissal = () => page.waitForFunction((selector, expected) => {
+			if (document.querySelector(selector)?.textContent === expected) return true;
 			window.dispatchEvent(new Event("lh:kbd-abort-turn"));
 			return false;
-		}, { polling: 250, timeout: 30000 }, title);
+		}, { polling: 250, timeout: 30000 }, dialogTitle, title);
+		// A visible server-rendered editor can still lack its client input handlers.
+		await openDismissal();
+		await page.click('[data-testid="abort-turn-cancel"]');
+		await page.waitForSelector(dialogTitle, { hidden: true });
+		await page.type(field, draft);
+		await openDismissal();
 		const response = page.waitForResponse(res => res.url().endsWith("/dismiss"));
 		await page.click('[data-testid="abort-turn-confirm"]');
 		assert.equal((await response).status(), 409);
