@@ -53,8 +53,8 @@ const STORAGE_KEY = "lh:sidebar-open";
  * preference. Opening the sidebar while narrow asks the Electron shell to
  * widen the window to the threshold (window.lh.expandWindow, IPC in
  * electron/main.cjs) — the resize listener flips `narrow` and the sidebar
- * appears. In the plain browser there is no window to widen and no
- * suppression — a narrow tab opens the sidebar if the user says so.
+ * appears. Browser tabs use the separate drawer breakpoint described in
+ * docs/getting-started.md.
  *
  * Mirrors SIDEBAR_AUTOCLOSE in electron/main.cjs — keep in sync.
  */
@@ -227,11 +227,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  transition (same duration-200, same easing, both gated on mount) —
  *  before, it mounted/unmounted in one frame, so its 48px footprint
  *  (button + gap) popped and dragged the title and chips sideways while
- *  the sidebar was still mid-slide. When open the slot is exactly zero
- *  (w-0 -mr-3: width 0, the negative margin cancels the header's gap-3),
+ *  the sidebar was still mid-slide. When the inline sidebar is open, its
+ *  toggle slot is exactly zero (w-0 -mr-3 cancels the header's gap-3),
  *  so resting layouts are pixel-identical to the old conditional render.
  *  The icon fades with the slot and is clipped by it as it collapses —
- *  no popping in either direction. */
+ *  no popping in either direction. The drawer overlays a fixed-width slot. */
 export function SidebarToggle() {
 	const { open, toggle, narrowViewport, openerRef } = useSidebar();
 	return (

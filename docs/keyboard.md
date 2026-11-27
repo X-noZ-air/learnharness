@@ -55,7 +55,8 @@ handling; this is not a guarantee for every OS/IME or layout-specific key.
   not backward focus traversal. Connection dialogs can own their own Tab trap.
 - In the [session drawer](getting-started.md#start-a-session), **Tab** and
   **Shift+Tab** move through its controls in both directions. **Mod+B** toggles
-  the drawer. **Esc** closes it when no child control or layer claims the key.
+  the drawer. A dialog above the open drawer takes priority over that shortcut.
+  **Esc** closes the drawer when no child control or layer claims the key.
   Closing returns focus to the eligible opener or the visible sidebar control.
 - **Esc** acts on the active field or topmost surfaced layer first: for example,
   leave a field, dismiss a menu/dialog, or close Find. Handlers claim the event
