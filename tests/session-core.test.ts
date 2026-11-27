@@ -1127,10 +1127,10 @@ describe("answer submission recovery", () => {
 		assert.equal(m.getState().nativeMessages.length, 2, "no optimistic answer targets the newer question");
 	});
 
-	it("uses the newest occurrence's tool for optimistic answers and dismissals", async () => {
+	it("uses the newest occurrence's tool for answers and acknowledged dismissals", async () => {
 		const older = { ...question, id: "old-ask", content: [{ type: "toolCall", id: "q1", name: "ask_user_question", arguments: {} }] } as LhMessage;
 		for (const dismiss of [false, true]) {
-			const m = model({ initialMessages: [older, question], fetch: async () => { throw new TypeError("offline"); } });
+			const m = model({ initialMessages: [older, question], fetch: async () => { if (dismiss) return Response.json({ ok: true }); throw new TypeError("offline"); } });
 			const key = pendingQuestionOf([older, question])!.key;
 			let optimisticTool: string | undefined;
 			m.onChange = () => {

@@ -74,7 +74,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 		throw err;
 	}
 
-	if (drainReadinessReported()) return Response.json({ error: "The dismissal was not saved. Retry after maintenance." }, { status: 409 });
+	if (drainReadinessReported()) return Response.json({ code: "maintenance", error: "Update in progress. Try again shortly." }, { status: 409 });
 
 	// Write-ahead, turn-less: the record is the only state that moves.
 	// No teacher request runs here. Side exchanges remain pending for the

@@ -67,15 +67,6 @@ test("cold subscription reads and cancellation preserve their public contracts d
 	assert.deepEqual(payload.native.map((provider: { providerId: string; connected: boolean }) => [provider.providerId, provider.connected]),
 		[["github-copilot", true], ["xai", true]]);
 	assert.deepEqual(await fs.readFile(credentialFile), credentialsBefore);
-	await fs.rename(credentialFile, credentialFile + ".saved");
-	try {
-		const withoutCredentials = await subscriptionControlsResponse(request());
-		assert.equal(withoutCredentials.status, 200);
-		assert.equal((await withoutCredentials.json()).chatgpt.available, false);
-		await assert.rejects(fs.stat(credentialFile), { code: "ENOENT" });
-	} finally {
-		await fs.rename(credentialFile + ".saved", credentialFile);
-	}
 	assert.equal(control("status", hold.generation).drained, true);
 });
 

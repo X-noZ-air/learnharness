@@ -130,8 +130,8 @@ async function dispatch<T>(channel: Channel, op: string, fields: Record<string, 
 }
 configureWebSubscriptionRuntime(webSubscriptionRequest);
 
-export async function webSubscriptionStatus(readOnly = false): Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionSnapshot["statuses"] }> {
+export async function webSubscriptionStatus(): Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionSnapshot["statuses"] }> {
 	const owner = webSubscriptionOwner();
-	const [chatgpt, native] = await Promise.all([readOnly ? owner.chatgpt.readStatus() : owner.chatgpt.status(), owner.native.status()]);
+	const [chatgpt, native] = await Promise.all([owner.chatgpt.status(), owner.native.status()]);
 	return { chatgpt, native };
 }

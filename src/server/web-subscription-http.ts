@@ -24,7 +24,7 @@ export async function subscriptionControlsResponse(request: Request): Promise<Re
 }
 async function parseControl(request: Request, continuationOnly: boolean): Promise<Response> {
 	try {
-		if (request.method === "GET") return Response.json(await webSubscriptionStatus(continuationOnly), { headers: HEADERS });
+		if (request.method === "GET") return Response.json(await webSubscriptionStatus(), { headers: HEADERS });
 		if (request.method !== "POST") return error("Unsupported method.", 405);
 		if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error("Expected JSON.", 415);
 		// Bound both advertised and streamed input before parsing commands.

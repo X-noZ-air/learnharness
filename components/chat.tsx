@@ -520,7 +520,6 @@ export function Chat({
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
 				const reading = readingThinkingRef.current.trim() || undefined;
-				clearReadingThinking();
 				void closeSideThreadRef.current(); // its note lands after the skip
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
@@ -1553,10 +1552,7 @@ export function Chat({
 	useServerEvent("record-changed", (p) => {
 		// The silent dismissal write (A2, 2026-10-03): no turn ever ran, so
 		// only the record moved. Other tabs and post-error windows adopt;
-		// our OWN dismissal already rendered its optimistic append — syncing
-		// here too is harmless (the adoption law swaps local ids for the
-		// server's). Busy states ignore it: a running turn owns the view,
-		// and the write is 409-guarded against exactly that anyway.
+		// a running turn owns the view and applies its parked dismissal at settle.
 		if (p.chatId !== chatId) return;
 		if (localStreamRef.current || turnInFlightRef.current) return;
 		void syncFromServer();

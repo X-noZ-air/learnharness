@@ -3,7 +3,11 @@
 export async function register() {
 	if (process.env.NEXT_RUNTIME === "nodejs") {
 		const { listenForMaintenance } = await import("./src/server/maintenance-socket.ts");
-		const { admissionClosed, tracked, whenOpen } = await import("./src/core/maintenance.ts");
+		const { admissionClosed, maintenanceEnabled, tracked, whenOpen } = await import("./src/core/maintenance.ts");
+		if (maintenanceEnabled()) {
+			const { webSubscriptionsEnabled, webSubscriptionOwner } = await import("./src/server/web-subscriptions.ts");
+			if (webSubscriptionsEnabled()) await webSubscriptionOwner().chatgpt.status();
+		}
 		await listenForMaintenance();
 		const boot = () => tracked("startup", async () => {
 			const { initializeModelCatalog } = await import("./src/server/remote-model-catalog.ts");
