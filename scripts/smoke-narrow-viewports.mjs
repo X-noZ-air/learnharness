@@ -418,6 +418,11 @@ async function checkPracticePicker(page, viewport) {
 	const closePicker = '[data-testid="chain-table-close"]';
 	await page.waitForSelector('[data-testid="add-source-folder"]', { visible: true });
 	await checkVerticalHitTargets(page, closePicker);
+	const nameSort = '[data-testid="sort-name"]';
+	await checkVerticalHitTargets(page, nameSort);
+	const sort = await page.$eval(nameSort, button => button.getAttribute("aria-sort"));
+	await action(page, nameSort, true);
+	await page.waitForSelector(`${nameSort}[aria-sort="${sort === "ascending" ? "descending" : "ascending"}"]`);
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), viewport.width,
 		"the node picker has horizontal overflow");
 	await action(page, closePicker, true);

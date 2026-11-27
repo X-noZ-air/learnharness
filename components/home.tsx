@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -41,6 +41,19 @@ export function Home({
 	const router = useRouter();
 	const pathname = usePathname();
 	const bodyRef = useRef<HTMLDivElement>(null);
+	const dockRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const body = bodyRef.current;
+		const dock = dockRef.current;
+		if (!body || !dock) return;
+		const reserveDockSpace = () => {
+			body.style.setProperty("--home-dock-height", `${dock.getBoundingClientRect().height}px`);
+		};
+		reserveDockSpace();
+		const observer = new ResizeObserver(reserveDockSpace);
+		observer.observe(dock, { box: "border-box" });
+		return () => observer.disconnect();
+	}, []);
 	const surfaceTarget = usePageSurfaceBoundary({ active: pathname === "/", viewKey: "/", bodyRef });
 	const chromeStyle = useSurfaceChromeStyle(surfaceTarget);
 	const [folderFilterSlot, setFolderFilterSlot] = useState<HTMLElement | null>(null);
@@ -186,8 +199,8 @@ export function Home({
 			    MINIMAL HOME — a quiet knowledge-base summary + the graph
 			    chrome's survivors; data, extraction, and the pick flow are
 			    untouched, and the chain table stays behind its button. */}
-			<div ref={bodyRef} className="absolute inset-0 narrow:short:grid narrow:short:grid-cols-1 narrow:short:grid-rows-[minmax(0,1fr)_auto]">
-			<main className="absolute inset-0 narrow:short:relative">
+			<div ref={bodyRef} className="absolute inset-0">
+			<main className="absolute inset-0">
 				{rendering ? (
 					<GraphView
 						folderFilterSlot={folderFilterSlot}
@@ -211,7 +224,7 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className={`pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:static narrow:short:flex narrow:short:max-h-[calc(100dvh-3.75rem)] ${startError ? "narrow:short:pb-0" : ""}`}>
+			<div ref={dockRef} className={`pointer-events-none absolute inset-x-0 bottom-0 pb-5 narrow:short:flex narrow:short:max-h-[calc(100%-3.75rem)] ${startError ? "narrow:short:pb-0" : ""}`}>
 				<div className={`pointer-events-auto mx-auto w-full max-w-[46rem] px-4 narrow:short:flex narrow:short:min-h-0 narrow:short:flex-col narrow:short:[&>:last-child]:shrink-0 ${startError ? "narrow:short:[&>:last-child]:pt-0" : ""}`}>
 					{/* In a short viewport, show the retry alert first and let the picker scroll into view. */}
 					<div className={`contents narrow:short:flex narrow:short:overflow-y-auto ${startError ? "narrow:short:flex-col-reverse" : "narrow:short:flex-col"}`}>
