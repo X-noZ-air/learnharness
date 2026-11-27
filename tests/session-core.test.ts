@@ -1021,29 +1021,6 @@ describe("answer submission recovery", () => {
 		assert.equal((part.output as { dismissed: boolean }).dismissed, true);
 	});
 
-	it("keeps a question and its reading draft after a refused dismissal", async () => {
-		const refused = Promise.withResolvers<Response>();
-		const submitted: unknown[] = [];
-		const m = model({ initialMessages: [question], fetch: async (url, init) => {
-			assert.equal(String(url), "/api/chats/chat_x/dismiss");
-			submitted.push(JSON.parse(String(init?.body)));
-			return submitted.length === 1 ? refused.promise : Response.json({ ok: true });
-		} });
-		const key = pendingQuestionOf([question])!.key;
-		const draft = "  Keep this reasoning.  ";
-		const dismissal = { ...dismissedAnswer("quiz", "Q?"), readingThinking: draft.trim() };
-		const first = m.dismissQuestion("q1", { ...dismissal, readingThinking: draft }, key);
-		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
-		refused.resolve(Response.json({ error: "Stale target" }, { status: 400 }));
-		await first;
-		assert.equal(pendingQuestionOf(m.getState().nativeMessages)?.key, key);
-		assert.equal(m.questionDraft(key)?.readingThinking, draft);
-		assert.equal(m.getState().error?.message, "The dismissal failed (400).");
-		await m.dismissQuestion("q1", { ...dismissal, readingThinking: m.questionDraft(key)?.readingThinking }, key);
-		assert.deepEqual(submitted, Array(2).fill({ input: { type: "dismiss", toolCallId: "q1", answer: dismissal } }));
-		assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
-	});
-
 	it("restores an unconfirmed optimistic answer when the post-ack record read fails", async () => {
 		let posts = 0;
 		let reads = 0;
@@ -1150,13 +1127,10 @@ describe("answer submission recovery", () => {
 		assert.equal(m.getState().nativeMessages.length, 2, "no optimistic answer targets the newer question");
 	});
 
-	it("uses the newest occurrence's tool for optimistic answers and confirmed dismissals", async () => {
+	it("uses the newest occurrence's tool for optimistic answers and dismissals", async () => {
 		const older = { ...question, id: "old-ask", content: [{ type: "toolCall", id: "q1", name: "ask_user_question", arguments: {} }] } as LhMessage;
 		for (const dismiss of [false, true]) {
-			const m = model({ initialMessages: [older, question], fetch: async () => {
-				if (dismiss) return Response.json({ ok: true });
-				throw new TypeError("offline");
-			} });
+			const m = model({ initialMessages: [older, question], fetch: async () => { throw new TypeError("offline"); } });
 			const key = pendingQuestionOf([older, question])!.key;
 			let optimisticTool: string | undefined;
 			m.onChange = () => {

@@ -1,4 +1,4 @@
-import { admissionClosed, maintenanceRefusal, mutation, waitForOpen } from "../core/maintenance.ts";
+import { admissionClosed, maintenanceRefusal, mutation, trackedCancellation } from "../core/maintenance.ts";
 import { isPluginHostError } from "./plugin-host.ts";
 import { apiRequestRefusal } from "./desktop-access.ts";
 import type { PluginFrontendContext, PluginInfo } from "../core/plugins.ts";
@@ -14,6 +14,11 @@ export interface PluginTransportHost {
 	asset(id: string, segments: string[]): { bytes: Uint8Array; contentType: string };
 }
 class InputError extends Error {}
+const coreReads: Readonly<Record<string, readonly string[]>> = {
+	flashcards: ["get-state", "get-catalog"],
+	"drawing-pad": ["get-settings", "get-session-poses"],
+	"rich-code-blocks": ["get-settings"],
+};
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 async function objectBody(request: Request): Promise<Record<string, unknown>> {
 	let body: unknown;
@@ -23,7 +28,7 @@ async function objectBody(request: Request): Promise<Record<string, unknown>> {
 }
 export function createPluginTransport(deps: {
 	getHost(): Promise<PluginTransportHost>;
-	cancelOwnedFlashcardsBatch?(input: unknown): Promise<unknown> | undefined;
+	getActiveHost?(): PluginTransportHost | undefined;
 	directory: string;
 }) {
 	const guarded = async (handle: () => Promise<Response>) => {
@@ -33,9 +38,10 @@ export function createPluginTransport(deps: {
 			return json({ error: error instanceof Error || isPluginHostError(error) ? error.message : "Plugin request failed" }, status);
 		}
 	};
-	const catalog = (host: PluginTransportHost) => ({ plugins: host.list(), directory: deps.directory, conflicts: host.conflicts() });
+	const catalog = (host: PluginTransportHost | undefined) => ({ plugins: host?.list() ?? [], directory: deps.directory, conflicts: host?.conflicts() ?? [] });
+	const readHost = () => admissionClosed() ? deps.getActiveHost?.() : deps.getHost();
 	return {
-		list: () => guarded(async () => json(catalog(await deps.getHost()))),
+		list: () => guarded(async () => json(catalog(await readHost()))),
 		refresh: (request: Request) => guarded(async () => {
 			const body = await objectBody(request);
 			if (body.action !== "refresh") throw new InputError("Expected action: refresh");
@@ -54,24 +60,23 @@ export function createPluginTransport(deps: {
 			const handle = (continuationOnly: boolean) => guarded(async () => {
 				const { operation, input } = await objectBody(request);
 				if (typeof operation !== "string" || !operation.trim()) throw new InputError("operation must be a nonempty string");
-				const dispatch = async () => json({ result: (await (await deps.getHost()).call(id, operation, input)) ?? null });
-				if (!continuationOnly) return dispatch();
-				if (id !== "flashcards" || operation !== "cancel-generation") return maintenanceRefusal();
-				if (!input || typeof input !== "object" || !("batchId" in input) || typeof input.batchId !== "string" || !input.batchId)
-					throw new InputError("Invalid batch id");
-				while (admissionClosed()) {
-					if (request.signal.aborted) return new Response(null, { status: 499 });
-					const cancellation = deps.cancelOwnedFlashcardsBatch?.(input);
-					if (cancellation) return json({ result: (await cancellation) ?? null });
-					if (!await waitForOpen(request.signal)) return new Response(null, { status: 499 });
-				}
-				return mutation(dispatch)();
+				if (!continuationOnly) return json({ result: (await (await deps.getHost()).call(id, operation, input)) ?? null });
+				const read = Object.hasOwn(coreReads, id) && coreReads[id]?.includes(operation);
+				const cancel = id === "flashcards" && operation === "cancel-generation";
+				if (!read && !cancel) return maintenanceRefusal();
+				const host = deps.getActiveHost?.();
+				if (!host?.list().some(plugin => plugin.id === id && plugin.origin === "core" && plugin.status === "active"))
+					return json({ error: "Plugin is disabled or unavailable" }, 409);
+				const invoke = () => host.call(id, operation, input);
+				return json({ result: ((cancel ? await trackedCancellation(invoke) : await invoke()) ?? null) });
 			});
 			return admissionClosed() ? handle(true) : mutation(() => handle(false))();
 		},
 		convertDocument: (id: string, request: Request) => guarded(async () => json(await (await deps.getHost()).convertDocument(id, request))),
 		asset: (id: string, segments: string[]) => guarded(async () => {
-			const { bytes, contentType } = (await deps.getHost()).asset(id, segments);
+			const host = await readHost();
+			if (!host) return json({ error: "Plugin asset is unavailable" }, 404);
+			const { bytes, contentType } = host.asset(id, segments);
 			return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 		}),
 	};

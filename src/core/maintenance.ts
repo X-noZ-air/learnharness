@@ -48,9 +48,13 @@ export function maintenanceRefusal() {
 }
 
 export function beginWork(kind: Work, external = false): Lease {
+	if (admissionClosed() && (external || !state().context.getStore()?.active)) throw new MaintenanceError();
+	return registerWork(kind);
+}
+
+function registerWork(kind: Work): Lease {
 	if (!maintenanceEnabled()) return disabled;
 	const s = state();
-	if (s.mode !== "open" && (external || !s.context.getStore()?.active)) throw new MaintenanceError();
 	const count = (change: 1 | -1) => {
 		const next = (s.counts.get(kind) ?? 0) + change;
 		if (next) s.counts.set(kind, next);
@@ -78,6 +82,11 @@ export async function tracked<T>(kind: Work, fn: () => T | Promise<T>, external 
 	try { return await lease.run(fn); }
 	finally { lease.end(); }
 }
+export async function trackedCancellation<T>(fn: () => T | Promise<T>): Promise<T> {
+	const lease = registerWork("write-request");
+	try { return await lease.run(fn); }
+	finally { lease.end(); }
+}
 export function mutation<A extends unknown[]>(fn: (...args: A) => Response | Promise<Response>, kind: "write-request" | "upload" = "write-request") {
 	return async (...args: A): Promise<Response> => {
 		try { return await tracked(kind, () => fn(...args), true); }
@@ -95,19 +104,6 @@ export function refuseDrainWhile(reason: string, present: () => boolean) {
 export function whenOpen(fn: () => void) {
 	if (!admissionClosed()) fn();
 	else state().onOpen.add(fn);
-}
-export function waitForOpen(signal: AbortSignal): Promise<boolean> {
-	if (!admissionClosed() || signal.aborted) return Promise.resolve(!signal.aborted);
-	return new Promise(resolve => {
-		const callbacks = state().onOpen;
-		const finish = () => {
-			callbacks.delete(finish);
-			signal.removeEventListener("abort", finish);
-			resolve(!signal.aborted);
-		};
-		callbacks.add(finish);
-		signal.addEventListener("abort", finish, { once: true });
-	});
 }
 export function maintenanceStatus() {
 	const s = state();

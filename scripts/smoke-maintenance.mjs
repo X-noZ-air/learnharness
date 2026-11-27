@@ -34,6 +34,7 @@ try {
 	const startup = await f.cli("status");
 	assert.equal(startup.mode, "startup-hold");
 	await refused("fixture");
+	assert.deepEqual((await f.api("plugins")).plugins, []);
 	await f.cli("release", ["--generation", startup.generation]);
 	const { id } = await f.api("chats", { title: "Synthetic maintenance session" });
 	const { id: parked } = await f.api("chats", { title: "Synthetic session with an open question" });
@@ -55,6 +56,20 @@ try {
 	const drain = f.cli("drain", ["--generation", sideStatus.generation]); f.releaseModel();
 	assert.match(await side.text(), /Synthetic answer/); assert.equal((await drain).drained, true);
 	await f.cli("resume", ["--generation", sideStatus.generation]);
+	const sideChatPath = "chats/" + id + "/side-chats";
+	const { threads: [thread] } = await f.api(sideChatPath);
+	f.holdModel();
+	const stoppedSide = await fetch(f.origin + "/api/" + sideChatPath, { method: "POST", headers: { "content-type": "application/json" },
+		body: JSON.stringify({ anchor: thread.anchor, text: "A side answer to stop" }) });
+	assert.equal(stoppedSide.status, 200);
+	await f.waitForModel();
+	const sideStopHold = await hold("side-chat");
+	assert.equal((await f.api(sideChatPath)).threads[0].id, thread.id);
+	assert.equal((await f.api(sideChatPath + "/" + thread.id + "/stop", {})).ok, true);
+	assert.equal((await f.cli("drain", ["--generation", sideStopHold.generation])).drained, true);
+	assert.equal((await f.api(sideChatPath)).threads[0].messages.at(-1).stopped, true);
+	f.releaseModel();
+	await f.cli("resume", ["--generation", sideStopHold.generation]);
 	f.holdModel();
 	const form = new FormData(); form.append("files", new Blob(["Synthetic note about addition."]), "note.md");
 	const imported = fetch(f.origin + "/api/graph/import", { method: "POST", body: form });
@@ -110,9 +125,10 @@ try {
 	// A learner message accepted into a run that ends before taking it exists only in memory.
 	f.holdModel(); await send(id, "turn the learner stops"); await f.waitForModel();
 	await f.api("chats/" + id + "/steer", { input: { type: "steer", id: "steer_smoke", text: "Parked synthetic steer" } });
+	const abortHold = await hold("main-turn");
 	await f.api("activity/abort", { kind: "turn", id });
 	await settled(id, "stopped main turn"); f.releaseModel();
-	const postponed = await f.cli("drain", [], 2);
+	const postponed = await f.cli("drain", ["--generation", abortHold.generation], 2);
 	assert.deepEqual(postponed.reasons, ["parked-learner-steer"]); assert.equal(postponed.mode, "open");
 	assert.ok(!JSON.stringify((await f.api("chats/" + id)).messages).includes("Parked synthetic steer"));
 	await send(id, "after the postponed switch");
@@ -123,8 +139,11 @@ try {
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
 	await stopDrained(ready); await f.start();
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "pending");
+	const dismissHold = await f.cli("drain");
 	await f.api("chats/" + parked + "/dismiss", { input: { type: "dismiss", toolCallId: "parked-call",
 		answer: { kind: "quiz", questionText: quiz.question, dontKnow: false, answers: [], dismissed: true, answeredAt: new Date().toISOString() } } });
+	assert.ok((await f.api("chats/" + parked)).messages.some(message => message.toolCallId === "parked-call" && message.details?.dismissed));
+	await f.cli("resume", ["--generation", dismissHold.generation]);
 	await send(parked, "continue after the question"); await settled(parked, "turn after the question");
 	assert.ok(JSON.stringify((await f.api("chats/" + parked)).messages).includes("steer_" + parkedJob.id));
 	assert.equal((await f.api("jobs?chatId=" + parked)).jobs[0].delivery.status, "delivered");

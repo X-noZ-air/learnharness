@@ -17,7 +17,7 @@
  * Extraction abort is idempotent by design (aborting with nothing in
  * flight is success — the blob is gone either way) -> 200.
  */
-import { admissionClosed, abortExtraction, abortJob, abortPluginWorkerActivity, abortTurn, isJobLive, stores, waitForOpen } from "@/src/server";
+import { abortExtraction, abortJob, abortPluginWorkerActivity, abortTurn } from "@/src/server";
 
 export async function POST(req: Request) {
 	let body: unknown;
@@ -35,9 +35,6 @@ export async function POST(req: Request) {
 	}
 
 	if (kind === "job") {
-		while (admissionClosed() && !isJobLive(id) && stores.jobStore.getJob(id)?.status === "running") {
-			if (!await waitForOpen(req.signal)) return new Response(null, { status: 499 });
-		}
 		const outcome = abortJob(id);
 		if (!outcome.ok) {
 			const status = outcome.reason === "not_found" ? 404 : 409;

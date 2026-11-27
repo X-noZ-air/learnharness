@@ -71,9 +71,7 @@ export async function subscriptionBrowserResponse(request: Request): Promise<Res
 	if (!origin || (request.method === "POST" ? !authorized(request) : request.headers.get("sec-fetch-site") !== "same-origin")) return error("Open sign-in from LearnHarness.", 403);
 	const id = new URL(request.url).searchParams.get("id");
 	if (!id || !/^[0-9a-f-]{36}$/.test(id)) return error("This sign-in action is no longer available.", 410);
-	let target;
-	try { target = await webSubscriptionOwner().takeBrowserAction(id, origin); }
-	catch (error) { if (error instanceof MaintenanceError) return maintenanceRefusal(); throw error; }
+	const target = await currentWebSubscriptionOwner()?.takeBrowserAction(id, origin);
 	if (!target) return error("This sign-in action is no longer available.", 410);
 	return new Response(null, { status: 303, headers: { ...HEADERS, Location: target } });
 }

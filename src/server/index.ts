@@ -67,5 +67,4 @@ export { claudeCodeInstallationResponse } from "./claude-code.ts";
 export * from "./custom-provider.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 
-export { admissionClosed, mutation, tracked, waitForOpen } from "../core/maintenance.ts";
-export { isJobLive } from "../agent/subagents/aborts.ts";
+export { mutation } from "../core/maintenance.ts";

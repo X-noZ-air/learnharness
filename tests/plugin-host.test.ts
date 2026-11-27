@@ -48,7 +48,7 @@ function fixture(t: TestContext) {
 }
 const status = (expected: number) => (e: unknown) => isPluginHostError(e) && e.status === expected;
 
-test("Flashcards cancellation inherits the targeted batch and counts its last write during drain", async t => {
+test("Flashcards state and cancellation remain available during drain with cancellation writes counted", async t => {
 	const f = fixture(t);
 	const dir = path.join(f.root, "core", "flashcards");
 	fs.mkdirSync(dir, { recursive: true });
@@ -60,7 +60,8 @@ test("Flashcards cancellation inherits the targeted batch and counts its last wr
 			const owner = Promise.withResolvers();
 			const allowWrite = Promise.withResolvers();
 			ctx.cleanup(() => { owner.resolve(); allowWrite.resolve(); });
-			ctx.handle('start-fixture', () => { void ctx.trackWork(() => owner.promise, 'batch'); });
+			ctx.handle('start-fixture', () => { void ctx.trackWork(() => owner.promise); });
+			ctx.handle('get-state', () => ({ batch: { id: 'batch', status: 'running' } }));
 			ctx.handle('cancel-generation', async ({ batchId }) => {
 				owner.resolve();
 				await allowWrite.promise;
@@ -96,6 +97,9 @@ test("Flashcards cancellation inherits the targeted batch and counts its last wr
 	const hold = control("drain", undefined, undefined, newDrainAttempt());
 	assert.deepEqual(hold.counts, { "plugin-writer": 1 });
 	assert.equal((await call("start-fixture")).status, 503);
+	const snapshot = await call("get-state");
+	assert.equal(snapshot.status, 200);
+	assert.deepEqual(await snapshot.json(), { result: { batch: { id: "batch", status: "running" } } });
 	const cancellation = call("cancel-generation", { batchId: "batch" });
 	const pending = Symbol();
 	assert.equal(await Promise.race([cancellation, new Promise(resolve => setImmediate(() => resolve(pending)))]), pending);

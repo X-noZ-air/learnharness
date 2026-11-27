@@ -38,7 +38,6 @@ import {
 	concludedByDismissalPair,
 	isSideQuestionMarker,
 	danglingQuestionOf,
-	pendingQuestionOf,
 	newAnswerResult,
 	newNextMessage,
 	newProblemDismissedMarker,
@@ -101,7 +100,7 @@ export type DismissInput =
 	/** The problem discard (practice, owner 2026-10-04): ask-style — the
 	 *  silent route appends the UI-only marker and wakes nothing; the
 	 *  conclude pair rides the user's NEXT input (inputAppends). */
-	| { type: "dismiss-problem"; problemCallId: string; turnId?: string };
+	| { type: "dismiss-problem"; problemCallId: string };
 
 /** Parse and validate a dismissal event off a request body. */
 export function parseDismissInput(input: unknown): DismissInput {
@@ -115,10 +114,7 @@ export function parseDismissInput(input: unknown): DismissInput {
 		if (typeof i.problemCallId !== "string" || i.problemCallId.length === 0) {
 			throw new ChatInputError("dismiss-problem input requires problemCallId");
 		}
-		if (i.turnId !== undefined && (typeof i.turnId !== "string" || !i.turnId)) {
-			throw new ChatInputError("Invalid practice turn id");
-		}
-		return { type: "dismiss-problem", problemCallId: i.problemCallId, ...(i.turnId === undefined ? {} : { turnId: i.turnId }) };
+		return { type: "dismiss-problem", problemCallId: i.problemCallId };
 	}
 	if (i.type !== "dismiss") throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {
@@ -161,7 +157,7 @@ export function parseUserSteerInput(input: unknown): UserSteerInput {
 /** The native appends a dismissal makes (pure — same orphan discipline
  *  as answers: the call must be a DANGLING question call, or — the
  *  practice variant — the ACTIVE problem). */
-export function dismissAppends(record: { messages: LhMessage[] }, input: DismissInput, live = false): LhMessage[] {
+export function dismissAppends(record: { messages: LhMessage[] }, input: DismissInput): LhMessage[] {
 	assertPluginQuestionInputAllowed(record.messages, input);
 	if (input.type === "dismiss-plugin-question") throw new ChatInputError("Plugin question dismissal requires canonical server validation");
 	if (input.type === "dismiss-problem") {
@@ -171,7 +167,7 @@ export function dismissAppends(record: { messages: LhMessage[] }, input: Dismiss
 		}
 		return [newProblemDismissedMarker(input.problemCallId)];
 	}
-	const pending = live ? pendingQuestionOf(record.messages) : danglingQuestionOf(record.messages);
+	const pending = danglingQuestionOf(record.messages);
 	if (!pending || pending.toolCallId !== input.toolCallId) {
 		throw new ChatInputError("dismiss input targets no pending question call");
 	}

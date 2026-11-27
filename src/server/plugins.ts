@@ -124,6 +124,6 @@ export async function getPluginQuestionTypeResolver(): Promise<Host["resolveQues
 }
 export const pluginTransport = createPluginTransport({
 	getHost: getPluginHost,
-	cancelOwnedFlashcardsBatch: input => (globalThis as typeof globalThis & PluginGlobal).__lhPlugins?.host.cancelOwnedFlashcardsBatch(input),
+	getActiveHost: () => (globalThis as typeof globalThis & PluginGlobal).__lhPlugins?.host,
 	directory: pluginDirectory,
 });

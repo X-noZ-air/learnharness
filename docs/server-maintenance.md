@@ -47,7 +47,7 @@ The socket accepts one JSON line per connection and returns one JSON line. Opera
 
 The keys are bounded work categories. Status omits session, plugin, provider and file identifiers. An upload or write request covers the route from admission through completion, including reading its request body. The server also counts main turns, side chats, jobs, delivery, compaction, extraction, plugin tasks and writes, sign-in, private subscription operations that may refresh credentials, and startup. Counts can overlap during handoff. A closed browser tab or an acknowledged HTTP request can leave an active owner behind.
 
-New external work receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. Stops and cancellations can still reach running work. A dismissal of a live task is saved by its turn during settlement. A dismissal of an idle task, or cancellation of an orphaned job that requires a new write, waits until admission reopens. A pending sign-in can still be continued or canceled during a drain. New sign-ins wait for normal service. If a sign-in needs learner input, the wait times out and the server resumes.
+New external work receives HTTP 503 with code `maintenance` and a user-facing error. Already admitted operations can finish their required writes and transfer responsibility to a child operation before releasing their own admission. Reads, status requests, and existing stop, abort, cancel and dismiss controls remain available during a drain. A pending sign-in can still be continued or canceled. New sign-ins wait for normal service. If a sign-in needs learner input, the wait times out and the server resumes.
 
 `delivery` counts only a result that is being delivered. A finished background result that cannot continue until the learner acts holds no count: it waits behind an open question, a dismissed question, a failed automatic start or missing background consent. Its marker is already saved with the job in the profile. It stays there through a stop and is delivered after the restart, once the learner continues the session.
 
@@ -61,12 +61,11 @@ Loading a community backend makes the process report `unknown-plugin-lifecycle`.
 
 | Route | Actions checked during drain |
 | --- | --- |
-| `POST /api/activity/abort` | Stop work of kind `turn`, `plugin-worker`, `job` or `extraction`. Cancelling an orphaned job waits for admission before writing. |
+| `POST /api/activity/abort` | Stop work of kind `turn`, `plugin-worker`, `job` or `extraction`. |
 | `POST /api/chats/[id]/side-chats/[threadId]/stop` | Stop the current side answer. Its owner saves the partial response. |
-| `POST /api/chats/[id]/dismiss` | Dismiss a native question, a practice problem or a plugin question. A running practice dismissal must identify the viewed turn. An idle dismissal waits for admission before saving. |
+| `POST /api/chats/[id]/dismiss` | Dismiss a native question, a practice problem or a plugin question with the existing route behavior. |
 | `POST /api/subscriptions` and `/api/subscriptions/browser` | Cancel an existing ChatGPT, Copilot or xAI sign-in. Bound browser and prompt continuations can complete that sign-in. Account, credential and background-consent changes require normal admission. |
-| `POST /api/plugins/[id]/call` | Core Flashcards `cancel-generation` can continue under the targeted batch's owner. If no owner can cover the write, the request waits for admission. The other bundled backend operations require normal admission. |
+| `POST /api/plugins/[id]/call` | Active Core Flashcards accepts `get-state`, `get-catalog` and `cancel-generation`. Cancellation writes are counted through completion. Active Drawing Pad and Rich Code Blocks also expose their read-only operations during drain. Starting work or activating a plugin requires normal admission. |
 | `PUT /api/plugins/[id]`, `POST /api/plugins`, `DELETE /api/chats/[id]` and `PATCH /api/chats/[id]/side-chats/[threadId]` | Plugin enablement and refresh, chat deletion, and side-chat view state change configuration or records. They use normal admission. |
 
-On POSIX, run `node scripts/smoke-maintenance.mjs` in a development checkout to exercise the socket, delayed local model, real HTTP routes and restart with a disposable profile.
-With Chrome installed, run `node scripts/smoke-maintenance-dismissals.mjs` to exercise the chat confirmation dialog during maintenance against live streamed turns.
+On POSIX, run `node scripts/smoke-maintenance.mjs` in a development checkout to exercise the socket, admissions, reads, upstream stop and dismissal controls, and restart with a disposable profile.

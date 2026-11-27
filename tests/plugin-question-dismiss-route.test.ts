@@ -8,7 +8,6 @@ import type { LhMessage } from "../src/core/native-messages.ts";
 import type { PluginQuestionSnapshot } from "../src/core/plugin-questions.ts";
 import type { NativePluginQuestionDefinition } from "../src/agent/plugin-question-tools.ts";
 import type { QuestionTypeResolver } from "../src/server/plugin-questions.ts";
-import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 
 // Birth-stamp isolation before any config-loading import. Exercise the actual
 // route/barrels, with a local resolver only; no plugin startup or network.
@@ -38,8 +37,6 @@ const { pendingPluginQuestionOf, newUserMessage, danglingQuestionOf, activeProbl
 const { dismissedAnswer } = await import("../src/core/index.ts");
 const { subscribe } = await import("../src/core/events.ts");
 const { handleChatInput } = await import("../src/server/chat-handler.ts");
-const { control } = await import("../src/core/maintenance.ts");
-const { SessionModel } = await import("../components/session-core.ts");
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -213,95 +210,18 @@ for (const busy of [false, true]) test(`malformed unreadable plugin map permits 
 	assert.deepEqual((f.saved().messages.at(-1) as any).details, { kind: "plugin-question-cancelled", occurrence: f.input.occurrence, reason: "dismissed" });
 });
 
-for (const kind of ["question", "problem"] as const) test(`builtin busy ${kind} rejects a target the owner never posed`, async t => {
+for (const kind of ["question", "problem"] as const) test(`builtin busy ${kind} still only parks, even before its native call materializes`, async t => {
 	const id = chatStore.createChat("Builtin busy dismissal").id, owner = claim(t, id);
 	t.after(() => takeParkedDismissal(id));
 	const input = kind === "question" ? { type: "dismiss", toolCallId: "future-quiz", answer: dismissedAnswer("quiz", "What?") }
 		: { type: "dismiss-problem", problemCallId: "future-problem" };
 	const response = await post(id, input);
-	assert.equal(response.status, 400);
-	assert.equal(owner.signal.aborted, false);
+	assert.equal(response.status, 202);
+	assert.deepEqual(await response.json(), { ok: true, parked: true });
+	assert.equal(owner.signal.aborted, false, "builtin dismissal must not server-abort its owner");
 	assert.equal(isTurnRunning(id), true);
-	assert.equal(takeParkedDismissal(id), null);
+	assert.deepEqual(takeParkedDismissal(id), input);
 	assert.equal(chatStore.getChat(id)!.messages.length, 0);
-});
-
-test("an admitted dismissal aborts only its original turn even when its browser reply is delayed", async t => {
-	const previous = process.env.LH_MAINTENANCE_SOCKET;
-	process.env.LH_MAINTENANCE_SOCKET = "fixture";
-	const id = chatStore.createChat("Dismissal with a delayed reply").id;
-	const input = { type: "dismiss", toolCallId: "quiz-fixture", answer: dismissedAnswer("quiz", "What?") };
-	const quiz = { question: "What?", options: [{ label: "Yes" }, { label: "No" }], correctAnswer: "Yes", explanation: "Because" };
-	const message = { ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: input.toolCallId })], { stopReason: "toolUse" }), id: "quiz-pose" } as LhMessage;
-	chatStore.saveMessages(id, [message]);
-	const original = claim(t, id);
-	const queued = deferred<ReturnType<typeof delayedPost>>();
-	const serverReply = deferred<Response>();
-	const browserReply = deferred<void>();
-	t.after(() => {
-		browserReply.resolve();
-		const current = control("status");
-		if (current.mode === "draining") control("resume", current.generation);
-		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
-		else process.env.LH_MAINTENANCE_SOCKET = previous;
-		takeParkedDismissal(id);
-	});
-	const requests: string[] = [];
-	const model = new SessionModel({ chatId: id, initialMessages: [message], fetch: async (url, init) => {
-		requests.push(String(url));
-		const request = delayedPost(id, JSON.parse(String(init?.body)).input);
-		queued.resolve(request);
-		const response = await request.response;
-		serverReply.resolve(response);
-		await browserReply.promise;
-		return response;
-	} });
-	const dismissal = model.dismissQuestion(input.toolCallId, input.answer);
-	const request = await Promise.race([queued.promise, dismissal.then(() => assert.fail("Dismissal finished without sending a request"))]);
-	t.after(request.release);
-	await request.started;
-	const hold = control("drain", undefined, undefined, newDrainAttempt());
-	request.release();
-	assert.equal((await serverReply.promise).status, 202);
-	assert.equal(original.signal.aborted, true);
-	assert.ok(danglingQuestionOf(model.getState().nativeMessages), "keep the task until the browser receives success");
-	applyParkedDismissal(chatStore, id);
-	original.finish();
-	assert.equal(danglingQuestionOf(chatStore.getChat(id)!.messages), null);
-	control("resume", hold.generation);
-	const successor = claim(t, id);
-	browserReply.resolve();
-	await dismissal;
-	assert.equal(danglingQuestionOf(model.getState().nativeMessages), null);
-	assert.equal(successor.signal.aborted, false);
-	assert.equal(isTurnRunning(id), true);
-	assert.deepEqual(requests, [`/api/chats/${id}/dismiss`]);
-});
-
-test("an idle dismissal waits out the hold before writing its marker", async t => {
-	const previous = process.env.LH_MAINTENANCE_SOCKET;
-	process.env.LH_MAINTENANCE_SOCKET = "fixture";
-	const id = chatStore.createChat("Idle dismissal during a hold").id;
-	const quiz = { question: "What?", options: [{ label: "Yes" }, { label: "No" }], correctAnswer: "Yes", explanation: "Because" };
-	const message = { ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: "quiz-fixture" })], { stopReason: "toolUse" }), id: "quiz-pose" } as LhMessage;
-	chatStore.saveMessages(id, [message]);
-	const hold = control("drain", undefined, undefined, newDrainAttempt());
-	t.after(() => {
-		if (control("status").mode === "draining") control("resume", hold.generation);
-		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
-		else process.env.LH_MAINTENANCE_SOCKET = previous;
-	});
-	const pending = delayedPost(id, { type: "dismiss", toolCallId: "quiz-fixture", answer: dismissedAnswer("quiz", "What?") });
-	t.after(pending.release);
-	await pending.started;
-	pending.release();
-	const noResponse = Symbol();
-	assert.equal(await Promise.race([pending.response, new Promise(resolve => setImmediate(() => resolve(noResponse)))]), noResponse);
-	assert.deepEqual(chatStore.getChat(id)?.messages, [message]);
-	assert.equal(control("status", hold.generation).drained, true);
-	control("resume", hold.generation);
-	assert.equal((await pending.response).status, 200);
-	assert.equal(danglingQuestionOf(chatStore.getChat(id)!.messages), null);
 });
 
 for (const kind of ["question", "problem"] as const) test(`builtin idle ${kind} still writes its native dismissal`, async () => {

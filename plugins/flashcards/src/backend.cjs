@@ -202,12 +202,11 @@ function activate(ctx) {
       if (disposed || ctx.signal.aborted) return;
       applyOutcome(batchId, chunkId, ctx.workers.get(taskId));
       observers.get(taskId)?.(); observers.delete(taskId);
-    }).catch(error => { if (!disposed && !ctx.signal.aborted) { applicationErrors.set(chunkId, error.message); notify('batch-changed'); } }), batchId);
+    }).catch(error => { if (!disposed && !ctx.signal.aborted) { applicationErrors.set(chunkId, error.message); notify('batch-changed'); } }));
   }
-  function reconcile(batchId) {
+  function reconcile() {
     alive(); const tasks = ctx.workers.list();
-    const batches = store.get().batches;
-    for (const b of batchId === undefined ? batches : batches.filter(batch => batch.id === batchId)) for (const c of b.chunks) {
+    for (const b of store.get().batches) for (const c of b.chunks) {
       if (['applied', 'failed', 'cancelled', 'interrupted'].includes(c.status)) continue;
       const t = tasks.find(t => t.requestId === c.requestId);
       if (!t) {
@@ -468,15 +467,14 @@ function activate(ctx) {
           else { try { change(s => { const b = s.batches.find(b => b.id === batchId), c = b.chunks.find(c => c.id === chunk.id); c.status = 'failed'; c.error = error.message; finishBatch(s, b); }, 'batch-changed'); } catch (failure) { applicationErrors.set(chunk.id, failure.message); } }
         }
       });
-    }), batchId);
+    }));
     return view();
   });
   register('cancel-generation', ({ batchId }) => {
     const b = store.get().batches.find(b => b.id === batchId) ?? fail('Batch not found.');
-    if (b.status !== 'running' && b.status !== 'cancelling') return view();
     change(s => { const current = s.batches.find(x => x.id === b.id); current.cancelRequested = true; current.status = 'cancelling'; for (const c of current.chunks) if (c.status === 'pending') c.status = 'cancelled'; finishBatch(s, current); }, 'batch-changed');
     for (const c of b.chunks) { const t = ctx.workers.list().find(t => t.requestId === c.requestId); if (t && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(t.status)) ctx.workers.cancel(t.id); }
-    reconcile(batchId); return view();
+    reconcile(); return view();
   });
   register('resume-results', () => { reconcile(); return view(); });
 

@@ -111,14 +111,13 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		[model],
 	);
 	const dismissQuestion = useCallback(
-		(toolCallId: string, answer: QuestionAnswerData, questionKey?: string) => model.dismissQuestion(toolCallId, answer, questionKey),
+		(toolCallId: string, answer: QuestionAnswerData, questionKey?: string) => void model.dismissQuestion(toolCallId, answer, questionKey),
 		[model],
 	);
 	const dismissProblem = useCallback(
-		(problemCallId: string, turnId?: string) => model.dismissProblem(problemCallId, turnId),
+		(problemCallId: string) => void model.dismissProblem(problemCallId),
 		[model],
 	);
-	const getDismissalTurnId = useCallback(() => model.getDismissalTurnId(), [model]);
 	const questionDraft = useCallback((questionKey: string) => model.questionDraft(questionKey), [model]);
 	const saveQuestionDraft = useCallback((questionKey: string, draft: Parameters<SessionModel["saveQuestionDraft"]>[1]) => model.saveQuestionDraft(questionKey, draft), [model]);
 	const setMessages = useCallback((record: LhMessage[], turnError?: string, availability?: Parameters<SessionModel["setMessages"]>[2], problemAvailability?: Parameters<SessionModel["setMessages"]>[3]) => model.setMessages(record, turnError, availability, problemAvailability), [model]);
@@ -158,7 +157,6 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		submitAnswer,
 		dismissQuestion,
 		dismissProblem,
-		getDismissalTurnId,
 		questionDraft,
 		saveQuestionDraft,
 		setMessages,

@@ -56,6 +56,12 @@ test("cancelling a sign-in during drain does not initialize an absent owner", as
 	for (const providerId of ["chatgpt", "github-copilot", "xai"]) {
 		assert.equal((await subscriptionControlsResponse(request({ providerId, op: "cancel" }))).status, 200);
 	}
+	const status = await subscriptionControlsResponse(request());
+	assert.equal(status.status, 200);
+	const payload = await status.json();
+	assert.equal(payload.chatgpt.pending, false);
+	assert.deepEqual(payload.native.map((provider: { providerId: string; pending: boolean }) => [provider.providerId, provider.pending]),
+		[["github-copilot", false], ["xai", false]]);
 	assert.deepEqual(global[key], {});
 	assert.equal(control("status", hold.generation).drained, true);
 });

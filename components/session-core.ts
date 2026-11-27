@@ -16,7 +16,6 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { maintenanceMessage } from "../lib/maintenance-response.ts";
-import type { DismissInput } from "../src/core/input-events.ts";
 import {
 	needsContinuation,
 	activeProblemOf,
@@ -327,7 +326,6 @@ export class SessionModel {
 	// The single live consume (POST response or reattach stream): a newer
 	// consume cancels the older — one reader at a time.
 	private consumeAbort: AbortController | null = null;
-	private visibleTurn?: { owner: AbortController | null; id: string };
 	/** Retain the latest request across stop(): an opening POST still owns
 	 * its refusal after view detachment, but never after a newer request. */
 	private latestRequest: AbortController | null = null;
@@ -730,8 +728,6 @@ export class SessionModel {
 	 *  terminal (stream-route only) fires the settle hook and ends. */
 	async consumeStream(res: Response, controller = this.consumeAbort, allowRecovery = true): Promise<void> {
 		if (!res.body) throw new Error("The turn stream body is empty.");
-		const id = res.headers.get("x-lh-turn-id");
-		if (this.consumeAbort === controller) this.visibleTurn = id ? { owner: controller, id } : undefined;
 		const reader = res.body.getReader();
 		let sawEvent = false;
 		let sawDone = false;
@@ -765,7 +761,6 @@ export class SessionModel {
 			// A cancelled consume may finish after its replacement has entered
 			// Thinking. Only the current owner can settle shared state.
 			if (this.consumeAbort === controller) {
-				this.visibleTurn = undefined;
 				this.streamingIds = new Set();
 				this.executions = new Map();
 				if (sawDone) {
@@ -1124,46 +1119,49 @@ export class SessionModel {
 	/** The dismissal path (owner design 2026-10-03, "A2"): the skipped
 	 * toolResult lands optimistically, then the SILENT route persists it
 	 * — no turn, no stream, nothing wakes. The session pauses at the
-	 * user's choice; the next plain send is the wake. */
+	 * user's choice; the next plain send is the wake. On failure the
+	 * durable record wins: the error surfaces, the record-changed sync
+	 * (or any later refetch) replaces the optimistic append with truth. */
 	async dismissQuestion(toolCallId: string, answer: QuestionAnswerData, questionKey?: string): Promise<void> {
-		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return;
+		if (!this.readyRef || pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) return;
 		const subject = pendingQuestionOf(this.nativeHistory());
-		if (!subject || subject.toolCallId !== toolCallId || (questionKey !== undefined && subject.key !== questionKey)) return;
-		if (answer.readingThinking !== undefined) {
-			this.saveQuestionDraft(subject.key, { readingThinking: answer.readingThinking });
-			answer = { ...answer, readingThinking: answer.readingThinking.trim() || undefined };
-		}
+		if (questionKey !== undefined && (subject?.key !== questionKey || subject.toolCallId !== toolCallId)) return;
 		const tool = pendingCallTool(this.nativeHistory(), toolCallId) ?? "quiz";
-		return this.dismiss({ type: "dismiss", toolCallId, answer }, newAnswerResult(toolCallId, tool, answer),
-			() => pendingQuestionOf(this.nativeHistory())?.key === subject.key);
-	}
-
-	getDismissalTurnId(): string | undefined {
-		const turn = this.visibleTurn;
-		if (turn && turn.owner === this.consumeAbort) return turn.id;
-	}
-
-	async dismissProblem(problemCallId: string, turnId?: string): Promise<void> {
-		const subject = activeProblemOccurrenceOf(this.nativeHistory());
-		if (subject?.toolCallId !== problemCallId) return;
-		return this.dismiss({ type: "dismiss-problem", problemCallId, turnId }, newProblemDismissedMarker(problemCallId), () => {
-			const current = activeProblemOccurrenceOf(this.nativeHistory());
-			return current?.messageId === subject.messageId && current.contentIndex === subject.contentIndex && current.toolCallId === problemCallId;
+		this.invalidateCanonicalReads();
+		this.mutate(() => {
+			this.tail = [...this.tail, { ...newAnswerResult(toolCallId, tool, answer), id: localId() }];
 		});
-	}
-
-	private async dismiss(input: DismissInput, marker: LhMessage, isCurrent: () => boolean): Promise<void> {
 		try {
 			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ input }),
+				body: JSON.stringify({ input: { type: "dismiss", toolCallId, answer } }),
 			});
 			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
 			this.invalidateCanonicalReads();
-			if (isCurrent()) this.mutate(() => {
-				this.tail = [...this.tail, { ...marker, id: localId() }];
+		} catch (err) {
+			this.setError((err as Error).message);
+		}
+	}
+
+	/** The problem discard (practice sessions, owner 2026-10-04): the
+	 *  ask-style dismissal — the UI-only marker lands optimistically, then
+	 *  the SILENT route persists it (no turn, no wake). The composer
+	 *  returns; the conclude synthesis rides the user's next input. */
+	async dismissProblem(problemCallId: string): Promise<void> {
+		if (!this.readyRef) return;
+		this.invalidateCanonicalReads();
+		this.mutate(() => {
+			this.tail = [...this.tail, { ...newProblemDismissedMarker(problemCallId), id: localId() }];
+		});
+		try {
+			const res = await this.fetch(`/api/chats/${this.chatId}/dismiss`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ input: { type: "dismiss-problem", problemCallId } }),
 			});
+			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
+			this.invalidateCanonicalReads();
 		} catch (err) {
 			this.setError((err as Error).message);
 		}
