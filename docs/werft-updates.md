@@ -21,8 +21,9 @@ disabled. CI retries the full plan-label browser smoke up to twice on each
 platform. Three failed attempts leave the affected job red. The trusted
 poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
 The separate **Werft feature CI status** reporter sets that context for ordinary
-pull requests. A maintainer review at the current head is required for changes
-to automation files. Rerun CI after that review to report the updated result.
+pull requests, including changes to workflows and scripts, when CI succeeds.
+Firstmate reviews delivery automation before merging those pull requests. The
+upstream poller refuses upstream releases that change protected automation files.
 
 The fork's default workflow permissions are read-only. GitHub combines the
 switch for allowing Actions to create and approve pull requests. This repo uses
@@ -31,9 +32,10 @@ reviews and need only the built-in `GITHUB_TOKEN`.
 
 The **Werft required CI and merge commits** ruleset applies to `werft`, with
 merge commits, no force-push or bypass, and strict `werft/ci` from GitHub Actions
-(app ID 15368). On initial setup, merge the delivery change, verify that the CI
-reporter produces the context, then activate the staged ruleset and query the
-effective branch rules before the first production replay. Both the ruleset and
+(app ID 15368). It requires zero GitHub approval reviews. On initial setup,
+merge the delivery change and enable the CI reporter if it was paused during
+setup. Verify that the reporter produces the context, then activate the staged
+ruleset and query the effective branch rules before the first production replay. Both the ruleset and
 workflow permissions can be managed through GitHub's API.
 
 The poller rechecks the base and head before requesting a merge with the
