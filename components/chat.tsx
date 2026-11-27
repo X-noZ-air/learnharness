@@ -540,10 +540,7 @@ export function Chat({
 					p.toolCallId,
 					{ ...answer, readingThinking: readingThinkingRef.current },
 					p.key,
-				).then(accepted => {
-					if (!accepted) return;
-					void closeSideThreadRef.current(); // its note lands after the skip
-				});
+				);
 				return;
 			}
 			// The practice discard (owner, 2026-10-04): ask-style — the

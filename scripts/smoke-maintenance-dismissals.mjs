@@ -51,6 +51,16 @@ function record(chatId) {
 	return f.api("chats/" + chatId);
 }
 
+async function delayDismissal(page) {
+	await page.evaluate(() => {
+		const originalFetch = window.fetch;
+		window.fetch = async (input, init) => {
+			if (String(input).endsWith("/dismiss")) await new Promise(resolve => { window.releaseDismissal = resolve; });
+			return originalFetch(input, init);
+		};
+	});
+}
+
 try {
 	await f.start();
 	browser = await puppeteer.launch({ channel: "chrome", args: ["--no-sandbox", "--disable-dev-shm-usage"] });
@@ -85,13 +95,7 @@ try {
 	const question = await seed("teach", "quiz", quiz);
 	const stalePage = await open(question.id);
 	stalePage.on("request", req => { if (req.url().endsWith("/api/activity/abort")) abortRequests.push(req.url()); });
-	await stalePage.evaluate(() => {
-		const originalFetch = window.fetch;
-		window.fetch = async (input, init) => {
-			if (String(input).endsWith("/dismiss")) await new Promise(resolve => { window.releaseDismissal = resolve; });
-			return originalFetch(input, init);
-		};
-	});
+	await delayDismissal(stalePage);
 	await showConfirmation(stalePage, "Dismiss this question?");
 	await stalePage.click(confirm);
 	await stalePage.waitForFunction(() => typeof window.releaseDismissal === "function");
@@ -113,6 +117,22 @@ try {
 	assert.ok((await record(question.id)).messages.some(m => m.content?.some?.(part => part.text === successorPrefix + " Synthetic answer.")));
 	assert.deepEqual(abortRequests, []);
 	await f.cli("resume", ["--generation", successorHold.generation]);
+
+	const delayed = await seed("teach", "quiz", quiz);
+	const sidePage = await open(delayed.id);
+	await delayDismissal(sidePage);
+	await showConfirmation(sidePage, "Dismiss this question?");
+	await sidePage.click(confirm);
+	await sidePage.waitForFunction(() => typeof window.releaseDismissal === "function");
+	await sidePage.evaluate(() => window.dispatchEvent(new Event("lh:kbd-toggle-question-thread")));
+	const sideInput = '[data-testid="side-thread-input"]';
+	await sidePage.waitForSelector(sideInput, { visible: true });
+	await sidePage.type(sideInput, "My side question");
+	const acknowledged = sidePage.waitForResponse(res => res.url().endsWith("/dismiss"));
+	await sidePage.evaluate(() => window.releaseDismissal());
+	assert.equal((await acknowledged).status(), 200);
+	await sidePage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+	assert.equal(await sidePage.$eval(sideInput, input => input.value), "My side question");
 	console.log("Maintenance dismissal browser smoke passed");
 } catch (error) { console.error(f.logs()); throw error; }
 finally { try { await browser?.close(); } finally { await f.close(); } }
