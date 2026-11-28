@@ -242,12 +242,8 @@ export type SettingsValidation =
 	| { ok: true }
 	| { ok: false; error: string; supported?: ThinkingLevel[] };
 
-/** Validate a picker write against the catalog (the settings route's gate).
- *  `settings` is replace-whole: absent fields mean "config default".
- *  - model: provider must be configured, id must exist in its catalog.
- *  - thinkingLevel: must be in the resolved model's supported list —
- *    the model the picker writes against (settings.model, else config's
- *    prober/teacher pin; one controller, so the two specs share it). */
+/** Validate explicit model coordinates against the configured providers and
+ * their catalogs. Route handlers clamp thinking levels on write. */
 export function validateChatSettings(settings: ChatSettings): SettingsValidation {
 	const providers = connectionProviderIds();
 	if (settings.model) {

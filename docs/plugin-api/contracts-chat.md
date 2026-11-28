@@ -292,8 +292,8 @@ version?: number;
 Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
 
 Per-session model choices for native conversation agents.
-Model and thinking fall back independently to the strong slot. A pinned
-model owns its Fast preference. Choices resolve
+Model and thinking fall back independently to the strong slot. Fast uses
+the session preference even when the model is inherited. Choices resolve
 when composing a turn, not midway through an active request. Background
 worker roles use their own model resolution.
 
@@ -350,7 +350,7 @@ thinkingLevel?: ThinkingLevel;
 
 ### ChatSettings fastMode
 
-Opt in to the Fast tier when offered for this ChatGPT model.
+Opt in to the priority tier for supported foreground ChatGPT replies.
 
 ```ts
 fastMode?: boolean;

@@ -138,9 +138,11 @@ submission conventions above.
   **Esc** keeps the query and leaves the inline search field or [dismisses the
   drawer](#focus-and-esc).
 - **Model search menus:** focus stays in search. **↑/↓** walk filtered results
-  without wrap; the first ↓ starts at the first result, the first ↑ at the last.
-  **Enter** picks the walked result or the first result. Editing the query resets
-  the walk. Menus without a search field instead move button focus with wrapping
+  without wrap. The first ↓ starts at the top and the first ↑ at the bottom.
+  When available, **Fast Mode** is the last row with an empty search. Use an
+  arrow key to highlight it, then press **Enter** to toggle it. With no row
+  highlighted, **Enter** picks the first model. Editing the query resets the
+  highlight. Menus without a search field instead move button focus with wrapping
   **↑/↓**, support **Home/End**, and use native **Enter** activation.
 - **Find (Mod+F):** in the graph, focuses node search; with the chains view
   open, focuses that view's search instead. In a session, opens a

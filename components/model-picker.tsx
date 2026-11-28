@@ -36,20 +36,9 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
 }
 
 /**
- * THE CONVERSATION MODEL CONTROL — dual-bound (owner, per-session models,
- * 2026-09-28). WITH a chatId (the in-session stats bar): the pills bind
- * THE SESSION'S OWN record — reads GET /api/chats/:id (its settings field;
- * a legacy unstamped record falls back to the strong slot's display,
- * exactly what the engine resolves), writes PUT /api/chats/:id/settings
- * (validated + level-clamped server-side). The session owns its model +
- * thinking level from birth; the strong slot never reaches it again.
- *
- * WITHOUT a chatId (the draft surfaces — home + /chat/new): the pills
- * bind the STRONG SLOT (reads the raw models section, GET /api/settings;
- * writes PUT /api/settings/models via composeSlotModel — the same seam
- * the settings Agent section and the SetupDialog write): picking there IS
- * changing the new-session default. Unpicked reads "—" (the
- * no-factory-fallback language: the UI never presents a default model).
+ * With a chatId, bind the session record and use resolveConversationSpec
+ * so the picker and engine agree about inherited settings. Without a
+ * chatId, bind the raw Strong slot used when creating sessions.
  */
 export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	chatId?: string;

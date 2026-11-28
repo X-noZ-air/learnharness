@@ -57,8 +57,8 @@ export interface ChatRecord {
 export const CURRENT_CHAT_VERSION = 2;
 
 /** Per-session model choices for native conversation agents.
- * Model and thinking fall back independently to the strong slot. A pinned
- * model owns its Fast preference. Choices resolve
+ * Model and thinking fall back independently to the strong slot. Fast uses
+ * the session preference even when the model is inherited. Choices resolve
  * when composing a turn, not midway through an active request. Background
  * worker roles use their own model resolution. */
 export interface ChatSettings {
@@ -67,7 +67,7 @@ export interface ChatSettings {
 	/** pi thinking level — must be in the chosen model's supported list
 	 *  (getSupportedThinkingLevels; enforced by the settings route). */
 	thinkingLevel?: ThinkingLevel;
-	/** Opt in to the Fast tier when offered for this ChatGPT model. */
+	/** Opt in to the priority tier for supported foreground ChatGPT replies. */
 	fastMode?: boolean;
 }
 

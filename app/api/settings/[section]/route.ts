@@ -1,12 +1,12 @@
 /**
  * PUT /api/settings/[section] — section-scoped record writes
- * (settings-storage wave, 2026-09-19). One PUT replaces ONE section
- * replace-whole (absent fields = absent overrides — the house settings
- * discipline, same as the per-chat and defaults routes); sections are
- * independent, so partial writes can never clobber each other.
+ * An ordinary PUT replaces one section, with absent fields clearing their
+ * overrides. Models retain Strong's Fast preference while its model stays
+ * the same. A Fast-only models PUT merges into the saved Strong slot.
  *
  *   section ∈ general | chat | agent | appearance | graph | compaction | models | dictation
- *   Body: the complete desired section object. Parse + validate strictly
+ *   Body: the desired section object or { strong: { fastMode: boolean } }
+ *   for a Fast-only models write. Parse + validate strictly
  *   (server/settings-body.ts): a bad shape/type is a 400 carrying the
  *   supported list where one exists. The chat and models sections
  *   additionally pass the catalog gate (validateChatSettings /

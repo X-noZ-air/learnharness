@@ -243,7 +243,7 @@ export function composeSlotModel(
 
 /** Retention is slot-only; selecting Pi default removes the field entirely. */
 export function composeSlotCacheRetention(models: ModelsSettings | undefined, slot: ModelSlotName, value: CacheRetention | undefined): ModelsSettings {
-	const next = { ...models?.[slot] };
+	const next: NonNullable<ModelsSettings[ModelSlotName]> = { ...models?.[slot] };
 	if (value === undefined) delete next.cacheRetention;
 	else next.cacheRetention = value;
 	return { ...models, [slot]: next };

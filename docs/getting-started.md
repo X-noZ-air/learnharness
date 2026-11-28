@@ -15,6 +15,12 @@ Choose **Strong**, **Cheap**, and **Vision** models in Settings. There are no fa
 
 Optional web search supports Tavily, Brave, Exa, Firecrawl, and hosted Ollama search; configure a key for the engine you want to use. Research can still fetch known URLs without a search key. Dictation has its own service key below.
 
+### Fast Mode
+
+Open the composer's model menu and select **Fast Mode**. The row appears when the ChatGPT subscription catalog offers the priority tier for the selected model. Fast Mode can speed up replies and uses more of your ChatGPT quota. It applies to foreground replies. Background work, including compaction, uses its usual tier. See [model menu keyboard controls](keyboard.md#search-and-menus).
+
+On Home or in a draft, the switch sets the Strong default for newly created sessions. In an existing session, it saves the choice for that session. Fast Mode starts off unless a saved setting enables it. Changing to a different model through the picker resets the preference. If a Fast Mode save blocks sending and fails, your draft stays in the composer.
+
 ## Start a session
 
 Choose **Teach** and describe what you want to understand. The agent probes your starting point, presents a plan, and teaches through explanations and checks. Reply naturally to accept or revise the plan.

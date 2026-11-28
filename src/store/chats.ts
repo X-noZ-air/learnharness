@@ -177,8 +177,6 @@ function appendExtractionUsage(id: string, entry: ExtractionRunUsage): void {
 	writeChat(record);
 }
 
-/** Persist the per-chat model/thinking settings — replace-whole (the
- * picker sends the complete object; absent = config defaults). */
 function saveSettings(id: string, settings: ChatSettings): void {
 	const record = getChat(id);
 	if (!record) throw new Error(`Chat not found: ${id}`);

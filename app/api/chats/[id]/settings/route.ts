@@ -10,16 +10,10 @@ import {
 } from "@/src/server";
 
 /**
- * The per-chat model control (model-control wave).
- * PER-SESSION MODELS (owner, 2026-09-28): this route is THE in-session
- * writer — the composer's control binds the session's own record; the
- * strong slot is only the birth default and never reaches an existing
- * session again.
- * Validation is the catalog gate (src/server/model-catalog.ts): unknown
- * provider/model is a 400. Thinking levels never reject (owner,
- * interlude 2026-09-22): a pinned level clamps to the named model's
- * nearest supported and the clamped value is stored. Effective next turn
- * by construction (agents are stateless per turn).
+ * Model and effort writes validate against the catalog and clamp effort to
+ * the nearest supported level. Retain the Fast preference only when the
+ * effective model stays the same. Fast-only writes merge into the latest
+ * session settings so overlapping edits keep their model and effort.
  */
 async function handlePut(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;

@@ -75,8 +75,7 @@ export interface ChatStore {
 	appendTurnUsage(id: string, entry: TurnUsage): void;
 	/** Append one extraction-run usage entry — idempotent per startedAt. */
 	appendExtractionUsage(id: string, entry: ExtractionRunUsage): void;
-	/** Persist the per-chat model/thinking settings (the model control).
-	 *  Replace-whole: the picker sends the complete settings object. */
+	/** Replace the saved session settings with the caller's resolved write. */
 	saveSettings(id: string, settings: ChatSettings): void;
 	/** Rename a session (the header's click-to-edit title, 2026-09-17).
 	 * Like saveSettings: a rename is NOT conversation activity — updatedAt
