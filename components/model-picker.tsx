@@ -20,7 +20,6 @@ import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/t
 
 export interface ComposerModelSettings {
 	pendingSave?: Promise<boolean>;
-	fastDefault?: boolean;
 }
 
 /** provider:id → known contextWindow over the cached catalog, mirroring
@@ -90,16 +89,14 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
 			.then((body) => {
 				if (read !== modelsRead.current) return;
-				const stored = body.settings?.models;
-				if (!chatId) saveState.current.fastDefault = stored?.strong?.fastMode;
-				setModels(stored);
+				setModels(body.settings?.models);
 			})
 			.catch(() => {
 				/* the record fetch failing leaves the control read-only
 				   ("—" triggers, closed menus) — same posture as a
 				   catalog failure */
 			});
-	}, [chatId, saveState]);
+	}, [chatId]);
 
 	useEffect(() => {
 		readRecord();
@@ -188,10 +185,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				// that rides an unsupported level lands CLAMPED in the record
 				// — the pill must show the stored value in this interaction.
 				const { settings } = await res.json() as { settings: UserSettings };
-				const saved = settings.models;
 				++modelsRead.current;
-				saveState.current.fastDefault = saved?.strong?.fastMode;
-				setModels(saved);
+				setModels(settings.models);
 				setOpen(null);
 				notifySettingsSaved("models", { refreshCatalog });
 				return true;
@@ -200,7 +195,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				return false;
 			}
 		},
-		[saveState],
+		[],
 	);
 
 	// The session write seam (chat mode): PUT the per-chat settings route

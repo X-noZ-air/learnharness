@@ -330,7 +330,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 			const pendingSave = modelSettingsRef.current.pendingSave;
 			if (!pendingSave || await pendingSave) {
 				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
-					starterRef.current, JSON.stringify([catalog?.slots.strong, modelSettingsRef.current.fastDefault === true]));
+					starterRef.current, JSON.stringify(catalog?.slots.strong));
 				if (target) {
 					router.push(target);
 					return;

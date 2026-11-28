@@ -181,7 +181,7 @@ export function Home({
 				title: t,
 				...(mode === "practice" ? { kind: "practice" } : {}),
 				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
-			}, fetch, JSON.stringify([catalog?.slots.strong, modelSettingsRef.current.fastDefault === true]));
+			}, fetch, JSON.stringify(catalog?.slots.strong));
 			router.push(target);
 		} catch (error) {
 			startingRef.current = false;
