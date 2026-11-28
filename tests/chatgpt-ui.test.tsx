@@ -99,6 +99,7 @@ test("a late Strong Fast response cannot replace a newer model read", async () =
  const second = { provider: "chatgpt", id: "second-model" };
  const put = deferred<Response>();
  const newerRead = deferred<Response>();
+ const secondSettings = () => Response.json({ settings: { models: { strong: { model: second } } } });
  let reads = 0;
  globalThis.fetch = async (input, init) => {
   if (input === "/api/models") {
@@ -109,18 +110,58 @@ test("a late Strong Fast response cannot replace a newer model read", async () =
   }
   if (input === "/api/settings/models" && init?.method === "PUT") return put.promise;
   assert.equal(input, "/api/settings");
-  return ++reads === 1 ? Response.json({ settings: { models: { strong: { model: first } } } }) : newerRead.promise;
+  if (++reads === 1) return Response.json({ settings: { models: { strong: { model: first } } } });
+  return reads === 2 ? newerRead.promise : secondSettings();
  };
  let selected: string | undefined;
  await mount(<ModelControl onModelChange={(model) => { selected = model; }} />);
  const fast = () => host!.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
  await act(async () => fast()!.click());
  await act(async () => notifySettingsSaved("models"));
- await act(async () => newerRead.resolve(Response.json({ settings: { models: { strong: { model: second } } } })));
+ await act(async () => newerRead.resolve(secondSettings()));
  assert.equal(selected, "chatgpt:second-model");
  await act(async () => put.resolve(Response.json({ settings: { models: { strong: { model: first, fastMode: true } } } })));
+ assert.equal(reads, 3);
  assert.equal(selected, "chatgpt:second-model");
  assert.equal(fast(), null);
+});
+
+test("a Strong read during the Fast write requires confirmation after the write", async () => {
+ const model = { provider: "chatgpt", id: "tier-model" };
+ const put = deferred<Response>();
+ const refreshes: ReturnType<typeof deferred<Response>>[] = [];
+ let reads = 0;
+ const settings = (fastMode: boolean) => Response.json({ settings: { models: { strong: { model, fastMode } } } });
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(model.id);
+   catalog.models[0]!.fastServiceTier = "priority";
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings/models" && init?.method === "PUT") return put.promise;
+  assert.equal(input, "/api/settings");
+  if (++reads <= 2) return settings(false);
+  const refresh = deferred<Response>();
+  refreshes.push(refresh);
+  return refresh.promise;
+ };
+ await mount(<ModelControl />);
+ const fast = () => host!.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!;
+ await act(async () => fast().click());
+ await act(async () => notifySettingsSaved("models"));
+ await act(async () => put.resolve(settings(true)));
+ assert.equal(fast().disabled, true);
+ assert.equal(refreshes.length, 1);
+ await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
+ const alert = host!.querySelector('[role="alert"]');
+ assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
+ assert.equal(fast().disabled, true);
+ await act(async () => alert!.querySelector<HTMLButtonElement>("button")!.click());
+ assert.equal(refreshes.length, 2);
+ await act(async () => refreshes[1]!.resolve(settings(true)));
+ assert.equal(fast().disabled, false);
+ assert.equal(fast().getAttribute("aria-pressed"), "true");
+ assert.equal(host!.querySelector('[role="alert"]'), null);
 });
 
 test("toggling Fast keeps a legacy chat on its inherited model", async () => {

@@ -69,32 +69,56 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const [savingFast, setSavingFast] = useState(false);
 	const [savingModel, setSavingModel] = useState(false);
 	const modelSavesInFlight = useRef(0);
-	const chatFastNeedsRefresh = useRef(false);
+	const fastNeedsRefresh = useRef(false);
 	const localModelSettings = useRef<ComposerModelSettings>({});
 	const saveState = modelSettingsRef ?? localModelSettings;
 	const sessionRead = useRef(0);
 	const modelsRead = useRef(0);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const interactions = useInteractionLayers();
+	const canConfirmFast = useCallback(() => (
+		fastNeedsRefresh.current && !saveState.current.pendingSave && modelSavesInFlight.current === 0
+	), [saveState]);
+	const finishFastRefresh = useCallback((confirmed: boolean) => {
+		if (!canConfirmFast()) return;
+		setFastRefreshFailed(!confirmed);
+		if (confirmed) {
+			fastNeedsRefresh.current = false;
+			setSavingFast(false);
+		}
+	}, [canConfirmFast]);
 	const readSession = useCallback(() => {
 		if (!chatId) return;
 		const read = ++sessionRead.current;
-		const confirmingFast = chatFastNeedsRefresh.current && !saveState.current.pendingSave && modelSavesInFlight.current === 0;
+		const confirmingFast = canConfirmFast();
 		if (confirmingFast) setFastRefreshFailed(false);
 		fetch(`/api/chats/${chatId}`)
 			.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
 			.then((body) => {
 				if (read !== sessionRead.current) return;
 				setSession({ settings: body.settings });
-				if (confirmingFast && modelSavesInFlight.current === 0) {
-					chatFastNeedsRefresh.current = false;
-					setSavingFast(false);
-				}
+				if (confirmingFast) finishFastRefresh(true);
 			})
 			.catch(() => {
-				if (confirmingFast && read === sessionRead.current && modelSavesInFlight.current === 0) setFastRefreshFailed(true);
+				if (confirmingFast && read === sessionRead.current) finishFastRefresh(false);
 			});
-	}, [chatId, saveState]);
+	}, [chatId, canConfirmFast, finishFastRefresh]);
+	const readModels = useCallback(() => {
+		const read = ++modelsRead.current;
+		const confirmingFast = !chatId && canConfirmFast();
+		if (confirmingFast) setFastRefreshFailed(false);
+		fetch("/api/settings")
+			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
+			.then((body) => {
+				if (read !== modelsRead.current) return;
+				setModels(body.settings?.models);
+				if (confirmingFast) finishFastRefresh(true);
+			})
+			.catch(() => {
+				if (confirmingFast && read === modelsRead.current) finishFastRefresh(false);
+			});
+	}, [chatId, canConfirmFast, finishFastRefresh]);
+	const readFastSettings = chatId ? readSession : readModels;
 
 	// The record read — BOTH mount and the cross-surface signal land
 	// here (fix wave: another surface's models write re-reads into the
@@ -105,36 +129,24 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		readSession();
-		const read = ++modelsRead.current;
-		fetch("/api/settings")
-			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
-			.then((body) => {
-				if (read !== modelsRead.current) return;
-				setModels(body.settings?.models);
-			})
-			.catch(() => {
-				/* the record fetch failing leaves the control read-only
-				   ("—" triggers, closed menus) — same posture as a
-				   catalog failure */
-			});
-	}, [readSession]);
+		readModels();
+	}, [readSession, readModels]);
 
 	useEffect(() => {
 		let active = true;
 		const pendingStrongSave = chatId ? undefined : saveState.current.pendingSave;
+		if (pendingStrongSave) fastNeedsRefresh.current = true;
+		if (!chatId) setSavingFast(fastNeedsRefresh.current);
 		readRecord();
-		if (!chatId) setSavingFast(pendingStrongSave !== undefined);
 		if (pendingStrongSave) void pendingStrongSave.then(() => {
-			if (!active) return;
-			setSavingFast(false);
-			readRecord();
+			if (active && canConfirmFast()) readModels();
 		});
 		return () => {
 			active = false;
 			++sessionRead.current;
 			++modelsRead.current;
 		};
-	}, [chatId, readRecord, saveState]);
+	}, [chatId, canConfirmFast, readModels, readRecord, saveState]);
 
 	useSettingsSaved((section) => {
 		if (section === "models") readRecord();
@@ -223,7 +235,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				if (!changingFast || modelsRead.current === readAtStart) {
 					++modelsRead.current;
 					setModels(settings.models);
-				}
+				} else fastNeedsRefresh.current = true;
 				if (!changingFast) {
 					setOpen(null);
 					notifySettingsSaved("models");
@@ -258,7 +270,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					return false;
 				}
 				const { settings } = await res.json() as { settings: ChatSettings };
-				if (!changingFast || !chatFastNeedsRefresh.current) {
+				if (!changingFast || !fastNeedsRefresh.current) {
 					++sessionRead.current;
 					setSession({ settings });
 				}
@@ -279,10 +291,10 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
 			const changingFast = fastMode !== undefined;
-			if (changingFast && (saveState.current.pendingSave || modelSavesInFlight.current > 0 || chatFastNeedsRefresh.current)) return;
+			if (changingFast && (saveState.current.pendingSave || modelSavesInFlight.current > 0 || fastNeedsRefresh.current)) return;
 			if (changingFast) setSavingFast(true);
 			else {
-				if (chatId && saveState.current.pendingSave) chatFastNeedsRefresh.current = true;
+				if (chatId && saveState.current.pendingSave) fastNeedsRefresh.current = true;
 				modelSavesInFlight.current++;
 				setSavingModel(true);
 			}
@@ -299,17 +311,15 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			const settled = pendingSave.finally(() => {
 				if (changingFast) {
 					saveState.current.pendingSave = undefined;
-					if (!chatFastNeedsRefresh.current) setSavingFast(false);
+					if (!fastNeedsRefresh.current) setSavingFast(false);
 				} else if (--modelSavesInFlight.current === 0) {
 					setSavingModel(false);
 				}
-				if (chatFastNeedsRefresh.current && !saveState.current.pendingSave && modelSavesInFlight.current === 0 && containerRef.current) {
-					readSession();
-				}
+				if (containerRef.current && canConfirmFast()) readFastSettings();
 			});
 			if (changingFast) saveState.current.pendingSave = settled;
 		},
-		[chatId, models, readSession, save, saveChat, saveState],
+		[chatId, models, canConfirmFast, readFastSettings, save, saveChat, saveState],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -375,7 +385,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const fastFeedback = (fastError || fastRefreshFailed) && <>
 		{fastError && <div>{fastError}</div>}
 		{fastRefreshFailed && <div>
-			Could not confirm Fast Mode. <button type="button" className="underline" onClick={readSession} disabled={savingModel}>Retry</button>
+			Could not confirm Fast Mode. <button type="button" className="underline" onClick={readFastSettings} disabled={savingModel}>Retry</button>
 		</div>}
 	</>;
 

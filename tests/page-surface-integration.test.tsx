@@ -97,6 +97,8 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 	const slots = () => ({ strong: { model, fastMode, thinkingLevel }, cheap: { model }, vision: { model } });
 	let finishFast!: () => void;
 	const pending = new Promise<void>((resolve) => { finishFast = resolve; });
+	let finishRead!: () => void;
+	const savedRead = new Promise<void>((resolve) => { finishRead = resolve; });
 	let fastWrites = 0;
 	const createdWithFast: boolean[] = [];
 	await withPage(pages[1]!, async f => {
@@ -119,8 +121,12 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 			assert.deepEqual(createdWithFast, []);
 			await act(async () => finishFast());
 			assert.deepEqual(createdWithFast, [false]);
+			assert.equal(fastButton()?.disabled, true);
+			assert.equal(f.document.querySelector<HTMLButtonElement>('[data-testid="stats-thinking"]')?.disabled, false);
+			await act(async () => finishRead());
 			assert.equal(fastButton()?.getAttribute("aria-pressed"), "false");
-		} finally { await act(async () => finishFast()); }
+			assert.equal(fastButton()?.disabled, false);
+		} finally { await act(async () => { finishFast(); finishRead(); }); }
 	}, async (input, init) => {
 		if (input === "/api/models") return Response.json({
 			models: [{ ...model, name: model.id, fastServiceTier: "priority", input: ["text"], reasoning: true, supportedLevels: ["off", "low"], cost: null, contextWindow: null, maxTokens: null }],
@@ -138,6 +144,7 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 				thinkingLevel = next.strong?.thinkingLevel;
 			}
 		}
+		if (input === "/api/settings" && !fastMode) await savedRead;
 		if (input === "/api/settings" || input === "/api/settings/models") return Response.json({ settings: { models: slots() } });
 		if (input === "/api/chats" && init?.method === "POST") {
 			createdWithFast.push(fastMode);
