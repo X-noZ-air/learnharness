@@ -184,6 +184,7 @@ test("ordinary effort writes can overlap and only Fast writes hold the composer"
  assert.equal(fast.disabled, true);
  await act(async () => requests[1]!.resolve(new Response(null, { status: 503 })));
  assert.equal(fast.disabled, false);
+ assert.equal(Boolean(host!.querySelector('[role="alert"]')), false, "a closed menu keeps ordinary effort errors hidden");
 
  await act(async () => { fast.click(); cycleEffort(); });
  assert.equal(requests.length, 3);
@@ -194,6 +195,7 @@ test("ordinary effort writes can overlap and only Fast writes hold the composer"
  assert.equal(await pendingFast, false);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
  assert.equal(fast.disabled, false);
+ assert.equal(host!.querySelector('[role="alert"]')?.textContent, "settings rejected (503)");
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {

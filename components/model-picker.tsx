@@ -61,7 +61,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// means no session record is known yet, not permission to inherit Strong.
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<{ message: string; fast: boolean } | null>(null);
 	const [savingFast, setSavingFast] = useState(false);
 	const [savingModel, setSavingModel] = useState(false);
 	const modelSavesInFlight = useRef(0);
@@ -173,7 +173,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// (replace-whole-section discipline) and the per-field independence of
 	// model + thinkingLevel within the strong slot.
 	const save = useCallback(
-		async (next: ModelsSettings, refreshCatalog = true) => {
+		async (next: ModelsSettings, changingFast: boolean) => {
 			setError(null);
 			try {
 				const res = await fetch("/api/settings/models", {
@@ -183,7 +183,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
+					setError({ message: body.error ?? `settings rejected (${res.status})`, fast: changingFast });
 					return false;
 				}
 				// Server truth, never the request body (fix wave): a pick
@@ -193,10 +193,10 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				++modelsRead.current;
 				setModels(settings.models);
 				setOpen(null);
-				notifySettingsSaved("models", { refreshCatalog });
+				notifySettingsSaved("models", { refreshCatalog: !changingFast });
 				return true;
 			} catch {
-				setError("Could not reach the server — try again.");
+				setError({ message: "Could not reach the server — try again.", fast: changingFast });
 				return false;
 			}
 		},
@@ -209,7 +209,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// shows the stored value). No notifySettingsSaved: the write touches
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
-		async (next: ChatSettings) => {
+		async (next: ChatSettings, changingFast: boolean) => {
 			setError(null);
 			try {
 				const res = await fetch(`/api/chats/${chatId}/settings`, {
@@ -219,7 +219,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
+					setError({ message: body.error ?? `settings rejected (${res.status})`, fast: changingFast });
 					return false;
 				}
 				const { settings } = await res.json() as { settings: ChatSettings };
@@ -228,7 +228,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				setOpen(null);
 				return true;
 			} catch {
-				setError("Could not reach the server — try again.");
+				setError({ message: "Could not reach the server — try again.", fast: changingFast });
 				return false;
 			}
 		},
@@ -250,13 +250,13 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			}
 			let pendingSave: Promise<boolean>;
 			if (chatId) {
-				pendingSave = saveChat(fastMode !== undefined
+				pendingSave = saveChat(changingFast
 					? { fastMode }
-					: { model: { provider, id }, thinkingLevel: level });
+					: { model: { provider, id }, thinkingLevel: level }, changingFast);
 			} else {
-				pendingSave = fastMode !== undefined
-					? save({ strong: { fastMode } }, false)
-					: save(composeSlotModel(models, "strong", provider, id, level ?? ""));
+				pendingSave = save(changingFast
+					? { strong: { fastMode } }
+					: composeSlotModel(models, "strong", provider, id, level ?? ""), changingFast);
 			}
 			const settled = pendingSave.finally(() => {
 				if (changingFast) {
@@ -370,7 +370,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					void apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
 				}} />
 			)}
-			{open === null && error && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{error}</div>}
+			{open === null && error?.fast && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{error.message}</div>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same
@@ -382,7 +382,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					preferredSide="up"
 					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl narrow:max-w-[calc(100vw-3rem)]"
 				>
-					{error && <div className="mb-1.5 text-destructive">{error}</div>}
+					{error && <div className="mb-1.5 text-destructive">{error.message}</div>}
 					<ModelMenuList
 						models={catalog?.models}
 						effectiveId={effectiveId}
@@ -413,7 +413,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 						empty={catalog ? (effectiveId ? `${prettyModel(effectiveId)} has no thinking levels.` : "Pick a model first.") : "Loading…"}
 						footer="Levels this model actually supports"
 					/>
-					{error && <div className="mt-1 text-destructive">{error}</div>}
+					{error && <div className="mt-1 text-destructive">{error.message}</div>}
 				</MenuShell>
 			)}
 		</div>
