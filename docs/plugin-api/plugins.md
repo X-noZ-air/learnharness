@@ -250,6 +250,7 @@ Trusted Node code must cooperate with cancellation; no forced process isolation.
 
 ```ts
 export interface PluginBackendContext {
+    trackWork?<T>(fn: () => Promise<T>): Promise<T>;
     readonly manifest: PluginManifest;
     readonly directory: string;
     readonly dataDirectory: string;
@@ -276,6 +277,7 @@ export interface PluginBackendContext {
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
+- [trackWork](#pluginbackendcontext-trackwork)
 - [manifest](#pluginbackendcontext-manifest)
 - [directory](#pluginbackendcontext-directory)
 - [dataDirectory](#pluginbackendcontext-datadirectory)
@@ -294,6 +296,20 @@ export interface PluginBackendContext {
 - [events](#pluginbackendcontext-events)
 - [events.on](#pluginbackendcontext-eventson)
 - [events.emit](#pluginbackendcontext-eventsemit)
+
+### PluginBackendContext trackWork
+
+Register a detached writer before handing it off; settle after its last write.
+
+```ts
+trackWork?<T>(fn: () => Promise<T>): Promise<T>;
+```
+
+| Parameter | Type |
+| --- | --- |
+| `fn` | `() => Promise<T>` |
+
+**Returns:** `Promise<T>`.
 
 ### PluginBackendContext manifest
 

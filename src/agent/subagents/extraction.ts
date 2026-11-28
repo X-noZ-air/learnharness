@@ -1,3 +1,4 @@
+import { tracked } from "../../core/maintenance.ts";
 import * as crypto from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -1424,6 +1425,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
-	return { runExtraction, importNotes };
+	return { runExtraction: chatId => tracked("extraction", () => runExtraction(chatId)),
+		importNotes: input => tracked("extraction", () => importNotes(input)) };
 }
 

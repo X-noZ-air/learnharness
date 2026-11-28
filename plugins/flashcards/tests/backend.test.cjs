@@ -88,6 +88,7 @@ function harness(t, initialGraph = graph('p1')) {
   h.activate = () => {
     h.dispose(); handlers = new Map(); controller = new AbortController();
     activate({ dataDirectory: directory, signal: controller.signal,
+      trackWork: fn => fn(),
       workers: workers.service, learning: { graph: () => structuredClone(h.graph) },
       inference: { catalog: async () => { h.catalogReads++; return h.resolveCatalog ? h.resolveCatalog() : structuredClone(h.catalog); } },
       events: { emit() {} }, handle: (name, handler) => handlers.set(name, handler),

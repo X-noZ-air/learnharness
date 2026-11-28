@@ -161,6 +161,33 @@ test("idle plugin dismissal persists exact cancellation and notifies once, with 
 	assert.equal(pendingPluginQuestionOf(f.saved().messages), undefined);
 });
 
+test("a dismissal whose body arrives after drain readiness leaves the record intact", async t => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const { newDrainAttempt } = await import("./helpers/maintenance-attempt.ts");
+	const f = fixture(t);
+	const previousSocket = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const pending = delayedPost(f.id, f.input);
+	t.after(pending.release);
+	await pending.started;
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	t.after(() => {
+		const status = control("status");
+		if (status.mode === "draining") control("resume", hold.generation);
+		if (previousSocket === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previousSocket;
+	});
+	assert.equal(hold.drained, true);
+	const before = f.saved().messages;
+	pending.release();
+	assert.equal((await pending.response).status, 409);
+	assert.deepEqual(f.saved().messages, before);
+	assert.equal(control("status", hold.generation).drained, true);
+	control("resume", hold.generation);
+	assert.equal((await post(f.id, f.input)).status, 200);
+	assert.equal(pendingPluginQuestionOf(f.saved().messages), undefined);
+});
+
 test("idle body-await dismissal preserves current canonical appends rather than overwriting captured history", async t => {
 	const f = fixture(t), pending = delayedPost(f.id, f.input);
 	t.after(pending.release);

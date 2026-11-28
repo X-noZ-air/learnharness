@@ -51,7 +51,7 @@ npx electron-builder --linux --x64 --publish never # Linux
 
 ## CI and release modes
 
-[CI](../.github/workflows/ci.yml) runs typecheck/tests/lint on Ubuntu, plus standalone/native checks on macOS, Windows, and Linux. Its `macos-15` job does not compile the release icon.
+[CI](../.github/workflows/ci.yml) requires typecheck, tests, lint, and standalone and native checks on Linux x64 for the Werft browser deployment. The [optional desktop workflow](../.github/workflows/werft-desktop-standalone.yml) runs the Windows x64 and macOS arm64 checks on pushes to `werft` and supports manual dispatch. Its macOS job does not compile the release icon.
 
 [Desktop release](../.github/workflows/release.yml) has two modes:
 

@@ -20,9 +20,9 @@ The response identifies the Actions run. Use the run result and the journal's
 `last_successful_poll_at` to verify a completed poll.
 
 The workflow's GitHub cron at minutes 7, 22, 37, and 52 UTC is a secondary
-trigger. To opt in on a fork, open **Actions**, select **Werft upstream updates**,
-and click **Enable workflow** if GitHub offers it. The host timer is sufficient
-for regular polling.
+trigger. The update job runs only on `X-noZ-air/learnharness`. On that fork,
+open **Actions**, select **Werft upstream updates**, and click **Enable workflow**
+if GitHub offers it. The host timer is sufficient for regular polling.
 
 ## Update and branch protection
 
@@ -33,11 +33,13 @@ order. Each poll looks for the entire backlog.
 Each release gets one integration branch and one pull request. The branch is
 built as a two-parent merge of the current base and the upstream tag. The poller
 dispatches **CI** on its own trusted ref with the exact candidate SHA, base SHA,
-and pull request. The quality job and all three platform jobs use that candidate
+and pull request. The quality and Linux x64 standalone jobs use that candidate
 with read-only permissions, no persisted checkout credentials, and npm caching
-disabled. CI retries the full plan-label browser smoke up to twice on each
-platform. Three failed attempts leave the affected job red. The trusted
-poller posts `werft/ci` only after it verifies the dispatched run and its jobs.
+disabled. CI retries the full plan-label browser smoke up to twice. Three
+failed attempts leave the Linux job red. The trusted poller posts `werft/ci`
+only after it verifies the dispatched run and both required jobs.
+Windows and macOS standalone checks run separately on pushes to `werft` or by
+manual dispatch.
 The separate **Werft feature CI status** reporter sets that context for ordinary
 pull requests, including changes to workflows and scripts, when CI succeeds.
 Firstmate reviews delivery automation before merging those pull requests. The

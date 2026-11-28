@@ -2,8 +2,33 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { createPluginTransport, type PluginTransportHost } from "../src/server/plugin-transport.ts";
 import { PluginHostError } from "../src/server/plugin-host.ts";
+import { control } from "../src/core/maintenance.ts";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 
 const request = (body: unknown) => new Request("http://localhost/api/plugins", { method: "POST", body: JSON.stringify(body) });
+
+it("plugin reads during a cold drain do not initialize the host", async t => {
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	t.after(() => {
+		control("resume", hold.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	});
+	let initializations = 0;
+	const directory = "/temporary/plugins";
+	const transport = createPluginTransport({ getHost: async () => {
+		initializations++;
+		throw new Error("Unexpected host initialization");
+	}, directory });
+	const list = await transport.list();
+	assert.equal(list.status, 200);
+	assert.deepEqual(await list.json(), { plugins: [], directory, conflicts: [] });
+	assert.equal((await transport.asset("flashcards", ["main.js"])).status, 404);
+	assert.equal((await transport.call("flashcards", request({ operation: "get-state" }))).status, 409);
+	assert.equal(initializations, 0);
+});
 function fixture() {
 	const calls: unknown[] = [];
 	const host: PluginTransportHost = {

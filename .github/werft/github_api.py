@@ -14,7 +14,6 @@ CONTEXT = "werft/ci"
 ACTIONS_APP_ID = 15368
 CI_JOBS = {
     "Typecheck, tests, lint",
-    "Standalone (windows-x64)",
     "Standalone (linux-x64)",
 }
 

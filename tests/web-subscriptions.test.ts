@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { newDrainAttempt } from "./helpers/maintenance-attempt.ts";
 import test, { after } from "node:test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -14,7 +15,7 @@ process.env.LH_DATA_DIR = path.join(directory, "data");
 delete process.env.LH_DESKTOP_SERVER; delete process.env.LH_DESKTOP_API_SECRET;
 await fs.writeFile(process.env.LH_AUTH_FILE, "{}", { mode: 0o600 });
 const require = createRequire(import.meta.url);
-const { SCOPES } = require("../electron/chatgpt.cjs");
+const { SCOPES, createChatGPT, fileStore } = require("../electron/chatgpt.cjs");
 const { createWebSubscriptionOwner, webSubscriptionOwner, webSubscriptionsEnabled } = await import("../src/server/web-subscriptions.ts");
 const { subscriptionControlsResponse, subscriptionBrowserResponse } = await import("../src/server/web-subscription-http.ts");
 const chat = await import("../src/agent/chatgpt-bridge.ts");
@@ -35,6 +36,39 @@ function request(command?: Record<string, unknown>, origin = "http://192.168.1.1
 	return new Request(`${origin}/api/subscriptions`, { method: command ? "POST" : "GET", headers: { host: new URL(origin).host, origin, "sec-fetch-site": "same-origin", "x-learnharness-subscriptions": "1", "content-type": "application/json" }, ...(command ? { body: JSON.stringify(command) } : {}) });
 }
 after(async () => { webSubscriptionOwner().close(); globalThis.fetch = originalFetch; await fs.rm(directory, { recursive: true, force: true }); });
+
+test("cold subscription reads and cancellation preserve their public contracts during drain", async t => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const key = Symbol.for("lh.webSubscriptions");
+	const global = globalThis as typeof globalThis & { [key]?: { owner?: unknown } };
+	const previous = global[key];
+	const previousSocket = process.env.LH_MAINTENANCE_SOCKET;
+	global[key] = {};
+	process.env.LH_MAINTENANCE_SOCKET = "fixture";
+	const hold = control("drain", undefined, undefined, newDrainAttempt());
+	t.after(() => {
+		control("resume", hold.generation);
+		global[key] = previous;
+		if (previousSocket === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previousSocket;
+	});
+	assert.equal(hold.drained, true);
+	const credentialFile = path.join(directory, "chatgpt-credentials.json");
+	const credentialsBefore = await fs.readFile(credentialFile);
+	const upstream = createChatGPT({ store: fileStore(credentialFile), openExternal: async () => {} });
+	const cancel = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "cancel" }));
+	assert.equal(cancel.status, 200);
+	assert.deepEqual(await cancel.json(), { value: upstream.cancelLogin() });
+	const status = await subscriptionControlsResponse(request());
+	assert.equal(status.status, 200);
+	const payload = await status.json();
+	assert.deepEqual(payload.chatgpt, await upstream.status());
+	assert.equal(payload.chatgpt.activeId, "fixture-account");
+	assert.deepEqual(payload.native.map((provider: { providerId: string; connected: boolean }) => [provider.providerId, provider.connected]),
+		[["github-copilot", true], ["xai", true]]);
+	assert.deepEqual(await fs.readFile(credentialFile), credentialsBefore);
+	assert.equal(control("status", hold.generation).drained, true);
+});
 
 test("ordinary web restores configured sibling credentials, private runtime leases work for LAN-owned requests", async () => {
 	await refreshConnectionCatalog();
@@ -137,4 +171,110 @@ test("web ChatGPT login supplies only an opaque browser action; cancel/replaceme
 		assert.equal(callback.hostname, "127.0.0.1"); assert.equal(callback.pathname, "/auth/callback");
 		assert(target.searchParams.has("state")); assert(target.searchParams.has("code_challenge"));
 	} finally { owner.close(); await fs.rm(scratch, { recursive: true, force: true }); }
+});
+
+test("drain waits for a device sign-in through its bound browser action and durable credential save", async () => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "lh-device-drain-"));
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(scratch, "unit.sock");
+	const challenge = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<OAuthCredential>();
+	const owner = createWebSubscriptionOwner({ directory: scratch, sdk: fakeSDK(async (_id, interaction) => {
+		interaction.notify({ type: "device_code", userCode: "FIXTURE", verificationUri: "https://example.invalid/verify" });
+		challenge.resolve();
+		return finish.promise;
+	}) });
+	const origin = "http://localhost";
+	try {
+		const login = owner.control("xai", { op: "login" }, origin);
+		await challenge.promise;
+		const state = control("drain", undefined, undefined, newDrainAttempt());
+		assert.equal(state.drained, false);
+		assert.equal(state.counts["sign-in"], 1);
+		await assert.rejects(owner.control("xai", { op: "login" }, origin), /maintenance/);
+		const pending = (await owner.native.status()).find((p: {providerId: string}) => p.providerId === "xai")!.interaction;
+		await assert.rejects(owner.control("xai", { op: "open", attemptId: "stale", actionId: pending.browser.id }, origin));
+		const action = await owner.control("xai", { op: "open", attemptId: pending.attemptId, actionId: pending.browser.id }, origin);
+		const id = new URL(action.browserAction!, origin).searchParams.get("id")!;
+		assert.equal(await owner.takeBrowserAction(id, origin), "https://example.invalid/verify");
+		finish.resolve(credentials("xai")); await login;
+		assert.equal(control("status", state.generation).drained, true);
+		assert.ok(JSON.parse(await fs.readFile(path.join(scratch, "xai-credentials.json"), "utf8")).credential);
+	} finally {
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
+		owner.close();
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+		await fs.rm(scratch, { recursive: true, force: true });
+	}
+});
+
+test("a pending web sign-in remains visible and can finish through its local callback during drain", async () => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(directory, "unit.sock");
+	const origin = "http://localhost:3000";
+	try {
+		const response = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "login" }, origin));
+		assert.equal(response.status, 200);
+		const { browserAction } = await response.json();
+		const hold = control("drain", undefined, undefined, newDrainAttempt());
+		assert.equal(hold.counts["sign-in"], 1);
+		const status = await subscriptionControlsResponse(request(undefined, origin));
+		assert.equal((await status.json()).chatgpt.pending, true);
+		const late = await subscriptionControlsResponse(request({ providerId: "chatgpt", op: "login" }, origin));
+		assert.equal(late.status, 503);
+		const launch = await subscriptionBrowserResponse(new Request(origin + browserAction, {
+			headers: { host: new URL(origin).host, "sec-fetch-site": "same-origin" },
+		}));
+		assert.equal(launch.status, 303);
+		const parameters = new URL(launch.headers.get("location")!).searchParams;
+		const callback = new URL(parameters.get("redirect_uri")!);
+		assert.equal(callback.hostname, "127.0.0.1");
+		callback.searchParams.set("state", parameters.get("state")!);
+		callback.searchParams.set("error", "access_denied");
+		assert.equal((await originalFetch(callback)).status, 200);
+		assert.equal(control("status", hold.generation).drained, true);
+	} finally {
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+	}
+});
+
+test("the web control cancels an admitted device sign-in during drain", { timeout: 5000 }, async (t) => {
+	const { control } = await import("../src/core/maintenance.ts");
+	const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "lh-device-cancel-"));
+	const previous = process.env.LH_MAINTENANCE_SOCKET;
+	process.env.LH_MAINTENANCE_SOCKET = path.join(scratch, "unit.sock");
+	const challenge = Promise.withResolvers<void>();
+	const owner = createWebSubscriptionOwner({ directory: scratch, sdk: fakeSDK(async (_id, interaction) => {
+		interaction.notify({ type: "device_code", userCode: "FIXTURE", verificationUri: "https://example.invalid/verify" });
+		challenge.resolve();
+		return interaction.prompt({ type: "text", message: "Fixture prompt" }).then(() => credentials("xai"));
+	}) });
+	t.mock.method(webSubscriptionOwner(), "control", owner.control);
+	const issue = (op: string) => subscriptionControlsResponse(request({ providerId: "xai", op }));
+	const login = issue("login");
+	try {
+		await challenge.promise;
+		const hold = control("drain", undefined, undefined, newDrainAttempt());
+		assert.equal(hold.counts["sign-in"], 1);
+		assert.equal((await issue("login")).status, 503);
+		assert.equal((await issue("cancel")).status, 200);
+		await login;
+		assert.equal((await owner.native.status()).find((entry: { providerId: string }) => entry.providerId === "xai")?.pending, false);
+		assert.equal(control("status", hold.generation).drained, true);
+	} finally {
+		owner.close();
+		await login;
+		const status = control("status");
+		if (status.mode === "draining") control("resume", status.generation);
+		if (previous === undefined) delete process.env.LH_MAINTENANCE_SOCKET;
+		else process.env.LH_MAINTENANCE_SOCKET = previous;
+		await fs.rm(scratch, { recursive: true, force: true });
+	}
 });

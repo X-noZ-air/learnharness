@@ -3,11 +3,11 @@
  * after reload); PATCH changes window visibility. Closing never deletes it.
  */
 import { parseSideOpenInput, SideChatInputError } from "@/src/core";
-import { sideChats } from "@/src/server";
+import { mutation, sideChats } from "@/src/server";
 
 type Ctx = { params: Promise<{ id: string; threadId: string }> };
 
-export async function PATCH(request: Request, ctx: Ctx): Promise<Response> {
+async function handlePatch(request: Request, ctx: Ctx): Promise<Response> {
 	const { id, threadId } = await ctx.params;
 	let open: boolean;
 	try {
@@ -26,3 +26,5 @@ export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
 	const { id, threadId } = await ctx.params;
 	return sideChats.watch(id, threadId);
 }
+
+export const PATCH = mutation(handlePatch);

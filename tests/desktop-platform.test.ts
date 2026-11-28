@@ -413,12 +413,16 @@ describe("desktop release workflow", () => {
 		assert.ok(buildIndex > xcodeIndex, "select Xcode before packaging compiles the icon");
 	});
 
-	it("requires Linux x64 and Windows x64 standalone jobs in CI", () => {
+	it("keeps the Linux standalone job required and desktop standalone jobs off pull requests", () => {
 		const ci = yaml.load(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-		const targets = ci.jobs.standalone?.strategy?.matrix.include;
-		assert.deepEqual(targets?.map(({ os, platform }) => [platform, os]).sort(), [
-			["linux-x64", "ubuntu-24.04"],
-			["windows-x64", "windows-2025"],
+		assert.deepEqual(ci.jobs.standalone.strategy.matrix.include, [
+			{ os: "ubuntu-24.04", platform: "linux-x64" },
+		]);
+		const desktop = yaml.load(readFileSync(new URL("../.github/workflows/werft-desktop-standalone.yml", import.meta.url), "utf8"));
+		assert.deepEqual(desktop.on, { push: { branches: ["werft"] }, workflow_dispatch: null });
+		assert.deepEqual(desktop.jobs.standalone.strategy.matrix.include, [
+			{ os: "macos-15", platform: "mac-arm64" },
+			{ os: "windows-2025", platform: "windows-x64" },
 		]);
 	});
 

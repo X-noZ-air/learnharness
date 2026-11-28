@@ -1,4 +1,5 @@
 /** Native ack-now/result-steer-later adapter. Workers own execution and canonical outcomes. */
+import { beginWork } from "../core/maintenance.ts";
 import { createHash } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
@@ -118,6 +119,8 @@ export function createPluginBackgroundTool<T extends TSchema>(deps: PluginBackgr
 		} catch (error) { workers.cancel(snapshot.id); throw error; }
 		const controller = new AbortController();
 		deps.registerAbort(job.id, controller);
+		const lease = beginWork("job");
+		const finished = () => { deps.unregisterAbort(job.id); lease.end(); };
 		let terminal = false;
 		let unsubscribe: (() => void) | undefined;
 		controller.signal.addEventListener("abort", () => { if (!terminal) workers.cancel(snapshot.id); }, { once: true });
@@ -163,31 +166,31 @@ export function createPluginBackgroundTool<T extends TSchema>(deps: PluginBackgr
 					deliver(saved, saved.result as PluginBackgroundResult, deps);
 				} else await notifyFailure(job, `Background result persistence failed: ${reason(error)}`, deps);
 			}
-			finally { deps.unregisterAbort(job.id); }
+			finally { finished(); }
 		};
 		try {
 			const update = (task: PluginTaskRecord) => {
 				if (terminal) return;
 				jobStore.updateJob(job.id, { usage: task.usage, ...(jobStore.getJob(job.id)?.status === "running" ? { activity: task.activity ?? task.status } : {}) });
 				const outcome = taskOutcome(task);
-				if (outcome) void finish(outcome);
+				if (outcome) void lease.run(() => finish(outcome));
 			};
 			unsubscribe = workers.subscribe(snapshot.id, update);
 			// Subscription is ephemeral progress only. The canonical waiter also
 			// settles on disposal, when progress listeners may already be cleared.
-			void workers.wait(snapshot.id).then(finish, async (error: unknown) => {
+			void lease.run(() => workers.wait(snapshot.id).then(finish, async (error: unknown) => {
 				if (terminal) return;
 				terminal = true;
 				unsubscribe?.();
 				try { await notifyFailure(job, `Worker outcome unavailable: ${reason(error)}`, deps); }
-				finally { deps.unregisterAbort(job.id); }
-			}).catch((error: unknown) => { console.error(`[plugin job ${job.id}] outcome delivery failed:`, error); });
+				finally { finished(); }
+			}).catch((error: unknown) => { console.error(`[plugin job ${job.id}] outcome delivery failed:`, error); }));
 			update(workers.get(snapshot.id));
 			if (terminal) unsubscribe();
 		} catch (error) {
 			// A linkage/subscription failure is not a worker failure.
 			unsubscribe?.();
-			void notifyFailure(job, `Worker dispatch linkage failed: ${reason(error)}`, deps).finally(() => deps.unregisterAbort(job.id));
+			void notifyFailure(job, `Worker dispatch linkage failed: ${reason(error)}`, deps).finally(finished);
 		}
 		return acknowledge(job);
 	} };

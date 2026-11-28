@@ -32,6 +32,7 @@
 
 import { isBuiltinThemeId, type AgentSettings, type AppearanceSettings, type ChatSettings, type ModelsSettings } from "@/src/core";
 import {
+	mutation,
 	SETTINGS_SECTIONS,
 	allSegmentPaths,
 	clampChatLevel,
@@ -53,7 +54,7 @@ export const dynamic = "force-dynamic";
 /** One parser, result type erased to the common envelope. */
 type AnySectionParser = (body: unknown) => SettingsBodyResult<unknown>;
 
-export async function PUT(request: Request, ctx: { params: Promise<{ section: string }> }) {
+async function handlePut(request: Request, ctx: { params: Promise<{ section: string }> }) {
 	const { section } = await ctx.params;
 	const parser = (SETTINGS_SECTIONS as Record<string, AnySectionParser>)[section];
 	if (!parser) {
@@ -151,3 +152,5 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 	const fileAccessError = fileAccessConfigurationError();
 	return Response.json({ settings: stored, ...(fileAccessError ? { fileAccessError } : {}) });
 }
+
+export const PUT = mutation(handlePut);

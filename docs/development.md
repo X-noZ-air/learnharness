@@ -60,6 +60,8 @@ Ordinary Next development can read `.env.local`. Real environment keys take prec
 
 Provider-specific setup and limitations: [Claude Code](claude-code.md), [custom endpoints](custom-providers.md), [context/cost accounting](compaction-accounting.md).
 
+See [server maintenance](server-maintenance.md#enable-local-control) for the local socket and startup hold configuration.
+
 ### Subscription connections in web/dev
 
 `npm run dev` and `npm start` support ChatGPT, GitHub Copilot, and Grok sign-in. `desktop:dev` uses those same dev-server connections; packaged desktop has a separate main-process credential owner/private transport. Subscription routes do not fall back to API-key billing.
@@ -122,6 +124,8 @@ Additional runtime gates have prerequisites:
 | --- | --- |
 | `node scripts/smoke-provider-runtime.mjs` | Fresh build; traced provider payload/runtime paths with fixtures. Also used during packaging. |
 | `node scripts/smoke-narrow-viewports.mjs` | Fresh build and Chrome on Linux or macOS. Runs in CI on Linux. See [narrow layout](#narrow-layout) for coverage. |
+| `node scripts/smoke-maintenance.mjs` | POSIX, no dev server running. Exercises [server maintenance](server-maintenance.md) with delayed model responses, plugin work, and a profile restart. |
+| `node scripts/smoke-maintenance-dismissals.mjs` | POSIX, Chrome, no dev server running. Verifies that late quiz and practice dismissals preserve the prompt and draft in the browser. Runs in CI on Linux. |
 | `node scripts/smoke-web-subscriptions.mjs` | Build, no dev server running; isolated synthetic connection checks, external traffic blocked. Briefly changes/restores a source mtime to exercise reload. |
 | `node scripts/build-plugin-types.mjs` | Builds the portable type-only plugin SDK under `dist/plugin-sdk`. |
 | `node scripts/build-server.mjs` then `node scripts/smoke-server.mjs --isolated --browser` | Fresh build; assemble/verify a source-free standalone copy, installed plugin backends and browser UI. Add `--electron` for Electron's bundled Node; browser checks require local Chrome/Chromium. |

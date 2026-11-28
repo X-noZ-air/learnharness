@@ -78,6 +78,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
+      - run: node scripts/smoke-maintenance.mjs
 
   standalone:
     needs: validate-candidate
@@ -87,10 +88,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The Werft release runs on Linux. Three GitHub-hosted macOS arm64 jobs
-          # were cancelled without runner assignment. Use the manual desktop release for macOS coverage.
-          - os: windows-2025
-            platform: windows-x64
+          # Werft runs on Linux and is used in a browser. Windows and macOS
+          # standalone checks run in the optional desktop workflow.
           - os: ubuntu-24.04
             platform: linux-x64
     runs-on: ${{ matrix.os }}
@@ -135,5 +134,8 @@ jobs:
       - name: Narrow browser layout smoke test
         if: runner.os == 'Linux'
         run: node scripts/smoke-narrow-viewports.mjs
+      - name: Maintenance dismissal browser smoke test
+        if: runner.os == 'Linux'
+        run: node scripts/smoke-maintenance-dismissals.mjs
       - run: node scripts/build-server.mjs
       - run: node scripts/smoke-server.mjs --electron

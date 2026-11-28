@@ -80,7 +80,6 @@ function getChat(id: string): ChatRecord | null {
 
 function listChats(): ChatSummary[] {
 	try {
-		fs.mkdirSync(PATHS.chats, { recursive: true });
 		return fs
 			.readdirSync(/* turbopackIgnore: true */ PATHS.chats)
 			.filter((f) => f.endsWith(".json"))

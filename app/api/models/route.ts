@@ -1,4 +1,4 @@
-import { modelCatalog, refreshConnectionCatalog, refreshModelCatalog } from "@/src/server";
+import { mutation, modelCatalog, refreshConnectionCatalog, refreshModelCatalog } from "@/src/server";
 import type { ModelCatalogRefreshResponse } from "@/src/core";
 
 const headers = { "Cache-Control": "no-store" };
@@ -15,9 +15,11 @@ export async function GET() {
 }
 
 /** Only this explicit action may contact pi.dev. The API Proxy guards it. */
-export async function POST() {
+async function handlePost() {
 	let outcome;
 	try { outcome = await refreshModelCatalog(); }
 	catch { return Response.json({ error: "Model catalog refresh failed" }, { status: 502, headers }); }
 	return Response.json({ outcome, catalog: modelCatalog() } satisfies ModelCatalogRefreshResponse, { headers });
 }
+
+export const POST = mutation(handlePost);
