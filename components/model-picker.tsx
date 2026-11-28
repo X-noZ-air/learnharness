@@ -22,6 +22,10 @@ export interface ComposerModelSettings {
 	pendingSave?: Promise<boolean>;
 }
 
+export function waitForFastSave(settings: ComposerModelSettings, pending = settings.pendingSave): Promise<boolean> | undefined {
+	return pending?.then(saved => saved && (settings.pendingSave ?? true));
+}
+
 /** provider:id → known contextWindow over the cached catalog, mirroring
  * the server's catalogContextLimits join. CLI aliases have no global
  * denominator: the stats bar uses that session's actual CLI report instead.

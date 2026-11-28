@@ -44,6 +44,11 @@ export function findCurrentSurfaceBoundary(document: Document): SurfaceBoundary 
 	return findSurfaceBoundary(currentPages.get(document)?.target);
 }
 
+export function isCurrentPageSurface(target: PluginSurfaceTarget | undefined): boolean {
+	const boundary = findSurfaceBoundary(target);
+	return !!boundary && findCurrentSurfaceBoundary(boundary.body.ownerDocument) === boundary;
+}
+
 export function requireSurfaceBoundary(target: PluginSurfaceTarget | undefined): SurfaceBoundary {
 	const boundary = findSurfaceBoundary(target);
 	if (!boundary?.stack?.isConnected) throw new Error("Surface target is no longer active");

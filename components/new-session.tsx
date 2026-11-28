@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
+import { isCurrentPageSurface } from "./plugin-surface-targets";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Composer } from "@/components/composer";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
@@ -13,12 +14,12 @@ import { SidebarToggle } from "@/components/sidebar";
 import { SetupDialog } from "@/components/setup-dialog";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { StatsBar } from "@/components/stats-bar";
-import type { ComposerModelSettings } from "@/components/model-picker";
+import { waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { SessionMaintenanceError, SessionStarter } from "@/components/start-session";
-import type { ChatSettings, GraphSnapshot } from "@/src/core";
+import type { ChatSettings, GraphSnapshot, PluginSurfaceTarget } from "@/src/core";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -89,7 +90,7 @@ export function DraftShell({
 	busy: boolean;
 	text: string;
 	onChange: (v: string) => void;
-	onSend: () => void;
+	onSend: (target: PluginSurfaceTarget | undefined, pendingAtSubmit: Promise<boolean> | undefined) => void;
 	modelSettingsRef?: RefObject<ComposerModelSettings>;
 	startError?: string;
 	/** The practice draft (owner, 2026-10-04): ?mode=practice — the
@@ -141,14 +142,12 @@ export function DraftShell({
 	 * which reads its REF mirror, so the post-await timing of React's
 	 * re-render cannot eat the dictated tail. */
 	const handleSend = () => {
+		const pendingAtSubmit = modelSettingsRef?.current.pendingSave;
 		if (dictation.active) {
-			const pendingSave = modelSettingsRef?.current.pendingSave;
-			void dictation.finish().then(async () => {
-				if (!pendingSave || await pendingSave) onSend();
-			});
+			void dictation.finish().then(() => onSend(surfaceTarget, pendingAtSubmit));
 			return;
 		}
-		onSend();
+		onSend(surfaceTarget, pendingAtSubmit);
 	};
 	/* Run end focuses the composer (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop — falling edge of `active` only. */
@@ -301,9 +300,10 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const { catalog, configured, zeroKeys } = useModelSetup(initialConfigured);
 	const [setupOpen, setSetupOpen] = useState(false);
 
-	const send = useCallback(async () => {
+	const send = useCallback(async (surfaceTarget: PluginSurfaceTarget | undefined, pendingAtSubmit: Promise<boolean> | undefined) => {
 		const draft = textRef.current.trim();
-		if (!draft || startingRef.current) return;
+		const practicePicks = mode === "practice" ? picksRef.current : undefined;
+		if (!draft || startingRef.current || !isCurrentPageSurface(surfaceTarget)) return;
 		if (!configured) {
 			setSetupOpen(true);
 			return;
@@ -327,9 +327,9 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		setBusy(true);
 		setStartError("");
 		try {
-			const pendingSave = modelSettingsRef.current.pendingSave;
-			if (!pendingSave || await pendingSave) {
-				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
+			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			if (!pendingSave || (await pendingSave && isCurrentPageSurface(surfaceTarget))) {
+				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, practicePicks,
 					starterRef.current, JSON.stringify(catalog?.slots.strong));
 				if (target) {
 					router.push(target);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
+import { isCurrentPageSurface } from "./plugin-surface-targets";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
 import { GraphView } from "@/components/graph-view";
 import { MinimalHome } from "@/components/minimal-home";
@@ -15,7 +16,7 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
-import type { ComposerModelSettings } from "@/components/model-picker";
+import { waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { PathInput } from "@/components/path-input";
 import { AttachFilesButton } from "@/components/attach-files-button";
@@ -128,18 +129,16 @@ export function Home({
 	 * state closure) and run. Applies before the setup/key guards too, so
 	 * an intercepted draft is the complete one. */
 	const start = () => {
+		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		if (!dictation.active) {
-			void begin();
+			void begin(pendingAtSubmit);
 			return;
 		}
-		const pendingSave = modelSettingsRef.current.pendingSave;
-		void dictation.finish().then(async () => {
-			if (!pendingSave || await pendingSave) await begin();
-		});
+		void dictation.finish().then(() => begin(pendingAtSubmit));
 	};
-	const begin = async () => {
+	const begin = async (pendingAtSubmit: Promise<boolean> | undefined) => {
 		const t = topicRef.current.trim();
-		if (!t || startingRef.current) return;
+		if (!t || startingRef.current || !isCurrentPageSurface(surfaceTarget)) return;
 		// Unconfigured: the send INTERCEPTS into the setup flow (the draft
 		// stays in the textarea; the learner sends it after Save).
 		if (!configured) {
@@ -166,8 +165,8 @@ export function Home({
 		setBusy(true);
 		setStartError("");
 		try {
-			const pendingSave = modelSettingsRef.current.pendingSave;
-			if (pendingSave && !await pendingSave) {
+			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			if (pendingSave && (!await pendingSave || !isCurrentPageSurface(surfaceTarget))) {
 				startingRef.current = false;
 				setBusy(false);
 				return;

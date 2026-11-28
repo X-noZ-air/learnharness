@@ -8,7 +8,7 @@ import { PluginSubmissionRunner, SubmissionModelEpoch, type SubmissionAttempt } 
 import { submissionImages, type BuiltinSubmissionCapture, type PrepareBuiltinSubmission, type PrepareThinkingSubmission, type PreparePluginQuestionSubmission, type PreparePluginProblemSubmission } from "./plugin-submission-adapters";
 import { SubmittedImages } from "./submitted-images";
 import { usePageSurfaceBoundary, SurfaceRegion } from "./plugin-surfaces";
-import { findSurfaceBoundary } from "./plugin-surface-targets";
+import { findSurfaceBoundary, isCurrentPageSurface } from "./plugin-surface-targets";
 import { scheduleOpeningSubmission } from "./plugin-submission-opening";
 import { activeProblemOccurrenceOf, buildAnswer, toClientQuestion, type PluginSubmission, type PluginSubmissionTarget, type QuestionData } from "@/src/core";
 import { validatePluginBuiltinSubmissionAnswer } from "@/src/core";
@@ -50,7 +50,7 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
-import type { ComposerModelSettings } from "@/components/model-picker";
+import { waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
@@ -310,7 +310,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -335,7 +335,9 @@ export function Chat({
 	}));
 	const submissionLive = useRef({ nativeMessages, surfaceTarget, ready: true });
 	submissionLive.current = { nativeMessages, surfaceTarget, ready: true };
+	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const runSubmission = async (target: PluginSubmissionTarget, capture: () => PluginSubmission | Promise<PluginSubmission>, current: () => boolean, deliver: (prepared: PluginSubmission, attempt: SubmissionAttempt) => Promise<boolean>): Promise<boolean> => {
+		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		const modelRevision = submissionModel.capture();
 		const attempt = submissionRunner.begin(target, pluginManager?.captureSubmissionInterceptors() ?? [], () => submissionMounted.current && submissionModel.isCurrent(modelRevision) && submissionLive.current.surfaceTarget === target.surfaceTarget && !!findSurfaceBoundary(target.surfaceTarget) && current());
 		if (!attempt) return false;
@@ -344,6 +346,11 @@ export function Chat({
 			const input = await attempt.finalize(async () => { await finishDictation(); return capture(); });
 			const prepared = await attempt.prepare(input, submissionLive.current.nativeMessages);
 			if (!prepared) return false;
+			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			if (pendingSave && !await attempt.finalize(() => pendingSave)) {
+				attempt.cancel();
+				return false;
+			}
 			attempt.check();
 			return await deliver(prepared, attempt);
 		} catch (error) {
@@ -592,6 +599,15 @@ export function Chat({
 	const busy = localStream || turnInFlight || reconciliation !== "ready";
 	const busyRef = useRef(busy);
 	busyRef.current = busy;
+	const sendManual = useCallback(async (input: ChatInput, questionKey?: string) => {
+		const pendingSave = waitForFastSave(modelSettingsRef.current);
+		if (pendingSave) {
+			if (!await pendingSave || !submissionMounted.current || !isCurrentPageSurface(surfaceTarget) ||
+				busyRef.current || !submissionLive.current.ready || submissionRunner.occupied) return false;
+			if (input.type === "next" && (pendingRef.current || activeProblemRef.current)) return false;
+		}
+		return send(input, undefined, questionKey);
+	}, [send, submissionRunner, surfaceTarget]);
 	// The attach handoff (stream-reattach wave): the moment a resumed
 	// stream takes over the rendering — the SDK left "ready", so
 	// submitted/streaming means chunks are flowing — localStream covers
@@ -624,9 +640,9 @@ export function Chat({
 		(text: string) => {
 			const problem = activeProblemRef.current;
 			if (!problem) return;
-			void send({ type: "thinking", problemCallId: problem.toolCallId, text });
+			void sendManual({ type: "thinking", problemCallId: problem.toolCallId, text });
 		},
-		[send],
+		[sendManual],
 	);
 
 	// Teach-phase check (W5, vision §2): a pending QUIZ that lands once a
@@ -701,7 +717,6 @@ export function Chat({
 	const catalogRef = useRef(catalog);
 	catalogRef.current = catalog;
 	const [selectedModel, setSelectedModel] = useState<string | undefined>();
-	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const recordSelectedModel = useCallback((model: string | undefined) => { submissionModel.observe(model); setSelectedModel(model); }, [submissionModel]);
 	const [setupOpen, setSetupOpen] = useState(false);
 	/** The last explicitly-sent draft (composer send): the
@@ -816,14 +831,9 @@ export function Chat({
 		if (!target || pendingRef.current || pluginOwnsDock || activeProblemRef.current || compacting) return Promise.resolve(false);
 		if (!busyRef.current && zeroKeys) { setSetupOpen(true); return Promise.resolve(false); }
 		if (!busyRef.current && selectedModelUnavailable(catalog, selectedModel)) { openModelPicker(); return Promise.resolve(false); }
-		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		let captured = "", capturedRevision = 0;
 		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: [] } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt) => {
 			if (prepared.type !== "text") return false;
-			if (pendingAtSubmit && !await pendingAtSubmit) { attempt.cancel(); return false; }
-			const pendingSave = modelSettingsRef.current.pendingSave;
-			if (pendingSave && !await pendingSave) { attempt.cancel(); return false; }
-			attempt.check();
 			if (!prepared.content.text.trim() && !prepared.content.images.length) throw new Error("Message text or images are required. Your input has been kept.");
 			if (beforePost && !beforePost(captured)) { attempt.cancel(); return false; }
 			draftRef.current = captured;
@@ -1119,7 +1129,7 @@ export function Chat({
 	// "error" too: a dropped stream leaves the model there, and send()
 	// recovers from it. Later compaction requires new input instead.
 	const retryable = !pluginOwnsDock && (status === "ready" || status === "error") && !busy && !compacting && endsInFailedTurn(nativeMessages);
-	const retryFailedTurn = () => retryFailedResponse(send, draftRef);
+	const retryFailedTurn = () => retryFailedResponse(sendManual, draftRef);
 	const sendAllowed = !pluginOwnsDock && reconciliation === "ready" && !pending && !activeProblem && !compacting && !submissionRunner.occupied;
 	const pendingTextTarget = textTarget();
 	const pendingTextInput = !!pendingTextTarget && !!pluginManager?.hasPendingSubmissionInput(pendingTextTarget);
@@ -1142,13 +1152,11 @@ export function Chat({
 					(b, contentIndex) => b.type === "toolCall" && !!practiceProblemForCall(nativeMessages, { messageId: m.id, contentIndex, toolCallId: b.id, toolName: b.name }),
 				),
 		);
-	const sendNext = useCallback(async () => {
+	const sendNext = useCallback(() => {
 		if (!nextReady || submissionRunner.occupied) return;
 		if (pendingTextInput) { void prepareText(); return; }
-		const pendingSave = modelSettingsRef.current.pendingSave;
-		if (pendingSave && (!await pendingSave || !submissionMounted.current || busyRef.current || pendingRef.current || activeProblemRef.current || !submissionLive.current.ready || submissionRunner.occupied)) return;
-		void send({ type: "next" });
-	}, [nextReady, send, submissionRunner, pendingTextInput]);
+		void sendManual({ type: "next" });
+	}, [nextReady, sendManual, submissionRunner, pendingTextInput]);
 
 	/* ENTER FROM ANYWHERE (owner round 16 refinement, 2026-10-06 —
 	 * keyboard-first): the move-on must not require composer focus. The
@@ -1969,7 +1977,7 @@ export function Chat({
 															reason={pending ? "Answer or discard the remaining question first." : undefined}
 															onRetry={() => {
 																draftRef.current = null;
-																void send({ type: "retry-question", messageId: malformed.messageId, contentIndex: malformed.contentIndex, toolCallId: malformed.toolCallId });
+																void sendManual({ type: "retry-question", messageId: malformed.messageId, contentIndex: malformed.contentIndex, toolCallId: malformed.toolCallId });
 															}} />;
 														// Pending/streaming questions live in the dock, not the
 														// transcript; answered ones render as graded records.
@@ -2069,7 +2077,7 @@ export function Chat({
 					pluginAvailable={!!pendingPlugin && pluginQuestionAvailability?.questionId === pendingPlugin.questionId && pluginQuestionAvailability.status === "available"}
 					pluginReady={!busy && !compacting && reconciliation === "ready"}
 					onPluginMicAvailable={setPluginMicAvailable}
-					onPluginSend={send}
+					onPluginSend={sendManual}
 					onPluginDismiss={() => pendingPlugin ? dismissPluginQuestion(pendingPlugin.occurrence, pendingPlugin.questionId) : unreadablePlugin ? dismissPluginQuestion(unreadablePlugin.occurrence, unreadablePlugin.annotation.status === "unreadable" ? unreadablePlugin.annotation.identity?.questionId : undefined) : Promise.resolve()}
 					unreadablePlugin={!!unreadablePlugin}
 					unavailableOccurrence={unreadablePlugin?.occurrence}
@@ -2083,7 +2091,7 @@ export function Chat({
 						snapshot: activeProblem.pluginProblem, occurrence: activeProblemOccurrence, chatId, draft: pluginProblemDraft(activeProblem.pluginProblem),
 						available: pluginProblemAvailability?.problemId === activeProblem.pluginProblem.problemId && pluginProblemAvailability.status === "available",
 						ready: !busy && !compacting && reconciliation === "ready", reconciliation: activeProblemOf(canonicalMessages)?.pluginProblem?.problemId === activeProblem.pluginProblem.problemId ? reconciliation : "syncing",
-						prepareSubmission: preparePluginProblem, send, preparing: submissionRunner.occupied, compactionRunning: compacting, onEscape: dictation.cancel,
+						prepareSubmission: preparePluginProblem, send: sendManual, preparing: submissionRunner.occupied, compactionRunning: compacting, onEscape: dictation.cancel,
 					} : undefined}
 					compactionRunning={compacting}
 					onSubmitThinking={submitThinking}
@@ -2162,10 +2170,9 @@ export function Chat({
 						const reading = readingThinkingRef.current.trim() || undefined;
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
-						const send = () => submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
 						// Never wait for the helper. The server atomically appends new
 						// raw side updates with this main answer.
-						send();
+						void sendManual({ type: "answer", toolCallId: pending.toolCallId, answer: reading ? { ...output, readingThinking: reading } : output }, pending.key);
 					}}
 				/>
 				</Conversation>
