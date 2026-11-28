@@ -310,7 +310,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -599,14 +599,14 @@ export function Chat({
 	const busy = localStream || turnInFlight || reconciliation !== "ready";
 	const busyRef = useRef(busy);
 	busyRef.current = busy;
-	const sendManual = useCallback(async (input: ChatInput, questionKey?: string) => {
+	const sendManual = useCallback(async (input: ChatInput) => {
 		const pendingSave = waitForFastSave(modelSettingsRef.current);
 		if (pendingSave) {
 			if (!await pendingSave || !submissionMounted.current || !isCurrentPageSurface(surfaceTarget) ||
 				busyRef.current || !submissionLive.current.ready || submissionRunner.occupied) return false;
 			if (input.type === "next" && (pendingRef.current || activeProblemRef.current)) return false;
 		}
-		return send(input, undefined, questionKey);
+		return send(input);
 	}, [send, submissionRunner, surfaceTarget]);
 	// The attach handoff (stream-reattach wave): the moment a resumed
 	// stream takes over the rendering — the SDK left "ready", so
@@ -640,9 +640,9 @@ export function Chat({
 		(text: string) => {
 			const problem = activeProblemRef.current;
 			if (!problem) return;
-			void sendManual({ type: "thinking", problemCallId: problem.toolCallId, text });
+			void send({ type: "thinking", problemCallId: problem.toolCallId, text });
 		},
-		[sendManual],
+		[send],
 	);
 
 	// Teach-phase check (W5, vision §2): a pending QUIZ that lands once a
@@ -2077,7 +2077,7 @@ export function Chat({
 					pluginAvailable={!!pendingPlugin && pluginQuestionAvailability?.questionId === pendingPlugin.questionId && pluginQuestionAvailability.status === "available"}
 					pluginReady={!busy && !compacting && reconciliation === "ready"}
 					onPluginMicAvailable={setPluginMicAvailable}
-					onPluginSend={sendManual}
+					onPluginSend={send}
 					onPluginDismiss={() => pendingPlugin ? dismissPluginQuestion(pendingPlugin.occurrence, pendingPlugin.questionId) : unreadablePlugin ? dismissPluginQuestion(unreadablePlugin.occurrence, unreadablePlugin.annotation.status === "unreadable" ? unreadablePlugin.annotation.identity?.questionId : undefined) : Promise.resolve()}
 					unreadablePlugin={!!unreadablePlugin}
 					unavailableOccurrence={unreadablePlugin?.occurrence}
@@ -2091,7 +2091,7 @@ export function Chat({
 						snapshot: activeProblem.pluginProblem, occurrence: activeProblemOccurrence, chatId, draft: pluginProblemDraft(activeProblem.pluginProblem),
 						available: pluginProblemAvailability?.problemId === activeProblem.pluginProblem.problemId && pluginProblemAvailability.status === "available",
 						ready: !busy && !compacting && reconciliation === "ready", reconciliation: activeProblemOf(canonicalMessages)?.pluginProblem?.problemId === activeProblem.pluginProblem.problemId ? reconciliation : "syncing",
-						prepareSubmission: preparePluginProblem, send: sendManual, preparing: submissionRunner.occupied, compactionRunning: compacting, onEscape: dictation.cancel,
+						prepareSubmission: preparePluginProblem, send, preparing: submissionRunner.occupied, compactionRunning: compacting, onEscape: dictation.cancel,
 					} : undefined}
 					compactionRunning={compacting}
 					onSubmitThinking={submitThinking}
@@ -2172,7 +2172,7 @@ export function Chat({
 						// actually leaves. An offline preflight keeps the draft visible.
 						// Never wait for the helper. The server atomically appends new
 						// raw side updates with this main answer.
-						void sendManual({ type: "answer", toolCallId: pending.toolCallId, answer: reading ? { ...output, readingThinking: reading } : output }, pending.key);
+						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
 					}}
 				/>
 				</Conversation>
