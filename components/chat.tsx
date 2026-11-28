@@ -336,7 +336,7 @@ export function Chat({
 	const submissionLive = useRef({ nativeMessages, surfaceTarget, ready: true });
 	submissionLive.current = { nativeMessages, surfaceTarget, ready: true };
 	const modelSettingsRef = useRef<ComposerModelSettings>({});
-	const runSubmission = async (target: PluginSubmissionTarget, capture: () => PluginSubmission | Promise<PluginSubmission>, current: () => boolean, deliver: (prepared: PluginSubmission, attempt: SubmissionAttempt, beforeSteerFallback?: () => Promise<boolean>) => Promise<boolean>): Promise<boolean> => {
+	const runSubmission = async (target: PluginSubmissionTarget, capture: () => PluginSubmission | Promise<PluginSubmission>, current: () => boolean, deliver: (prepared: PluginSubmission, attempt: SubmissionAttempt, beforeSteerFallback?: () => Promise<boolean> | undefined) => Promise<boolean>): Promise<boolean> => {
 		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		const modelRevision = submissionModel.capture();
 		const attempt = submissionRunner.begin(target, pluginManager?.captureSubmissionInterceptors() ?? [], () => submissionMounted.current && submissionModel.isCurrent(modelRevision) && submissionLive.current.surfaceTarget === target.surfaceTarget && !!findSurfaceBoundary(target.surfaceTarget) && current());
@@ -348,7 +348,10 @@ export function Chat({
 			if (!prepared) return false;
 			const waitForSave = () => waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
 			const beforeSteerFallback = target.type === "text" && busyRef.current
-				? () => attempt.finalize(() => waitForSave() ?? true).catch(() => false)
+				? () => {
+					const pendingSave = waitForSave();
+					return pendingSave && attempt.finalize(() => pendingSave).catch(() => false);
+				}
 				: undefined;
 			const pendingSave = beforeSteerFallback ? undefined : waitForSave();
 			if (pendingSave && !await attempt.finalize(() => pendingSave)) {

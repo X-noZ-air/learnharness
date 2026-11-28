@@ -5,6 +5,7 @@ import test from "node:test";
 import { Chat } from "../components/chat.tsx";
 import { KeyboardShortcuts } from "../components/keyboard-shortcuts.tsx";
 import { useInteractionLayers, type InteractionLayersController } from "../components/interaction-layers.tsx";
+import { notifySettingsSaved } from "../components/settings-signal.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
 import { mountPluginChrome } from "./helpers/plugin-chrome.tsx";
 
@@ -91,6 +92,84 @@ for (const thinking of [false, true]) for (const overflow of [false, true]) test
     if (context?.surface === "session") { assert.equal(context.view.input.type, "answer"); if (context.view.input.type === "answer") assert.equal(thinking ? context.view.input.draft.thinking : context.view.input.draft.text, ""); }
   } finally {
     await fixture?.close();
+    if (savedObserver) Object.defineProperty(globalThis, "ResizeObserver", savedObserver); else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
+
+test("a steer fallback without a Fast save survives a model change", async () => {
+  const stream = Promise.withResolvers<Response>();
+  const steer = Promise.withResolvers<Response>();
+  const posts: string[] = [];
+  const first = { provider: "fixture", id: "first-model" };
+  const second = { provider: "fixture", id: "second-model" };
+  let model = first;
+  const savedObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  Object.assign(globalThis, { ResizeObserver: class { observe() {} unobserve() {} disconnect() {} } });
+  let mounted: Awaited<ReturnType<typeof mountPluginChrome>> | undefined;
+  try {
+    mounted = await mountPluginChrome({ activate() {} }, <Chat chatId="one" title="Steer fallback" initialMessages={[]} initialConfigured />, {
+      pathname: "/chat/one",
+      prepareDom({ window }) {
+        const prototype = window.HTMLElement.prototype;
+        const properties = [
+          [window, "location", { value: new URL("http://fixture/chat/one") }],
+          [window, "localStorage", { value: { getItem: () => null, setItem() {} } }],
+          [prototype, "getAnimations", { value: () => [] }],
+          [prototype, "offsetWidth", { get(this: HTMLElement) { return this.clientWidth; } }],
+        ] as const;
+        const saved = properties.map(([object, key]) => Object.getOwnPropertyDescriptor(object, key));
+        properties.forEach(([object, key, descriptor]) => Object.defineProperty(object, key, { configurable: true, ...descriptor }));
+        return () => properties.forEach(([object, key], idx) => {
+          if (saved[idx]) Object.defineProperty(object, key, saved[idx]!);
+          else Reflect.deleteProperty(object, key);
+        });
+      },
+      fetch: async (input, init) => {
+        const url = String(input);
+        if (url === "/api/models") return Response.json({
+          providers: [{ id: model.provider, keyPresent: true }],
+          models: [first, second].map(entry => ({ ...entry, name: entry.id, supportedLevels: ["off"], input: ["text"] })),
+          slots: { strong: { model }, cheap: { model }, vision: { model } },
+        });
+        if (url === "/api/settings") return Response.json({});
+        if (url === "/api/chats/one") return Response.json({ id: "one", messages: [], settings: { model }, turnInFlight: false });
+        if (url === "/api/chats/one/side-chats") return Response.json({ threads: [] });
+        if (url === "/api/jobs?chatId=one") return Response.json({ jobs: [], turnInFlight: false });
+        if (url === "/api/chats/one/steer") {
+          posts.push(JSON.parse(String(init?.body)).input.text);
+          return steer.promise;
+        }
+        if (url === "/api/chat") {
+          posts.push(JSON.parse(String(init?.body)).input.text);
+          return Response.json({ accepted: true });
+        }
+        if (url === "/api/chats/one/stream") return posts.length === 1 ? stream.promise : new Response("data: [DONE]\n\n");
+        assert.fail(`Unexpected fixture request: ${url}`);
+      },
+    });
+    const doc = mounted.document;
+    const submit = async (text: string) => {
+      const form = doc.querySelector('[data-testid="composer"]')!;
+      const editor = form.querySelector<HTMLElement>("[contenteditable]")!;
+      await act(async () => {
+        editor.textContent = text;
+        editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
+      await act(async () => form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    };
+    await submit("Start the turn");
+    assert.deepEqual(posts, ["Start the turn"]);
+    await submit("Steer this turn");
+    assert.deepEqual(posts, ["Start the turn", "Steer this turn"]);
+    model = second;
+    await act(async () => notifySettingsSaved("models"));
+    assert.match(doc.querySelector('[data-testid="stats-model"]')?.textContent ?? "", /second-model/);
+    await act(async () => stream.resolve(new Response("data: [DONE]\n\n")));
+    await act(async () => steer.resolve(new Response(null, { status: 409 })));
+    assert.deepEqual(posts, ["Start the turn", "Steer this turn", "Steer this turn"]);
+  } finally {
+    await act(async () => { stream.resolve(new Response("data: [DONE]\n\n")); steer.resolve(new Response(null, { status: 400 })); });
+    await mounted?.close();
     if (savedObserver) Object.defineProperty(globalThis, "ResizeObserver", savedObserver); else Reflect.deleteProperty(globalThis, "ResizeObserver");
   }
 });
