@@ -1,7 +1,8 @@
 import React, { act } from "react";
 (globalThis as Record<string, unknown>).React = React;
 import assert from "node:assert/strict";
-import { test, afterEach } from "node:test";
+import { test, after, afterEach } from "node:test";
+import { installModalDom } from "./modal-dom.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { ModelControl, useModelCatalog, catalogLimits, type ComposerModelSettings } from "../components/model-picker.tsx";
@@ -17,6 +18,7 @@ const graphCostSummary = (input: CostSummaryInput) => foldGraphCostSummary(input
 import type { ModelCatalogResponse, ChatGPTStatus, ModelsSettings } from "../src/core/index.ts";
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement, CustomEvent: dom.window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true, localStorage: { getItem: () => null, setItem() {} } });
+after(installModalDom(dom));
 const originalFetch = globalThis.fetch;
 let root: Root | undefined, host: HTMLDivElement | undefined;
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
@@ -30,6 +32,8 @@ function Reader({ id }: { id: string }) {
  return <span data-testid={id}>{catalog ? [...catalogLimits(catalog).keys()].join(",") : "unavailable"}</span>;
 }
 async function mount(children: React.ReactNode) { host = document.createElement("div"); document.body.append(host); root = createRoot(host); await act(async () => root!.render(<InteractionLayersProvider>{children}</InteractionLayersProvider>)); }
+const toggleModelMenu = () => act(async () => host!.querySelector<HTMLButtonElement>('[data-testid="stats-model"]')!.click());
+const fastRow = () => document.querySelector<HTMLButtonElement>('[data-testid="model-menu-fast"]');
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; host = undefined; globalThis.fetch = originalFetch; delete window.lh; snapshots = {}; });
 
 test("shared ChatGPT-only readiness admits without API keys; connection invalidation clears every reader and fences old success/error", async () => {
@@ -72,26 +76,27 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
   }
   return Response.json({ settings: { models } });
  };
- const toggle = () => host?.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]') ?? null;
  await mount(<><ModelControl /><AgentSection agent={undefined} models={models} graph={undefined} compaction={undefined}
   onModelsChange={() => {}} onSectionChange={() => true} onCompactionChange={() => true} /></>);
- assert.equal(host?.querySelectorAll('button[aria-label$="Fast Mode"]').length, 1);
- assert.equal(toggle()?.getAttribute("aria-pressed"), "false");
+ await toggleModelMenu();
+ assert.equal(document.querySelectorAll('[data-testid="model-menu-fast"]').length, 1);
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*Off/);
  const readsBeforeToggle = catalogReads;
  const savedSections: string[] = [];
  const unsubscribe = onSettingsSaved(section => savedSections.push(section));
  try {
-  await act(async () => toggle()!.click());
+  await act(async () => fastRow()!.click());
   assert.deepEqual(savedSections, []);
   assert.equal(catalogReads, readsBeforeToggle);
  } finally {
   unsubscribe();
  }
  assert.equal(tier.fastMode, true);
- assert.equal(toggle()?.getAttribute("aria-pressed"), "true");
+ await toggleModelMenu();
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
  supportsFast = false;
  await act(async () => notifySettingsSaved("keys"));
- assert.equal(toggle(), null);
+ assert.equal(fastRow(), null);
 });
 
 test("a late Strong Fast response cannot replace a newer model read", async () => {
@@ -115,15 +120,16 @@ test("a late Strong Fast response cannot replace a newer model read", async () =
  };
  let selected: string | undefined;
  await mount(<ModelControl onModelChange={(model) => { selected = model; }} />);
- const fast = () => host!.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
- await act(async () => fast()!.click());
+ await toggleModelMenu();
+ await act(async () => fastRow()!.click());
  await act(async () => notifySettingsSaved("models"));
  await act(async () => newerRead.resolve(secondSettings()));
  assert.equal(selected, "chatgpt:second-model");
  await act(async () => put.resolve(Response.json({ settings: { models: { strong: { model: first, fastMode: true } } } })));
  assert.equal(reads, 3);
  assert.equal(selected, "chatgpt:second-model");
- assert.equal(fast(), null);
+ await toggleModelMenu();
+ assert.equal(fastRow(), null);
 });
 
 test("a Strong read during the Fast write requires confirmation after the write", async () => {
@@ -146,22 +152,23 @@ test("a Strong read during the Fast write requires confirmation after the write"
   return refresh.promise;
  };
  await mount(<ModelControl />);
- const fast = () => host!.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!;
- await act(async () => fast().click());
+ await toggleModelMenu();
+ await act(async () => fastRow()!.click());
  await act(async () => notifySettingsSaved("models"));
  await act(async () => put.resolve(settings(true)));
- assert.equal(fast().disabled, true);
+ await toggleModelMenu();
+ assert.equal(fastRow()?.disabled, true);
  assert.equal(refreshes.length, 1);
  await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
- const alert = host!.querySelector('[role="alert"]');
+ const alert = document.querySelector('[role="alert"]');
  assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
- assert.equal(fast().disabled, true);
+ assert.equal(fastRow()?.disabled, true);
  await act(async () => alert!.querySelector<HTMLButtonElement>("button")!.click());
  assert.equal(refreshes.length, 2);
  await act(async () => refreshes[1]!.resolve(settings(true)));
- assert.equal(fast().disabled, false);
- assert.equal(fast().getAttribute("aria-pressed"), "true");
- assert.equal(host!.querySelector('[role="alert"]'), null);
+ assert.equal(fastRow()?.disabled, false);
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+ assert.equal(document.querySelector('[role="alert"]'), null);
 });
 
 test("toggling Fast keeps a legacy chat on its inherited model", async () => {
@@ -184,11 +191,12 @@ test("toggling Fast keeps a legacy chat on its inherited model", async () => {
  };
  let selected: string | undefined;
  await mount(<ModelControl chatId="legacy" onModelChange={(value) => { selected = value; }} />);
- const toggle = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
- assert.equal(toggle.getAttribute("aria-pressed"), "false");
- await act(async () => toggle.click());
+ await toggleModelMenu();
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*Off/);
+ await act(async () => fastRow()!.click());
  assert.deepEqual(settings, { fastMode: true });
- assert.equal(toggle.getAttribute("aria-pressed"), "true");
+ await toggleModelMenu();
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
  id = "second-model";
  await act(async () => notifySettingsSaved("models"));
  assert.equal(selected, "chatgpt:second-model");
@@ -213,10 +221,11 @@ test("the Fast toggle sends only its own field from a stale tab", async () => {
   throw new Error(`Unexpected request: ${input}`);
  };
  await mount(<ModelControl chatId="fixture" />);
- const toggle = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
- await act(async () => toggle.click());
+ await toggleModelMenu();
+ await act(async () => fastRow()!.click());
  assert.deepEqual(write, { fastMode: true });
- assert.equal(toggle.getAttribute("aria-pressed"), "true");
+ await toggleModelMenu();
+ assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
  assert.match(host!.querySelector('[data-testid="stats-thinking"]')!.textContent ?? "", /off/i);
  await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
  assert.deepEqual(write, { model, thinkingLevel: "off" });
@@ -241,22 +250,24 @@ test("ordinary effort writes can overlap and only Fast writes hold the composer"
   return Response.json({ settings: { models: { strong: { model } } } });
  };
  await mount(<ModelControl modelSettingsRef={modelSettingsRef} />);
- const fast = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
  const effort = host!.querySelector<HTMLButtonElement>('[data-testid="stats-thinking"]')!;
  const cycleEffort = () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking"));
 
  await act(async () => { cycleEffort(); cycleEffort(); });
  assert.equal(requests.length, 2);
  assert.equal(effort.disabled, false);
- assert.equal(fast.disabled, true);
+ await toggleModelMenu();
+ assert.equal(fastRow()?.disabled, true);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
  await act(async () => requests[0]!.resolve(new Response(null, { status: 503 })));
- assert.equal(fast.disabled, true);
+ assert.equal(fastRow()?.disabled, true);
  await act(async () => requests[1]!.resolve(new Response(null, { status: 503 })));
- assert.equal(fast.disabled, false);
+ assert.equal(fastRow()?.disabled, false);
+ await toggleModelMenu();
  assert.equal(Boolean(host!.querySelector('[role="alert"]')), false, "a closed menu keeps ordinary effort errors hidden");
 
- await act(async () => { fast.click(); cycleEffort(); });
+ await toggleModelMenu();
+ await act(async () => { fastRow()!.click(); cycleEffort(); });
  assert.equal(requests.length, 4);
  assert.equal(effort.disabled, false);
  assert.equal(host!.querySelector<HTMLButtonElement>('[data-testid="stats-model"]')?.disabled, false);
@@ -265,11 +276,14 @@ test("ordinary effort writes can overlap and only Fast writes hold the composer"
  await act(async () => requests[2]!.resolve(new Response(null, { status: 503 })));
  assert.equal(await pendingFast, false);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
- assert.equal(fast.disabled, true);
  assert.equal(host!.querySelector('[role="alert"]')?.textContent, "settings rejected (503)");
+ await toggleModelMenu();
+ assert.equal(fastRow()?.disabled, true);
+ await toggleModelMenu();
  await act(async () => requests[3]!.resolve(new Response(null, { status: 400 })));
- assert.equal(fast.disabled, false);
  assert.equal(host!.querySelector('[role="alert"]')?.textContent, "settings rejected (503)");
+ await toggleModelMenu();
+ assert.equal(fastRow()?.disabled, false);
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {

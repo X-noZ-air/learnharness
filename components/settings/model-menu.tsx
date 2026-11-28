@@ -83,10 +83,13 @@ export function ModelMenuList({
 					selected: fastMode.checked,
 					disabled: fastMode.disabled,
 					onPick: fastMode.onToggle,
-					content: <span className="flex items-center justify-between gap-2">
-						<span>Fast Mode</span>
-						<span className="text-muted-foreground">{fastMode.checked ? "On" : "Off"}</span>
-					</span>,
+					content: <>
+						<span className="flex items-center justify-between gap-2">
+							<span>Fast Mode</span>
+							<span className="text-muted-foreground">{fastMode.checked ? "On" : "Off"}</span>
+						</span>
+						<span className="text-muted-foreground">Fast Mode uses more of your ChatGPT quota.</span>
+					</>,
 				}}
 				searchTestid="model-search"
 				listTestid="model-list"

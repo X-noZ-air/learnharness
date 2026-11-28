@@ -11,7 +11,6 @@ import { MenuShell } from "@/components/menu-shell";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { ModelPickerPill } from "@/components/model-picker-pill";
-import { FastModeButton } from "@/components/fast-mode-button";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -392,9 +391,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	return (
 		<div
 			ref={containerRef}
-			className={`relative flex min-w-0 items-center gap-1.5 ${fastAvailable ? "narrow:ml-auto narrow:max-w-full" : "narrow:max-w-1/2"}`}
+			className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2"
 			data-testid="model-control"
-			data-fast-available={fastAvailable ? "" : undefined}
 		>
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
@@ -427,7 +425,6 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				>{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}</ModelPickerPill>
 			</Hint>
 
-			{fastMode && <FastModeButton {...fastMode} />}
 			{open === null && fastFeedback && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{fastFeedback}</div>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent

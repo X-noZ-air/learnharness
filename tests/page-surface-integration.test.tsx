@@ -102,10 +102,12 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 	let fastWrites = 0;
 	const createdWithFast: boolean[] = [];
 	await withPage(pages[1]!, async f => {
-		const fastButton = () => f.document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
+		const openModelMenu = () => act(async () => f.document.querySelector<HTMLButtonElement>('[data-testid="stats-model"]')!.click());
+		const fastRow = () => f.document.querySelector<HTMLButtonElement>('[data-testid="model-menu-fast"]');
 		try {
-			assert.equal(fastButton()?.getAttribute("aria-pressed"), "true");
-			await act(async () => fastButton()!.click());
+			await openModelMenu();
+			assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+			await act(async () => fastRow()!.click());
 			assert.equal(fastWrites, 1);
 			await f.render("/chat/new", false, <NewSession initialConfigured />);
 			await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
@@ -121,11 +123,12 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 			assert.deepEqual(createdWithFast, []);
 			await act(async () => finishFast());
 			assert.deepEqual(createdWithFast, [false]);
-			assert.equal(fastButton()?.disabled, true);
+			await openModelMenu();
+			assert.equal(fastRow()?.disabled, true);
 			assert.equal(f.document.querySelector<HTMLButtonElement>('[data-testid="stats-thinking"]')?.disabled, false);
 			await act(async () => finishRead());
-			assert.equal(fastButton()?.getAttribute("aria-pressed"), "false");
-			assert.equal(fastButton()?.disabled, false);
+			assert.match(fastRow()?.textContent ?? "", /Fast Mode.*Off/);
+			assert.equal(fastRow()?.disabled, false);
 		} finally { await act(async () => { finishFast(); finishRead(); }); }
 	}, async (input, init) => {
 		if (input === "/api/models") return Response.json({

@@ -63,6 +63,7 @@ async function render(children: React.ReactNode) {
 async function answer(index: number, body: ModelCatalogResponse | null) { await act(async () => requests[index]!.resolve(body ? Response.json(body) : new Response("unavailable", { status: 503 }))); }
 function element(testid: string) { const e = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`); assert.ok(e, testid); return e; }
 async function click(testid: string) { await act(async () => element(testid).click()); }
+const fastRow = () => document.querySelector<HTMLButtonElement>('[data-testid="model-menu-fast"]');
 function levels() { return [...document.querySelectorAll('[data-testid^="thinking-option-"]')].map((e) => e.textContent); }
 async function warm(body = catalog()) { await render(<Reader />); await answer(0, body); }
 
@@ -420,14 +421,15 @@ test("a confirmed Fast write survives a delayed session read and keeps inherited
 	};
 	await warm(body);
 	await render(<><Reader /><StatsBar turns={[]} chatId="fixture" /></>);
-	const fast = document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
-	assert.ok(fast);
 	await act(async () => notifySettingsSaved("models"));
 	assert.equal(readCount, 2);
-	await act(async () => fast.click());
-	assert.equal(fast.getAttribute("aria-pressed"), "true");
+	await click("stats-model");
+	await click("model-menu-fast");
+	await click("stats-model");
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
 	await act(async () => delayed.resolve(Response.json({})));
-	assert.deepEqual({ write, pressed: fast.getAttribute("aria-pressed") }, { write: { fastMode: true }, pressed: "true" });
+	assert.deepEqual(write, { fastMode: true });
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
 });
 
 test("overlapping chat writes reread the saved model after a stale Fast response", async () => {
@@ -460,7 +462,8 @@ test("overlapping chat writes reread the saved model after a stale Fast response
 		return fallback(input, init);
 	};
 	await render(<StatsBar chatId="fixture" turns={[]} />);
-	await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!.click());
+	await click("stats-model");
+	await click("model-menu-fast");
 	const stale = saved;
 	await click("stats-model");
 	await click("model-option-claude-opus-5-5");
@@ -468,7 +471,8 @@ test("overlapping chat writes reread the saved model after a stale Fast response
 	assert.equal(reads, 1);
 	await act(async () => fastResponse.resolve(Response.json({ settings: stale })));
 	assert.match(element("stats-model").textContent ?? "", /claude-opus-5-5/);
-	assert.equal(document.querySelector('[aria-label="Fast Mode"]'), null);
+	await click("stats-model");
+	assert.equal(fastRow() !== null, false);
 	assert.equal(reads, 2);
 });
 
@@ -502,31 +506,32 @@ test("the Fast toggle waits for confirmed chat settings and can retry a failed r
 		return fallback(input, init);
 	};
 	await render(<StatsBar chatId="fixture" turns={[]} />);
-	const fast = () => document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!;
-	await act(async () => fast().click());
+	await click("stats-model");
+	await click("model-menu-fast");
 	await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
 	assert.equal(saved.thinkingLevel, "low");
 	saved = { ...saved, fastMode: true };
 	await act(async () => fastWrite.resolve(Response.json({ settings: saved })));
 	assert.equal(refreshes.length, 1);
-	assert.equal(fast().disabled, true);
+	await click("stats-model");
+	assert.equal(fastRow()?.disabled, true);
 	assert.equal(element("stats-thinking").hasAttribute("disabled"), false);
-	await act(async () => fast().click());
+	await click("model-menu-fast");
 	assert.deepEqual(fastWrites, [true]);
 	await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
 	const alert = document.querySelector('[role="alert"]');
 	assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
-	assert.equal(fast().disabled, true);
+	assert.equal(fastRow()?.disabled, true);
 	const retry = alert?.querySelector<HTMLButtonElement>("button");
 	assert.ok(retry);
 	await act(async () => retry.click());
 	assert.equal(refreshes.length, 2);
-	assert.equal(fast().disabled, true);
+	assert.equal(fastRow()?.disabled, true);
 	await act(async () => refreshes[1]!.resolve(Response.json({ settings: saved })));
-	assert.equal(fast().disabled, false);
-	assert.equal(fast().getAttribute("aria-pressed"), "true");
+	assert.equal(fastRow()?.disabled, false);
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
 	assert.equal(document.querySelector('[role="alert"]'), null);
-	await act(async () => fast().click());
+	await click("model-menu-fast");
 	assert.deepEqual(fastWrites, [true, false]);
 });
 
@@ -548,13 +553,14 @@ test("the model shortcut and arrow navigation can toggle Fast for the active pri
 		return fallback(input, init);
 	};
 	await render(<StatsBar turns={[]} />);
+	assert.equal(Boolean(document.querySelector('[aria-label="Fast Mode"]')), false, "Fast is offered through the existing model menu only");
 	const openModelMenu = () => act(async () => { window.dispatchEvent(new CustomEvent("lh:kbd-open-model-picker")); });
-	const fastEntry = () => document.querySelector('[data-testid="model-menu-fast"]');
 	await openModelMenu();
 	const search = element("model-search");
 	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
 	assert.equal(document.activeElement, search);
-	assert.match(fastEntry()?.textContent ?? "", /Fast Mode.*Off/);
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*Off/);
+	assert.match(fastRow()?.textContent ?? "", /uses more of your ChatGPT quota/);
 	const press = (key: string) => act(async () => {
 		const event = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
 		search.dispatchEvent(Object.assign(event, { key }));
@@ -564,12 +570,11 @@ test("the model shortcut and arrow navigation can toggle Fast for the active pri
 	assert.deepEqual(writes, []);
 	await press("Enter");
 	assert.deepEqual(writes, [{ strong: { fastMode: true } }]);
-	assert.equal(document.querySelector('[aria-label="Fast Mode"]')?.getAttribute("aria-pressed"), "true");
 	await openModelMenu();
-	assert.match(fastEntry()?.textContent ?? "", /Fast Mode.*On/);
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
 	strong = { model: { provider: "chatgpt", id: b.id } };
 	await act(async () => notifySettingsSaved("models"));
-	assert.equal(fastEntry(), null);
+	assert.equal(fastRow() !== null, false);
 });
 
 test("OpenCode's saved shared credential names both Pi providers without changing addable-provider semantics", () => {
