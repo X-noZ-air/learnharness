@@ -244,13 +244,12 @@ test("account catalog is scoped, visibility filtered, and cleared on disconnect"
 	} finally { f.service.close(); }
 });
 
-test("account model discovery normalizes advertised Fast aliases to priority", async () => {
+test("account model discovery requires the exact priority service tier for Fast", async () => {
 	const f = await loggedIn({ provider: async (target) => {
 		if (!target.endsWith("/models")) return;
 		return Response.json({ models: [
 			{ slug: "priority-model", display_name: "Priority", visibility: "list", service_tiers: [null, { id: "flex" }, { id: "priority", name: "Fast" }] },
 			{ slug: "fast-model", display_name: "Fast", visibility: "list", service_tiers: [{ id: "fast" }] },
-			{ slug: "mixed-model", display_name: "Mixed", visibility: "list", service_tiers: [{ id: "fast" }, { id: "priority" }] },
 			{ slug: "standard-model", display_name: "Standard", visibility: "list", service_tiers: [{ id: "standard" }] },
 			{ slug: "malformed-model", display_name: "Malformed", visibility: "list", service_tiers: { id: "priority" } },
 		] });
@@ -258,8 +257,7 @@ test("account model discovery normalizes advertised Fast aliases to priority", a
 	try {
 		assert.deepEqual((await f.service.models()).models, [
 			{ id: "priority-model", name: "Priority", fastServiceTier: "priority" },
-			{ id: "fast-model", name: "Fast", fastServiceTier: "priority" },
-			{ id: "mixed-model", name: "Mixed", fastServiceTier: "priority" },
+			{ id: "fast-model", name: "Fast" },
 			{ id: "standard-model", name: "Standard" },
 			{ id: "malformed-model", name: "Malformed" },
 		]);
