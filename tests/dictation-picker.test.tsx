@@ -294,6 +294,39 @@ test("the shared model menu preserves ranking, provider identity, keyboard clamp
 	assert.match(document.body.textContent!, /No models match/);
 });
 
+test("Fast requires explicit arrow selection and never competes with model search", async () => {
+	const f = await fixture();
+	const priority: ModelCatalogEntry = {
+		id: "priority-model", name: "Priority model", provider: "chatgpt", contextWindow: 32000, maxTokens: 4096,
+		cost: null, input: ["text"], reasoning: false, supportedLevels: [], fastServiceTier: "priority",
+	};
+	const matching: ModelCatalogEntry = { ...priority, id: "acme/fast-chat", name: "Acme Chat", provider: "acme", fastServiceTier: undefined };
+	const picked: ModelCatalogEntry[] = [];
+	let fastToggles = 0;
+	await f.render(<ModelMenuList models={[priority, matching]} effectiveId={priority.id} effectiveProvider={priority.provider}
+		onPick={(model) => picked.push(model)} fastMode={{ checked: false, disabled: false, onToggle: () => { fastToggles++; } }} />);
+	const modelInput = document.querySelector<HTMLInputElement>('[data-testid="model-search"]')!;
+	const fastEntry = () => document.querySelector('[data-testid="model-menu-fast"]');
+	await search("fast", modelInput);
+	await key(modelInput, "Enter");
+	assert.deepEqual(picked, [matching]);
+	assert.equal(fastToggles, 0);
+	assert.equal(fastEntry(), null);
+	await search("Fast Mode", modelInput);
+	await key(modelInput, "Enter");
+	assert.deepEqual(picked, [matching]);
+	assert.equal(fastToggles, 0);
+	await search("", modelInput);
+	assert.ok(fastEntry());
+	await key(modelInput, "Enter");
+	assert.deepEqual(picked, [matching, matching]);
+	assert.equal(fastToggles, 0);
+	await key(modelInput, "ArrowUp");
+	await key(modelInput, "Enter");
+	assert.deepEqual(picked, [matching, matching]);
+	assert.equal(fastToggles, 1);
+});
+
 test("clearing each search restores the complete catalog order with Multilingual first", async () => {
 	await fixture();
 	await click(trigger());

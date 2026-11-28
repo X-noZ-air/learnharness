@@ -7,7 +7,7 @@ import { fuzzyScore } from "@/src/core";
  * Models and dictation languages supply only their catalog and row content.
  * The caller owns the shared MenuShell and dismissal behavior. */
 export function SearchMenuList<T>({
-	items, itemKey, searchTerms, compare, prioritize, isSelected, isItemDisabled, onPick, renderItem,
+	items, itemKey, searchTerms, compare, prioritize, isSelected, onPick, renderItem, action,
 	searchTestid, listTestid, optionTestid, placeholder, ariaLabel, loading, empty,
 	disabled = false,
 }: {
@@ -20,9 +20,9 @@ export function SearchMenuList<T>({
 	 *  never a filter — nothing is hidden). */
 	prioritize?: (item: T) => boolean;
 	isSelected: (item: T) => boolean;
-	isItemDisabled?: (item: T) => boolean;
 	onPick: (item: T) => void;
 	renderItem: (item: T) => ReactNode;
+	action?: { testid: string; selected: boolean; disabled: boolean; onPick: () => void; content: ReactNode };
 	searchTestid: string;
 	listTestid: string;
 	optionTestid: (item: T) => string;
@@ -33,7 +33,7 @@ export function SearchMenuList<T>({
 	disabled?: boolean;
 }) {
 	const [query, setQuery] = useState("");
-	const [menuIdx, setMenuIdx] = useState<number | null>(null);
+	const [menuIdx, setMenuIdx] = useState<number | "action" | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLUListElement>(null);
 
@@ -53,6 +53,18 @@ export function SearchMenuList<T>({
 				(compare?.(a.item, b.item) ?? 0),
 		)
 		.map(({ item }) => item);
+	const resultRows = results.map((item, index) => ({
+		key: `item:${itemKey(item)}`,
+		index,
+		testid: optionTestid(item),
+		selected: isSelected(item),
+		disabled: false,
+		onPick: () => onPick(item),
+		content: renderItem(item),
+	}));
+	const rows = action && query.trim() === ""
+		? [...resultRows, { ...action, key: "action", index: "action" as const }]
+		: resultRows;
 
 	return <>
 		<input
@@ -67,16 +79,20 @@ export function SearchMenuList<T>({
 				if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 					event.preventDefault();
 					event.stopPropagation();
-					if (disabled || results.length === 0) return;
-					setMenuIdx((i) => event.key === "ArrowDown"
-						? Math.min((i ?? -1) + 1, results.length - 1)
-						: Math.max((i ?? results.length) - 1, 0));
+					if (disabled || rows.length === 0) return;
+					setMenuIdx((current) => {
+						const position = rows.findIndex((row) => row.index === current);
+						const next = event.key === "ArrowDown"
+							? Math.min(position + 1, rows.length - 1)
+							: Math.max((position === -1 ? rows.length : position) - 1, 0);
+						return rows[next]!.index;
+					});
 				} else if (event.key === "Enter") {
-					const chosen = results[menuIdx ?? 0];
+					const chosen = menuIdx === null ? resultRows[0] : rows.find((row) => row.index === menuIdx);
 					if (!disabled && chosen !== undefined) {
 						event.preventDefault();
 						event.stopPropagation();
-						if (!isItemDisabled?.(chosen)) onPick(chosen);
+						if (!chosen.disabled) chosen.onPick();
 					}
 				}
 			}}
@@ -86,17 +102,17 @@ export function SearchMenuList<T>({
 		{!items && loading && <div className="px-2 py-3 text-center text-muted-foreground">{loading}</div>}
 		{items && results.length === 0 && <div className="px-2 py-3 text-center text-muted-foreground">{empty}</div>}
 		<ul ref={listRef} data-testid={listTestid} className="flex max-h-72 flex-col overflow-y-auto px-1">
-			{results.map((item, i) => <li key={itemKey(item)}>
+			{rows.map((row) => <li key={row.key}>
 				<button
 					type="button"
-					data-testid={optionTestid(item)}
-					data-idx={i}
-					disabled={disabled || isItemDisabled?.(item)}
-					onClick={() => onPick(item)}
+					data-testid={row.testid}
+					data-idx={row.index}
+					disabled={disabled || row.disabled}
+					onClick={row.onPick}
 					className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-						i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-					}${isSelected(item) && i !== menuIdx ? " bg-muted/60" : ""}`}
-				>{renderItem(item)}</button>
+						row.index === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
+					}${row.selected && row.index !== menuIdx ? " bg-muted/60" : ""}`}
+				>{row.content}</button>
 			</li>)}
 		</ul>
 	</>;
