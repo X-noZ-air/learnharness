@@ -115,9 +115,9 @@ describe("the model catalog projection", () => {
 		}
 	});
 
-	it("defaults: the strong slot verbatim; null when unset (BYOK, per-session models 2026-09-28)", () => {
+	it("defaults: the strong model and thinking level; null when unset", () => {
 		assert.equal(catalogDefaultsFor(null), null);
-		const strong = { provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "low" as const };
+		const strong = { provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "low" as const, fastMode: true };
 		const d = catalogDefaultsFor(strong);
 		assert.deepEqual(d, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "low" });
 		// No level stored → the model alone reports (the level resolves at

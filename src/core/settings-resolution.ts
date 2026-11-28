@@ -42,6 +42,7 @@ import {
 	type GraphSettings,
 	type ModelSlot,
 	type ModelSlotName,
+	type ModelsSettings,
 	type RoleModelOverride,
 	type UserSettings,
 } from "./settings.ts";
@@ -66,7 +67,6 @@ export interface EffectiveModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
-	fastMode?: boolean;
 }
 
 /** The concrete appearance view — same shape as the factory's. */
@@ -114,7 +114,7 @@ export interface EffectiveSettings {
 export function resolveConversationSpec(
 	chat: ChatSettings | undefined,
 	strong: EffectiveSlot | null,
-): EffectiveModelSpec | null {
+): (EffectiveModelSpec & Pick<ChatSettings, "fastMode">) | null {
 	const model = chat?.model ?? (strong ? { provider: strong.provider, id: strong.id } : undefined);
 	if (!model) return null;
 	// A pinned session owns its opt-in, including sessions saved before Fast Mode.
@@ -134,13 +134,7 @@ export function resolveSideQuestionSpec(chat: ChatSettings | undefined, record: 
 	const override = record?.agent?.models?.sideQuestion;
 	const model = override?.model ?? (conversation ? { provider: conversation.provider, id: conversation.id } : undefined);
 	if (!model) return null;
-	const fastMode = override?.fastMode ?? (override?.model ? undefined : conversation?.fastMode);
-	return {
-		provider: model.provider,
-		id: model.id,
-		thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel,
-		...(fastMode !== undefined ? { fastMode } : {}),
-	};
+	return { provider: model.provider, id: model.id, thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel };
 }
 
 /** Full-chain resolution for ANY role (BYOK, owner 2026-09-22):
@@ -159,7 +153,7 @@ export function resolveRoleSpec(role: ModelRole, record: UserSettings | null): E
 /** Resolve one slot to its configured view, or null when the tier holds
  *  no model (a thinkingLevel-only slot is inert — the level has nothing
  *  to ride without the factory floor). */
-export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
+export function resolveSlot(slot: ModelsSettings["strong"]): EffectiveSlot | null {
 	if (!slot?.model) return null;
 	return {
 		provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel,
@@ -169,10 +163,10 @@ export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 }
 
 /** Resolve one role's spec — the BYOK chain (owner 2026-09-22): role
- *  override → SLOT → NOTHING. Thinking can inherit even when a role pins
- *  a model, while Fast stays with an explicit model choice. A level
+ *  override → SLOT → NOTHING, each field independent (an override may
+ *  borrow only the slot's model, or only its thinking budget — a level
  *  with no model anywhere stays unset and the engine build resolves it
- *  from DEFAULT_THINKING_ORDER. undefined = no model resolved; the
+ *  from DEFAULT_THINKING_ORDER). undefined = no model resolved; the
  *  per-need refusal gates fire on exactly that. */
 export function resolveModelSpec(
 	role: ModelRole,
@@ -183,12 +177,10 @@ export function resolveModelSpec(
 	const slot = slotName ? slots?.[slotName] : undefined;
 	const model = override?.model ?? slot?.model;
 	if (!model) return undefined;
-	const fastMode = override?.fastMode ?? (override?.model ? undefined : slot?.fastMode);
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: override?.thinkingLevel ?? slot?.thinkingLevel,
-		...(fastMode !== undefined ? { fastMode } : {}),
 	};
 }
 

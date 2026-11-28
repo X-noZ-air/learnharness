@@ -89,7 +89,6 @@ export function catalogDefaultsFor(
 	return {
 		model,
 		...(level !== undefined ? { thinkingLevel: level } : {}),
-		...(strong?.fastMode !== undefined ? { fastMode: strong.fastMode } : {}),
 	};
 }
 
@@ -113,7 +112,6 @@ export function rolePinsFor(
 			? {
 					model: { provider: spec.provider, id: spec.id },
 					...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
-					...(spec.fastMode !== undefined ? { fastMode: spec.fastMode } : {}),
 				}
 			: null;
 	}
@@ -141,7 +139,7 @@ export function catalogSlots(): SlotPins {
 			? {
 					model: { provider: slot.provider, id: slot.id },
 					...(slot.thinkingLevel !== undefined ? { thinkingLevel: slot.thinkingLevel } : {}),
-					...(slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
+					...(name === "strong" && slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
 					...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 				}
 			: null;

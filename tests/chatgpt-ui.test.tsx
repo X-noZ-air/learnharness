@@ -9,11 +9,12 @@ import { useZeroKeys, useStrongKeyless } from "../components/setup-cta.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { SidebarProvider } from "../components/sidebar.tsx";
 import { ChatGPTConnection, ChatGPTUIProvider } from "../components/settings/chatgpt-connection.tsx";
+import { AgentSection } from "../components/settings/agent-section.tsx";
 import { GraphCostControl } from "../components/graph-view.tsx";
 import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { graphCostSummary as foldGraphCostSummary, type CostSummaryInput } from "../src/core/cost-summary.ts";
 const graphCostSummary = (input: CostSummaryInput) => foldGraphCostSummary(input, () => null);
-import type { ModelCatalogResponse, ChatGPTStatus, ModelSlot } from "../src/core/index.ts";
+import type { ModelCatalogResponse, ChatGPTStatus, ModelsSettings } from "../src/core/index.ts";
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement, CustomEvent: dom.window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true, localStorage: { getItem: () => null, setItem() {} } });
 const originalFetch = globalThis.fetch;
@@ -51,8 +52,8 @@ test("shared ChatGPT-only readiness admits without API keys; connection invalida
 
 test("the picker offers Fast only for an advertised ChatGPT tier and saves the opt-in", async () => {
  const model = { provider: "chatgpt", id: "tier-model" };
- const tier: ModelSlot = { model };
- const models = { strong: tier };
+ const tier: NonNullable<ModelsSettings["strong"]> = { model };
+ const models = { strong: tier, cheap: { model }, vision: { model } };
  let supportsFast = true;
  globalThis.fetch = async (input, init) => {
   if (input === "/api/models") {
@@ -70,7 +71,9 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
   return Response.json({ settings: { models } });
  };
  const toggle = () => host?.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]') ?? null;
- await mount(<ModelControl />);
+ await mount(<><ModelControl /><AgentSection agent={undefined} models={models} graph={undefined} compaction={undefined}
+  onModelsChange={() => {}} onSectionChange={() => true} onCompactionChange={() => true} /></>);
+ assert.equal(host?.querySelectorAll('button[aria-label$="Fast Mode"]').length, 1);
  assert.equal(toggle()?.getAttribute("aria-pressed"), "false");
  await act(async () => toggle()!.click());
  assert.equal(tier.fastMode, true);

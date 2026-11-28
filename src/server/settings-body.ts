@@ -111,8 +111,7 @@ export function parseClaudeCodeSettingsBody(body: unknown): SettingsBodyResult<{
 	return { ok: true, settings: { enabled: raw.enabled } };
 }
 
-/** agent.models: only the six known background roles; each override's
- *  fields mirror ChatSettings (model pair + independent thinkingLevel). */
+/** agent.models: only the six known background roles. */
 function parseRoleOverride(value: unknown, role: string): { ok: true; override: RoleModelOverride } | { ok: false; error: string } {
 	const raw = asRecord(value);
 	if (!raw) return { ok: false, error: `${role} must be an object` };
@@ -136,10 +135,6 @@ function parseRoleOverride(value: unknown, role: string): { ok: true; override: 
 			return { ok: false, error: `${role}.thinkingLevel must be a string` };
 		}
 		override.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
-	}
-	if (raw.fastMode !== undefined) {
-		if (typeof raw.fastMode !== "boolean") return { ok: false, error: `${role}.fastMode must be a boolean` };
-		override.fastMode = raw.fastMode;
 	}
 	return { ok: true, override };
 }
@@ -400,8 +395,7 @@ export function parseGraphSettingsBody(body: unknown): SettingsBodyResult<GraphS
 }
 
 /** models: { strong?, cheap?, vision? } — the slot tiers (model slots
- *  wave, 2026-09-20). Each slot is the same shape as a role override; a
- *  present-but-empty slot object is rejected (absent slot = unset; say
+ *  wave, 2026-09-20). A present-but-empty slot object is rejected (absent slot = unset; say
  *  what you mean). Catalog validity is checked by the route
  *  (validateChatSettings discipline). */
 export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<ModelsSettings> {
@@ -423,14 +417,19 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 			return { ok: false, error: `slot "${key}" must set a model (thinkingLevel alone cannot run — absent slot = unset)` };
 		}
 		const slot: ModelSlot = parsed.override;
-		const retention = (raw[key] as Record<string, unknown>).cacheRetention;
+		const { cacheRetention: retention, fastMode } = raw[key] as Record<string, unknown>;
 		if (retention !== undefined) {
 			if (!CACHE_RETENTIONS.some((value) => value === retention)) {
 				return { ok: false, error: `${key}.cacheRetention must be none, short, or long` };
 			}
 			slot.cacheRetention = retention as ModelSlot["cacheRetention"];
 		}
-		settings[key as (typeof MODEL_SLOTS)[number]] = slot;
+		if (key === "strong" && fastMode !== undefined) {
+			if (typeof fastMode !== "boolean") return { ok: false, error: "strong.fastMode must be a boolean" };
+			settings.strong = { ...slot, fastMode };
+		} else {
+			settings[key as (typeof MODEL_SLOTS)[number]] = slot;
+		}
 	}
 	return { ok: true, settings };
 }

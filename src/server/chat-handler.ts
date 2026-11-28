@@ -45,6 +45,7 @@ import {
 	graphToolsEnabled,
 	resolveConversationSpec,
 	resolveRoleSpec,
+	type EffectiveModelSpec,
 } from "../core/settings-resolution.ts";
 import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, ROLE_SLOT, type ModelSlotName, type ProviderKeyMissing } from "../core/settings.ts";
 import { beginTurn, endTurn, isTurnRunning } from "./turn-liveness.ts";
@@ -172,6 +173,10 @@ function resolveEngine(role: ModelRole): PiEngine | undefined {
  * including parked conversations, background loops and compaction. */
 function retentionForSlot(slot: ModelSlotName) {
 	return () => stores.settingsStore.readSettings()?.models?.[slot]?.cacheRetention;
+}
+
+function compactionEngineFor({ provider, id, thinkingLevel }: EffectiveModelSpec): PiEngine {
+	return piEngineForSpec({ provider, id, thinkingLevel }, true, undefined, retentionForSlot("strong"));
 }
 
 setJobRespawn((jobId) => void jobRunner.runJob(jobId));
@@ -337,7 +342,7 @@ export async function handleChatInput(
 	let compactionEngine: PiEngine;
 	try {
 		conversationEngine = piEngineForSpec(conversation, () => callPurpose.background, lifecycle, retentionForSlot("strong"));
-		compactionEngine = piEngineForSpec(conversation, true, undefined, retentionForSlot("strong"));
+		compactionEngine = compactionEngineFor(conversation);
 	}
 	catch { return Response.json({ error: conversation.provider === "chatgpt" ? chatGPTStreamError("model catalog") : isSubscriptionProvider(conversation.provider) ? nativeSubscriptionError(conversation.provider, "model catalog") : "The selected model is unavailable." }, { status: 503 }); }
 	const capturedPolicy = submissionImagePolicyKey(conversationEngine);
@@ -928,7 +933,7 @@ export async function handleChatInput(
 						const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
 						if (!spec || !connectionBackgroundAllowed(spec.provider)) return null;
 						let kickEngine: PiEngine;
-						try { kickEngine = piEngineForSpec(spec, true, undefined, retentionForSlot("strong")); } catch { return null; }
+						try { kickEngine = compactionEngineFor(spec); } catch { return null; }
 						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						const freshRecord = stores.chatStore.getChat(chatId);
 						if (!freshRecord) return null;

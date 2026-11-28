@@ -24,8 +24,8 @@ fs.mkdirSync(process.env.LH_DATA_DIR, { recursive: true });
 fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
 const { SETTINGS_FILE } = await import("../config.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
-const { resolveSettings, resolveConversationSpec } = await import("../src/core/settings-resolution.ts");
-const { parseCompactionSettingsBody, parseAppearanceSettingsBody, parseModelsSettingsBody } = await import("../src/server/settings-body.ts");
+const { resolveSettings, resolveConversationSpec, resolveSideQuestionSpec } = await import("../src/core/settings-resolution.ts");
+const { parseAgentSettingsBody, parseCompactionSettingsBody, parseAppearanceSettingsBody, parseModelsSettingsBody } = await import("../src/server/settings-body.ts");
 
 after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
@@ -34,15 +34,21 @@ afterEach(() => {
 });
 
 describe("the settings store", () => {
-	it("stores explicit Fast choices per slot and keeps previously pinned chats opted out", () => {
+	it("stores Fast for conversation defaults and strips it from background roles and slots", () => {
 		const model = { provider: "chatgpt", id: "scratch" };
-		const parsed = parseModelsSettingsBody({ strong: { model, fastMode: true }, cheap: { model, fastMode: false } });
+		const input = { strong: { model, fastMode: true }, cheap: { model, fastMode: true }, vision: { model, fastMode: true } };
+		const parsed = parseModelsSettingsBody(input);
 		assert.ok(parsed.ok);
-		writeSettings({ version: 1, models: parsed.settings });
+		assert.deepEqual(parsed.settings, { strong: input.strong, cheap: { model }, vision: { model } });
+		const agent = { models: { researcher: { model, fastMode: true } } };
+		assert.deepEqual(parseAgentSettingsBody(agent), { ok: true, settings: { models: { researcher: { model } } } });
+		writeSettings({ version: 1, models: input, agent });
 		const stored = readSettings();
 		assert.deepEqual(stored?.models, parsed.settings);
+		assert.deepEqual(stored?.agent, { models: { researcher: { model } } });
 		const effective = resolveSettings(stored);
-		assert.equal(effective.agent.models.researcher?.fastMode, false);
+		assert.deepEqual(effective.agent.models.extractor, { ...model, thinkingLevel: undefined });
+		assert.deepEqual(resolveSideQuestionSpec({ model, fastMode: true }, stored), { ...model, thinkingLevel: undefined });
 		assert.equal(resolveConversationSpec(undefined, effective.models.strong)?.fastMode, true);
 		assert.equal(resolveConversationSpec({ model }, effective.models.strong)?.fastMode, undefined);
 		assert.equal(resolveConversationSpec({ model, fastMode: false }, effective.models.strong)?.fastMode, false);

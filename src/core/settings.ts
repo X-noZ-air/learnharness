@@ -67,7 +67,6 @@ export interface RoleModelOverride {
 	model?: { provider: string; id: string };
 	/** The thinking budget swap. */
 	thinkingLevel?: ThinkingLevel;
-	fastMode?: boolean;
 }
 
 // ─── Model slots (model slots wave, 2026-09-20) ──────────────────────────────
@@ -208,7 +207,6 @@ export interface ModelSlot {
 	model?: { provider: string; id: string };
 	/** Optional thinking level used with this slot's configured model. */
 	thinkingLevel?: ThinkingLevel;
-	fastMode?: boolean;
 }
 
 /** The `models` settings section (owner decision 2026-09-20: a dedicated
@@ -216,7 +214,7 @@ export interface ModelSlot {
  *  optional: an absent slot means every role of its tier runs whatever the
  *  deeper tiers of the chain resolve to (per-role override → factory pin). */
 export interface ModelsSettings {
-	strong?: ModelSlot;
+	strong?: ModelSlot & { fastMode?: boolean };
 	cheap?: ModelSlot;
 	vision?: ModelSlot;
 }
@@ -654,7 +652,6 @@ function sanitizeRoleOverride(raw: unknown): RoleModelOverride | undefined {
 	if (typeof r.thinkingLevel === "string" && THINKING_LEVELS.includes(r.thinkingLevel as ThinkingLevel)) {
 		out.thinkingLevel = r.thinkingLevel as ThinkingLevel;
 	}
-	if (typeof r.fastMode === "boolean") out.fastMode = r.fastMode;
 	return Object.keys(out).length ? out : undefined;
 }
 
@@ -667,8 +664,12 @@ function sanitizeModels(raw: Record<string, unknown>): ModelsSettings {
 		const cleaned: ModelSlot = sanitizeRoleOverride(raw[slot]) ?? {};
 		const value = raw[slot];
 		if (value && typeof value === "object" && !Array.isArray(value)) {
-			const retention = (value as Record<string, unknown>).cacheRetention;
+			const { cacheRetention: retention, fastMode } = value as Record<string, unknown>;
 			if (CACHE_RETENTIONS.includes(retention as CacheRetention)) cleaned.cacheRetention = retention as CacheRetention;
+			if (slot === "strong" && cleaned.model && typeof fastMode === "boolean") {
+				out.strong = { ...cleaned, fastMode };
+				continue;
+			}
 		}
 		if (Object.keys(cleaned).length) out[slot] = cleaned;
 	}

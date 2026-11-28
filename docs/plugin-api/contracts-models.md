@@ -26,7 +26,6 @@ export interface CatalogDefaults {
         id: string;
     };
     thinkingLevel?: ThinkingLevel;
-    fastMode?: boolean;
 }
 ```
 
@@ -36,7 +35,6 @@ export interface CatalogDefaults {
 - [model.provider](#catalogdefaults-modelprovider)
 - [model.id](#catalogdefaults-modelid)
 - [thinkingLevel](#catalogdefaults-thinkinglevel)
-- [fastMode](#catalogdefaults-fastmode)
 
 ### CatalogDefaults model
 
@@ -63,12 +61,6 @@ id: string;
 
 ```ts
 thinkingLevel?: ThinkingLevel;
-```
-
-### CatalogDefaults fastMode
-
-```ts
-fastMode?: boolean;
 ```
 
 ## CatalogProvider
@@ -334,10 +326,16 @@ tier slot. Null means no model is configured and work requiring that role
 is unavailable; there is no implicit factory model fallback.
 
 ```ts
-export type RolePins = Record<BackgroundModelRole, CatalogDefaults | null>;
+export type RolePins = Record<BackgroundModelRole, {
+    model: {
+        provider: string;
+        id: string;
+    };
+    thinkingLevel?: ThinkingLevel;
+} | null>;
 ```
 
-**Related types:** [BackgroundModelRole](settings.md#backgroundmodelrole), [CatalogDefaults](contracts-models.md#catalogdefaults).
+**Related types:** [BackgroundModelRole](settings.md#backgroundmodelrole).
 
 ## SlotPins
 
@@ -347,12 +345,14 @@ Resolved model choice for each slot tier. Null means that tier has no model;
 configured entries include optional thinking and cache-retention preferences.
 
 ```ts
-export type SlotPins = Record<ModelSlotName, (ModelSlot & {
-    model: {
-        provider: string;
-        id: string;
-    };
-}) | null>;
+export type SlotPins = {
+    [Slot in ModelSlotName]: (NonNullable<ModelsSettings[Slot]> & {
+        model: {
+            provider: string;
+            id: string;
+        };
+    }) | null;
+};
 ```
 
-**Related types:** [ModelSlot](settings.md#modelslot), [ModelSlotName](settings.md#modelslotname).
+**Related types:** [ModelSlotName](settings.md#modelslotname), [ModelsSettings](settings.md#modelssettings).

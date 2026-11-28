@@ -80,7 +80,6 @@ import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsRow, SettingsMenuTrigger, SettingsSegmentedControl, Toggle, CommitInput } from "./controls.tsx";
 import { ModelMenuList, ThinkingMenuList } from "./model-menu";
-import { FastModeButton } from "@/components/fast-mode-button";
 import { ChatGPTBackgroundAccess } from "./chatgpt-connection";
 import { NativeSubscriptionBackgroundAccess } from "./subscription-connections";
 
@@ -235,11 +234,12 @@ export function composeSlotModel(
 	}
 	const model = provider && id ? { provider, id } : prev?.model;
 	const sameModel = model?.provider === prev?.model?.provider && model?.id === prev?.model?.id;
+	const fastMode = slot === "strong" && sameModel ? models?.strong?.fastMode : undefined;
 	next[slot] = {
 		...(prev?.cacheRetention !== undefined ? { cacheRetention: prev.cacheRetention } : {}),
 		...(model ? { model } : {}),
 		...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
-		...(sameModel && prev?.fastMode !== undefined ? { fastMode: prev.fastMode } : {}),
+		...(fastMode !== undefined ? { fastMode } : {}),
 	};
 	return next;
 }
@@ -392,7 +392,7 @@ export function AgentSection({
 	/** Order the override DELETE against Settings' full-record acknowledgements. */
 	onDeletePromptOverride?: (path: string, remove: () => Promise<boolean>) => Promise<PromptDeleteOutcome>;
 	/** Writes the composed models section (slots — replace-PUT discipline). */
-	onModelsChange: (next: ModelsSettings) => void | Promise<boolean>;
+	onModelsChange: (next: ModelsSettings) => void;
 	/** Writes the whole compaction section (replace-PUT discipline). */
 	onCompactionChange: (next: CompactionSettings) => boolean | Promise<boolean>;
 }) {
@@ -419,20 +419,9 @@ export function AgentSection({
 	 *  row), which kind. */
 	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | "search"; kind: "model" | "thinking" | "engine" | "cache" } | null>(null);
 	const [advancedModels, setAdvancedModels] = useState(false);
-	const [savingModels, setSavingModels] = useState(false);
 	const [workerConcurrencyError, setWorkerConcurrencyError] = useState<string | null>(null);
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
 	const interactions = useInteractionLayers();
-
-	async function saveModels(next: ModelsSettings) {
-		setOpenMenu(null);
-		setSavingModels(true);
-		try {
-			await onModelsChange(next);
-		} finally {
-			setSavingModels(false);
-		}
-	}
 
 	const refreshSearch = () =>
 		fetch("/api/search")
@@ -663,7 +652,6 @@ export function AgentSection({
 									emptyLabel="—"
 									ariaLabel={`${SLOT_META[slot].label} model`}
 									testid={`slot-model-${slot}`}
-									disabled={savingModels}
 									open={thisMenuOpen === "model"}
 									onClick={() => setOpenMenu(thisMenuOpen === "model" ? null : { target: slot, kind: "model" })}
 									widthClass="min-w-20"
@@ -676,22 +664,17 @@ export function AgentSection({
 									emptyLabel="—"
 									ariaLabel={`${SLOT_META[slot].label} thinking`}
 									testid={`slot-thinking-${slot}`}
-									disabled={savingModels}
 									open={thisMenuOpen === "thinking"}
 									onClick={() => setOpenMenu(thisMenuOpen === "thinking" ? null : { target: slot, kind: "thinking" })}
 									widthClass="w-20"
 								/>
-								{override?.model && chosen?.provider === "chatgpt" && chosen.fastServiceTier && (
-									<FastModeButton label={`${SLOT_META[slot].label} Fast Mode`} checked={override.fastMode === true} disabled={savingModels}
-										onToggle={() => void saveModels({ ...models, [slot]: { ...override, fastMode: override.fastMode !== true } })} />
-								)}
 								{advancedModels && <MenuTrigger
 									value={cacheRetentionLabel(override?.cacheRetention)}
 									emptyLabel="Cache: default"
 									ariaLabel={`${SLOT_META[slot].label} cache retention`}
 									testid={`slot-cache-${slot}`}
 									open={thisMenuOpen === "cache"}
-									disabled={savingModels || !override?.model}
+									disabled={!override?.model}
 									onClick={() => setOpenMenu(thisMenuOpen === "cache" ? null : { target: slot, kind: "cache" })}
 									widthClass="w-40"
 								/>}
@@ -703,7 +686,8 @@ export function AgentSection({
 									menuClass="flex w-80 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
 								>
 									<CacheRetentionMenu value={override?.cacheRetention} onPick={(value) => {
-										void saveModels(composeSlotCacheRetention(models, slot, value));
+										onModelsChange(composeSlotCacheRetention(models, slot, value));
+										setOpenMenu(null);
 									}} />
 								</MenuShell>}
 								{thisMenuOpen === "model" && (
@@ -724,7 +708,8 @@ export function AgentSection({
 												// fresh pick writes a level — the stored one rides as-is
 												// (the write clamps server-side), else the ordering's level.
 												const next = populateLevel(thinking || undefined, entry.supportedLevels);
-												void saveModels(composeSlotModel(models, slot, entry.provider, entry.id, next));
+												onModelsChange(composeSlotModel(models, slot, entry.provider, entry.id, next));
+												setOpenMenu(null);
 											}}
 											footer={
 												catalog && catalog.length === 0
@@ -748,7 +733,8 @@ export function AgentSection({
 											// the same one the trigger shows.
 											effectiveLevel={thinking || (chosen ? defaultOrderLevel(levels) : undefined)}
 											onPick={(level) => {
-												void saveModels(composeSlotModel(models, slot, provider, modelId, level));
+												onModelsChange(composeSlotModel(models, slot, provider, modelId, level));
+												setOpenMenu(null);
 											}}
 										/>
 									</MenuShell>
