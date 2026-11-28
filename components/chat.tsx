@@ -349,6 +349,7 @@ export function Chat({
 			const waitForSave = () => waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
 			const beforeSteerFallback = target.type === "text" && busyRef.current
 				? () => {
+					if (!modelSettingsRef.current.pendingSave) return pendingAtSubmit;
 					const pendingSave = waitForSave();
 					return pendingSave && attempt.finalize(() => pendingSave).catch(() => false);
 				}

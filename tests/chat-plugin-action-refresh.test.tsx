@@ -96,13 +96,15 @@ for (const thinking of [false, true]) for (const overflow of [false, true]) test
   }
 });
 
-test("a steer fallback without a Fast save survives a model change", async () => {
+for (const fastSave of ["none", "saved", "failed"] as const) test(`steer fallback after a model change with Fast save ${fastSave}`, async () => {
   const stream = Promise.withResolvers<Response>();
   const steer = Promise.withResolvers<Response>();
+  const fastResponse = Promise.withResolvers<Response>();
   const posts: string[] = [];
-  const first = { provider: "fixture", id: "first-model" };
-  const second = { provider: "fixture", id: "second-model" };
+  const first = { provider: "chatgpt", id: "first-model" };
+  const second = { provider: "chatgpt", id: "second-model" };
   let model = first;
+  let fastWrites = 0;
   const savedObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
   Object.assign(globalThis, { ResizeObserver: class { observe() {} unobserve() {} disconnect() {} } });
   let mounted: Awaited<ReturnType<typeof mountPluginChrome>> | undefined;
@@ -128,11 +130,16 @@ test("a steer fallback without a Fast save survives a model change", async () =>
         const url = String(input);
         if (url === "/api/models") return Response.json({
           providers: [{ id: model.provider, keyPresent: true }],
-          models: [first, second].map(entry => ({ ...entry, name: entry.id, supportedLevels: ["off"], input: ["text"] })),
+          models: [first, second].map(entry => ({ ...entry, name: entry.id, supportedLevels: ["off"], input: ["text"], fastServiceTier: "priority" })),
           slots: { strong: { model }, cheap: { model }, vision: { model } },
         });
         if (url === "/api/settings") return Response.json({});
         if (url === "/api/chats/one") return Response.json({ id: "one", messages: [], settings: { model }, turnInFlight: false });
+        if (url === "/api/chats/one/settings" && init?.method === "PUT") {
+          assert.deepEqual(JSON.parse(String(init.body)), { fastMode: true });
+          fastWrites++;
+          return fastResponse.promise;
+        }
         if (url === "/api/chats/one/side-chats") return Response.json({ threads: [] });
         if (url === "/api/jobs?chatId=one") return Response.json({ jobs: [], turnInFlight: false });
         if (url === "/api/chats/one/steer") {
@@ -159,16 +166,23 @@ test("a steer fallback without a Fast save survives a model change", async () =>
     };
     await submit("Start the turn");
     assert.deepEqual(posts, ["Start the turn"]);
+    if (fastSave !== "none") {
+      await mounted.click(doc.querySelector<HTMLElement>('[data-testid="stats-model"]')!);
+      await mounted.click(doc.querySelector<HTMLElement>('[data-testid="model-menu-fast"]')!);
+      assert.equal(fastWrites, 1);
+    }
     await submit("Steer this turn");
     assert.deepEqual(posts, ["Start the turn", "Steer this turn"]);
+    if (fastSave !== "none") await act(async () => fastResponse.resolve(fastSave === "saved"
+      ? Response.json({ settings: { model, fastMode: true } }) : new Response(null, { status: 503 })));
     model = second;
     await act(async () => notifySettingsSaved("models"));
     assert.match(doc.querySelector('[data-testid="stats-model"]')?.textContent ?? "", /second-model/);
     await act(async () => stream.resolve(new Response("data: [DONE]\n\n")));
     await act(async () => steer.resolve(new Response(null, { status: 409 })));
-    assert.deepEqual(posts, ["Start the turn", "Steer this turn", "Steer this turn"]);
+    assert.deepEqual(posts, fastSave === "failed" ? ["Start the turn", "Steer this turn"] : ["Start the turn", "Steer this turn", "Steer this turn"]);
   } finally {
-    await act(async () => { stream.resolve(new Response("data: [DONE]\n\n")); steer.resolve(new Response(null, { status: 400 })); });
+    await act(async () => { stream.resolve(new Response("data: [DONE]\n\n")); steer.resolve(new Response(null, { status: 400 })); fastResponse.resolve(new Response(null, { status: 400 })); });
     await mounted?.close();
     if (savedObserver) Object.defineProperty(globalThis, "ResizeObserver", savedObserver); else Reflect.deleteProperty(globalThis, "ResizeObserver");
   }

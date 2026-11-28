@@ -90,7 +90,7 @@ async function withPage(page: Page, run: (f: {
 	}
 }
 
-it("a new draft waits for the Strong Fast write started on Home", async () => {
+for (const saved of [true, false]) it(`a new draft waits for the Strong Fast write started on Home (save ${saved ? "succeeds" : "fails"})`, async () => {
 	const model = { provider: "chatgpt", id: "priority-model" };
 	let fastMode = true;
 	let thinkingLevel: NonNullable<ModelsSettings["strong"]>["thinkingLevel"] = "off";
@@ -122,6 +122,12 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 			await act(async () => form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
 			assert.deepEqual(createdWithFast, []);
 			await act(async () => finishFast());
+			if (!saved) {
+				assert.deepEqual(createdWithFast, []);
+				assert.match(f.document.querySelector('[role="alert"]')?.textContent ?? "", /Could not save Fast Mode/);
+				assert.equal(draft.textContent, "Learn about model settings");
+				return;
+			}
 			assert.deepEqual(createdWithFast, [false]);
 			await openModelMenu();
 			assert.equal(fastRow()?.disabled, true);
@@ -141,6 +147,7 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 			if (next.strong?.fastMode !== undefined) {
 				fastWrites++;
 				await pending;
+				if (!saved) return new Response(null, { status: 503 });
 				fastMode = next.strong.fastMode;
 			} else {
 				assert.deepEqual(next, { strong: { model, thinkingLevel: "low" }, cheap: { model }, vision: { model } });

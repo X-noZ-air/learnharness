@@ -521,16 +521,18 @@ test("the Fast toggle waits for confirmed chat settings and can retry a failed r
 	await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
 	const alert = document.querySelector('[role="alert"]');
 	assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
-	assert.equal(fastRow()?.disabled, true);
-	const retry = alert?.querySelector<HTMLButtonElement>("button");
-	assert.ok(retry);
-	await act(async () => retry.click());
+	const search = element("model-search");
+	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
+	for (const key of ["ArrowUp", "Enter"]) await act(async () => {
+		search.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key }));
+	});
 	assert.equal(refreshes.length, 2);
+	await click("stats-model");
 	assert.equal(fastRow()?.disabled, true);
 	await act(async () => refreshes[1]!.resolve(Response.json({ settings: saved })));
 	assert.equal(fastRow()?.disabled, false);
 	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
-	assert.equal(document.querySelector('[role="alert"]'), null);
+	assert.equal(Boolean(document.querySelector('[role="alert"]')), false);
 	await click("model-menu-fast");
 	assert.deepEqual(fastWrites, [true, false]);
 });

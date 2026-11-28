@@ -373,7 +373,12 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 		setError(null);
 		if (kind === "model") refresh();
 	};
-	const fastMode = fastAvailable ? {
+	const fastMode = fastRefreshFailed ? {
+		retry: true,
+		checked: false,
+		disabled: savingModel,
+		onToggle: () => { setOpen(null); readFastSettings(); },
+	} : fastAvailable ? {
 		checked: override?.fastMode === true,
 		disabled: savingFast || savingModel,
 		onToggle: () => {
@@ -383,9 +388,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	} : undefined;
 	const fastFeedback = (fastError || fastRefreshFailed) && <>
 		{fastError && <div>{fastError}</div>}
-		{fastRefreshFailed && <div>
-			Could not confirm Fast Mode. <button type="button" className="underline" onClick={readFastSettings} disabled={savingModel}>Retry</button>
-		</div>}
+		{fastRefreshFailed && <div>Could not confirm Fast Mode.</div>}
 	</>;
 
 	return (

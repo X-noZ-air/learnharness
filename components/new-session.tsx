@@ -327,7 +327,10 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		setStartError("");
 		try {
 			const pendingSave = waitForFastSave(strongFastSaveRef.current, pendingAtSubmit);
-			if (!pendingSave || (await pendingSave && isCurrentPageSurface(surfaceTarget))) {
+			const saved = pendingSave ? await pendingSave : true;
+			const current = isCurrentPageSurface(surfaceTarget);
+			if (current && !saved) setStartError("Could not save Fast Mode. Your message has not been sent.");
+			if (current && saved) {
 				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, practicePicks,
 					starterRef.current, JSON.stringify(catalog?.slots.strong));
 				if (target) {

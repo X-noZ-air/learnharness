@@ -162,13 +162,15 @@ test("a Strong read during the Fast write requires confirmation after the write"
  await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
  const alert = document.querySelector('[role="alert"]');
  assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
- assert.equal(fastRow()?.disabled, true);
- await act(async () => alert!.querySelector<HTMLButtonElement>("button")!.click());
+ assert.match(fastRow()?.textContent ?? "", /Retry Fast Mode confirmation/);
+ await act(async () => fastRow()!.click());
  assert.equal(refreshes.length, 2);
+ await toggleModelMenu();
+ assert.equal(fastRow()?.disabled, true);
  await act(async () => refreshes[1]!.resolve(settings(true)));
  assert.equal(fastRow()?.disabled, false);
  assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
- assert.equal(document.querySelector('[role="alert"]'), null);
+ assert.equal(Boolean(document.querySelector('[role="alert"]')), false);
 });
 
 test("toggling Fast keeps a legacy chat on its inherited model", async () => {
