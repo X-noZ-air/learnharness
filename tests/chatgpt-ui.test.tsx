@@ -82,7 +82,7 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
  const unsubscribe = onSettingsSaved(section => savedSections.push(section));
  try {
   await act(async () => toggle()!.click());
-  assert.deepEqual(savedSections, ["models"]);
+  assert.deepEqual(savedSections, []);
   assert.equal(catalogReads, readsBeforeToggle);
  } finally {
   unsubscribe();

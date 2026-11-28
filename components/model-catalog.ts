@@ -58,11 +58,11 @@ export function useModelCatalog(): { catalog: ModelCatalogResponse | undefined; 
 		const read = () => setSnapshot({ catalog: catalogCache, failed: catalogError });
 		catalogReaders.add(read);
 		if (first) {
-			stopCatalogSignals = onSettingsSaved((section, { refreshCatalog }) => {
+			stopCatalogSignals = onSettingsSaved((section) => {
 				if (section === "keys" || section === "claudeCode") {
 					catalogGeneration++; catalogInflight = undefined; catalogCache = undefined;
 					fetchCatalog();
-				} else if (section === "models" && refreshCatalog !== false) fetchCatalog(true);
+				} else if (section === "models") fetchCatalog(true);
 			});
 			fetchCatalog(true);
 		} else fetchCatalog();

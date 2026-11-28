@@ -193,7 +193,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				++modelsRead.current;
 				setModels(settings.models);
 				setOpen(null);
-				notifySettingsSaved("models", { refreshCatalog: !changingFast });
+				if (!changingFast) notifySettingsSaved("models");
 				return true;
 			} catch {
 				setError({ message: "Could not reach the server — try again.", fast: changingFast });
