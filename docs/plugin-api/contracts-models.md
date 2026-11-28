@@ -26,6 +26,7 @@ export interface CatalogDefaults {
         id: string;
     };
     thinkingLevel?: ThinkingLevel;
+    fastMode?: boolean;
 }
 ```
 
@@ -35,6 +36,7 @@ export interface CatalogDefaults {
 - [model.provider](#catalogdefaults-modelprovider)
 - [model.id](#catalogdefaults-modelid)
 - [thinkingLevel](#catalogdefaults-thinkinglevel)
+- [fastMode](#catalogdefaults-fastmode)
 
 ### CatalogDefaults model
 
@@ -61,6 +63,12 @@ id: string;
 
 ```ts
 thinkingLevel?: ThinkingLevel;
+```
+
+### CatalogDefaults fastMode
+
+```ts
+fastMode?: boolean;
 ```
 
 ## CatalogProvider
@@ -122,6 +130,7 @@ export interface ModelCatalogEntry {
     reasoning: boolean;
     input: ("text" | "image")[];
     supportedLevels: ThinkingLevel[];
+    fastServiceTier?: "priority" | "fast";
     cost: {
         input: number;
         output: number;
@@ -141,6 +150,7 @@ export interface ModelCatalogEntry {
 - [reasoning](#modelcatalogentry-reasoning)
 - [input](#modelcatalogentry-input)
 - [supportedLevels](#modelcatalogentry-supportedlevels)
+- [fastServiceTier](#modelcatalogentry-fastservicetier)
 - [cost](#modelcatalogentry-cost)
 - [cost.input](#modelcatalogentry-costinput)
 - [cost.output](#modelcatalogentry-costoutput)
@@ -185,6 +195,14 @@ Thinking levels accepted by this model, as reported by the host catalog.
 
 ```ts
 supportedLevels: ThinkingLevel[];
+```
+
+### ModelCatalogEntry fastServiceTier
+
+Fast tier ID currently offered by the active ChatGPT account for this model.
+
+```ts
+fastServiceTier?: "priority" | "fast";
 ```
 
 ### ModelCatalogEntry cost
@@ -316,16 +334,10 @@ tier slot. Null means no model is configured and work requiring that role
 is unavailable; there is no implicit factory model fallback.
 
 ```ts
-export type RolePins = Record<BackgroundModelRole, {
-    model: {
-        provider: string;
-        id: string;
-    };
-    thinkingLevel?: ThinkingLevel;
-} | null>;
+export type RolePins = Record<BackgroundModelRole, CatalogDefaults | null>;
 ```
 
-**Related types:** [BackgroundModelRole](settings.md#backgroundmodelrole).
+**Related types:** [BackgroundModelRole](settings.md#backgroundmodelrole), [CatalogDefaults](contracts-models.md#catalogdefaults).
 
 ## SlotPins
 

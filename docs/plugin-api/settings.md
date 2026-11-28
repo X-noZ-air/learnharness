@@ -63,6 +63,7 @@ export interface ModelSlot {
         id: string;
     };
     thinkingLevel?: ThinkingLevel;
+    fastMode?: boolean;
 }
 ```
 
@@ -73,6 +74,7 @@ export interface ModelSlot {
 - [model.provider](#modelslot-modelprovider)
 - [model.id](#modelslot-modelid)
 - [thinkingLevel](#modelslot-thinkinglevel)
+- [fastMode](#modelslot-fastmode)
 
 ### ModelSlot cacheRetention
 
@@ -111,6 +113,12 @@ Optional thinking level used with this slot's configured model.
 
 ```ts
 thinkingLevel?: ThinkingLevel;
+```
+
+### ModelSlot fastMode
+
+```ts
+fastMode?: boolean;
 ```
 
 ## ModelSlotName
