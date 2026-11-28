@@ -62,8 +62,9 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
-	const pickerSaveInFlight = useRef(false);
+	const [savingFast, setSavingFast] = useState(false);
+	const [savingModel, setSavingModel] = useState(false);
+	const modelSavesInFlight = useRef(0);
 	const localModelSettings = useRef<ComposerModelSettings>({});
 	const saveState = modelSettingsRef ?? localModelSettings;
 	const sessionRead = useRef(0);
@@ -240,9 +241,13 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// replace-whole-section discipline).
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
-			if (pickerSaveInFlight.current || saveState.current.pendingSave) return;
-			pickerSaveInFlight.current = true;
-			setSaving(true);
+			const changingFast = fastMode !== undefined;
+			if (saveState.current.pendingSave || (changingFast && modelSavesInFlight.current > 0)) return;
+			if (changingFast) setSavingFast(true);
+			else {
+				modelSavesInFlight.current++;
+				setSavingModel(true);
+			}
 			let pendingSave: Promise<boolean>;
 			if (chatId) {
 				pendingSave = saveChat(fastMode !== undefined
@@ -254,11 +259,14 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					: save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 			const settled = pendingSave.finally(() => {
-				if (fastMode !== undefined) saveState.current.pendingSave = undefined;
-				pickerSaveInFlight.current = false;
-				setSaving(false);
+				if (changingFast) {
+					saveState.current.pendingSave = undefined;
+					setSavingFast(false);
+				} else if (--modelSavesInFlight.current === 0) {
+					setSavingModel(false);
+				}
 			});
-			if (fastMode !== undefined) saveState.current.pendingSave = settled;
+			if (changingFast) saveState.current.pendingSave = settled;
 		},
 		[chatId, models, save, saveChat, saveState],
 	);
@@ -330,7 +338,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
-					disabled={saving}
+					disabled={savingFast}
 					className="min-w-0 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate narrow:min-h-11 narrow:min-w-11"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
@@ -346,7 +354,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			>
 				<ModelPickerPill
 					data-testid="stats-thinking"
-					disabled={saving}
+					disabled={savingFast}
 					className="shrink-0 narrow:min-h-11 narrow:min-w-11"
 					onClick={() => {
 						if (entry === undefined) return;
@@ -357,7 +365,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			</Hint>
 
 			{fastAvailable && (
-				<FastModeButton checked={override?.fastMode === true} disabled={saving} onToggle={() => {
+				<FastModeButton checked={override?.fastMode === true} disabled={savingFast || savingModel} onToggle={() => {
 					setOpen(null);
 					void apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
 				}} />

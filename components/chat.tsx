@@ -336,7 +336,7 @@ export function Chat({
 	const submissionLive = useRef({ nativeMessages, surfaceTarget, ready: true });
 	submissionLive.current = { nativeMessages, surfaceTarget, ready: true };
 	const modelSettingsRef = useRef<ComposerModelSettings>({});
-	const runSubmission = async (target: PluginSubmissionTarget, capture: () => PluginSubmission | Promise<PluginSubmission>, current: () => boolean, deliver: (prepared: PluginSubmission, attempt: SubmissionAttempt) => Promise<boolean>): Promise<boolean> => {
+	const runSubmission = async (target: PluginSubmissionTarget, capture: () => PluginSubmission | Promise<PluginSubmission>, current: () => boolean, deliver: (prepared: PluginSubmission, attempt: SubmissionAttempt, beforeSteerFallback?: () => Promise<boolean>) => Promise<boolean>): Promise<boolean> => {
 		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		const modelRevision = submissionModel.capture();
 		const attempt = submissionRunner.begin(target, pluginManager?.captureSubmissionInterceptors() ?? [], () => submissionMounted.current && submissionModel.isCurrent(modelRevision) && submissionLive.current.surfaceTarget === target.surfaceTarget && !!findSurfaceBoundary(target.surfaceTarget) && current());
@@ -346,13 +346,17 @@ export function Chat({
 			const input = await attempt.finalize(async () => { await finishDictation(); return capture(); });
 			const prepared = await attempt.prepare(input, submissionLive.current.nativeMessages);
 			if (!prepared) return false;
-			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			const waitForSave = () => waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			const beforeSteerFallback = target.type === "text" && busyRef.current
+				? () => attempt.finalize(() => waitForSave() ?? true).catch(() => false)
+				: undefined;
+			const pendingSave = beforeSteerFallback ? undefined : waitForSave();
 			if (pendingSave && !await attempt.finalize(() => pendingSave)) {
 				attempt.cancel();
 				return false;
 			}
 			attempt.check();
-			return await deliver(prepared, attempt);
+			return await deliver(prepared, attempt, beforeSteerFallback);
 		} catch (error) {
 			attempt.cancel(); attempt.refused();
 			if (!(error instanceof DOMException && error.name === "AbortError")) setPreparationError(attempt.preparationFailure(error).message);
@@ -832,14 +836,14 @@ export function Chat({
 		if (!busyRef.current && zeroKeys) { setSetupOpen(true); return Promise.resolve(false); }
 		if (!busyRef.current && selectedModelUnavailable(catalog, selectedModel)) { openModelPicker(); return Promise.resolve(false); }
 		let captured = "", capturedRevision = 0;
-		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: [] } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt) => {
+		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: [] } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt, beforeSteerFallback) => {
 			if (prepared.type !== "text") return false;
 			if (!prepared.content.text.trim() && !prepared.content.images.length) throw new Error("Message text or images are required. Your input has been kept.");
 			if (beforePost && !beforePost(captured)) { attempt.cancel(); return false; }
 			draftRef.current = captured;
 			const accepted = () => { if (composerEditRevision.current === capturedRevision && textRef.current.trim() === captured) applyText(""); openingAccepted?.(); attempt.accepted(); };
 			attempt.deliver();
-			if (busyRef.current) return steer(prepared.content.text, prepared.content.images, accepted, attempt.refused);
+			if (beforeSteerFallback) return steer(prepared.content.text, prepared.content.images, accepted, attempt.refused, beforeSteerFallback);
 			return send({ type: "text", text: prepared.content.text, ...(prepared.content.images.length ? { images: prepared.content.images.map(image => ({ ...image })) } : {}) }, accepted, undefined, attempt.refused);
 		});
 	};

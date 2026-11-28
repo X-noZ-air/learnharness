@@ -152,7 +152,7 @@ test("the Fast toggle sends only its own field from a stale tab", async () => {
  assert.deepEqual(write, { model, thinkingLevel: "off" });
 });
 
-test("only Fast writes hold the composer while both writes lock the picker", async () => {
+test("ordinary effort writes can overlap and only Fast writes hold the composer", async () => {
  const model = { provider: "chatgpt", id: "tier-model" };
  const requests: ReturnType<typeof deferred<Response>>[] = [];
  const modelSettingsRef = { current: {} as ComposerModelSettings };
@@ -176,19 +176,21 @@ test("only Fast writes hold the composer while both writes lock the picker", asy
  const cycleEffort = () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking"));
 
  await act(async () => { cycleEffort(); cycleEffort(); });
- assert.equal(requests.length, 1);
- assert.equal(effort.disabled, true);
+ assert.equal(requests.length, 2);
+ assert.equal(effort.disabled, false);
  assert.equal(fast.disabled, true);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
  await act(async () => requests[0]!.resolve(new Response(null, { status: 503 })));
+ assert.equal(fast.disabled, true);
+ await act(async () => requests[1]!.resolve(new Response(null, { status: 503 })));
  assert.equal(fast.disabled, false);
 
  await act(async () => { fast.click(); cycleEffort(); });
- assert.equal(requests.length, 2);
+ assert.equal(requests.length, 3);
  assert.equal(effort.disabled, true);
  const pendingFast = modelSettingsRef.current.pendingSave;
  assert.ok(pendingFast);
- await act(async () => requests[1]!.resolve(new Response(null, { status: 503 })));
+ await act(async () => requests[2]!.resolve(new Response(null, { status: 503 })));
  assert.equal(await pendingFast, false);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
  assert.equal(fast.disabled, false);
