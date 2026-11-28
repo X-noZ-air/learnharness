@@ -18,7 +18,7 @@ const originalKey = process.env.OPENAI_API_KEY;
 let leaseError: string | null = null;
 let requests: { authorization: string | null; body: Record<string, any>; url: string }[] = [];
 let responseEvents: unknown[] = [];
-let fastServiceTier: "fast" | "priority" | undefined;
+let fastServiceTier: "priority" | undefined;
 const ipc = (value: unknown) => (process.emit as (name: string, value: unknown) => boolean)("message", value);
 const model = piModels().getModel("openai", "gpt-5") as Model<"openai-responses">;
 const status = { available: true, pending: false, allowBackgroundUse: false, activeId: "scratch-account", accounts: [{ id: "scratch-account", email: "dummy@example.invalid", registration: "oaiapp_scratch", connected: true, planEnabled: true, background: false }], error: null };
@@ -73,7 +73,7 @@ test("Responses uses the current account's tier ID only with a foreground Fast o
 	};
 	responseEvents = [complete()];
 	try {
-		for (const advertised of ["priority", "fast", undefined] as const) {
+		for (const advertised of ["priority", undefined] as const) {
 			fastServiceTier = advertised;
 			await refreshChatGPTModels([model]);
 			const payload = await run();

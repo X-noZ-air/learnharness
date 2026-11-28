@@ -432,8 +432,8 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 				.filter((m) => m && m.visibility === "list" && nonempty(m.slug) && typeof m.display_name === "string")
 				.map((m) => {
 					const tiers = Array.isArray(m.service_tiers) ? m.service_tiers : [];
-					const fastServiceTier = tiers.find((tier) => tier?.id === "priority" || tier?.id === "fast")?.id;
-					return { id: m.slug, name: m.display_name, ...(fastServiceTier ? { fastServiceTier } : {}) };
+					const supportsFast = tiers.some((tier) => tier?.id === "priority" || tier?.id === "fast");
+					return { id: m.slug, name: m.display_name, ...(supportsFast ? { fastServiceTier: "priority" } : {}) };
 				});
 			const changed = JSON.stringify(visible) !== JSON.stringify(catalog);
 			catalog = visible;

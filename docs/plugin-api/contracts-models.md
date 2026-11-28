@@ -122,7 +122,7 @@ export interface ModelCatalogEntry {
     reasoning: boolean;
     input: ("text" | "image")[];
     supportedLevels: ThinkingLevel[];
-    fastServiceTier?: "priority" | "fast";
+    fastServiceTier?: "priority";
     cost: {
         input: number;
         output: number;
@@ -191,10 +191,10 @@ supportedLevels: ThinkingLevel[];
 
 ### ModelCatalogEntry fastServiceTier
 
-Fast tier ID currently offered by the active ChatGPT account for this model.
+Responses tier for models with Fast available on the active ChatGPT account.
 
 ```ts
-fastServiceTier?: "priority" | "fast";
+fastServiceTier?: "priority";
 ```
 
 ### ModelCatalogEntry cost

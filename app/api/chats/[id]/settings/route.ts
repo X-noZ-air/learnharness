@@ -3,7 +3,7 @@ import {
 	clampChatLevel,
 	effectiveSettings,
 	getChat,
-	parseSettingsBody,
+	parseSessionSettingsBody,
 	stores,
 	validateChatSettings,
 } from "@/src/server";
@@ -21,16 +21,13 @@ import type { ChatSettings } from "@/src/core";
  * interlude 2026-09-22): a pinned level clamps to the named model's
  * nearest supported and the clamped value is stored. Effective next turn
  * by construction (agents are stateless per turn).
- *
- * The body parsing itself is shared with the draft route
- * (src/server/settings-body.ts, default-settings wave 2026-09-18).
  */
 async function handlePut(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
 	if (!getChat(id)) return Response.json({ error: "Not found" }, { status: 404 });
 
 	const body = await req.json().catch(() => null);
-	const parsed = parseSettingsBody(body);
+	const parsed = parseSessionSettingsBody(body);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
 
 	const verdict = validateChatSettings(parsed.settings);

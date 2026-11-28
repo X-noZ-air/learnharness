@@ -96,6 +96,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// this session's identity (including to the Send guard). Draft mode is
 	// the strong slot itself.
 	const strong = models?.strong;
+	const sessionModel = session?.settings?.model;
 	const conversation = session && resolveConversationSpec(session.settings, resolveSlot(strong));
 	const override: ChatSettings | undefined = chatId
 		? conversation ? {
@@ -220,7 +221,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			try {
 				if (chatId) {
 					const sameModel = provider === effectiveProvider && id === effectiveId;
-					await saveChat({ model: { provider, id }, thinkingLevel: level, fastMode: fastMode ?? (sameModel ? override?.fastMode : undefined) });
+					const model = fastMode === undefined ? { provider, id } : sessionModel;
+					await saveChat({ model, thinkingLevel: level, fastMode: fastMode ?? (sameModel ? override?.fastMode : undefined) });
 				} else {
 					const next = composeSlotModel(models, "strong", provider, id, level ?? "");
 					if (fastMode !== undefined && next.strong) next.strong.fastMode = fastMode;
@@ -231,7 +233,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				setSaving(false);
 			}
 		},
-		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat],
+		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, sessionModel],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the

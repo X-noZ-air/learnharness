@@ -46,7 +46,6 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	const raw = body as {
 		model?: { provider?: unknown; id?: unknown };
 		thinkingLevel?: unknown;
-		fastMode?: unknown;
 	};
 	const settings: ChatSettings = {};
 	if (raw.model !== undefined) {
@@ -66,15 +65,20 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 		}
 		settings.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
 	}
-	if (raw.fastMode !== undefined) {
-		if (typeof raw.fastMode !== "boolean") return { ok: false, error: "fastMode must be a boolean" };
-		settings.fastMode = raw.fastMode;
-	}
 	// Wave 7 killed the graph-context injection (owner: zero configuration
 	// beyond chat models — the prober reads its map through tools now); its
 	// budget dial is gone with it. A stale client sending the old key has
 	// it silently dropped here (forward-compatible, like any unknown key).
 	return { ok: true, settings };
+}
+
+export function parseSessionSettingsBody(body: unknown): SettingsBodyResult<ChatSettings> {
+	const parsed = parseSettingsBody(body);
+	if (!parsed.ok) return parsed;
+	const fastMode = asRecord(body)?.fastMode;
+	if (fastMode === undefined) return parsed;
+	if (typeof fastMode !== "boolean") return { ok: false, error: "fastMode must be a boolean" };
+	return { ok: true, settings: { ...parsed.settings, fastMode } };
 }
 
 // ─── Section parsers (settings-storage wave, 2026-09-19) ────────────────────

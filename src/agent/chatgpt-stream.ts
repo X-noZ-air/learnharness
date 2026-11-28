@@ -27,7 +27,7 @@ export function chatGPTPayload(raw: unknown, selectedModelId: string, fastServic
 	for (const key of ["instructions", "reasoning", "include", "text", "tool_choice", "parallel_tool_calls", "prompt_cache_key"]) {
 		if (payload[key] !== undefined) out[key] = payload[key];
 	}
-	if (fastServiceTier) out.service_tier = fastServiceTier;
+	if (fastServiceTier === "priority") out.service_tier = fastServiceTier;
 	if (!Array.isArray(payload.input)) throw new Error("ChatGPT requires stateless input history");
 	out.input = payload.input.map((item) => item?.role === "system" ? { ...item, role: "developer" } : item);
 	if (Array.isArray(payload.tools) && payload.tools.length) {

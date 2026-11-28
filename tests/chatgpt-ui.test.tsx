@@ -58,7 +58,7 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
  globalThis.fetch = async (input, init) => {
   if (input === "/api/models") {
    const catalog = body(model.id);
-   if (supportsFast) catalog.models[0]!.fastServiceTier = "fast";
+   if (supportsFast) catalog.models[0]!.fastServiceTier = "priority";
    return Response.json(catalog);
   }
   if (input === "/api/settings/models" && init?.method === "PUT") {
@@ -81,6 +81,35 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
  supportsFast = false;
  await act(async () => notifySettingsSaved("keys"));
  assert.equal(toggle(), null);
+});
+
+test("toggling Fast keeps a legacy chat on its inherited model", async () => {
+ let id = "first-model";
+ let settings = {};
+ const model = () => ({ provider: "chatgpt", id });
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(id);
+   catalog.models[0]!.fastServiceTier = "priority";
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings") return Response.json({ settings: { models: { strong: { model: model() } } } });
+  if (input === "/api/chats/legacy") return Response.json({ settings });
+  if (input === "/api/chats/legacy/settings" && init?.method === "PUT") {
+   settings = JSON.parse(String(init.body));
+   return Response.json({ settings });
+  }
+  throw new Error(`Unexpected request: ${input}`);
+ };
+ let selected: string | undefined;
+ await mount(<ModelControl chatId="legacy" onModelChange={(value) => { selected = value; }} />);
+ const toggle = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
+ await act(async () => toggle.click());
+ assert.deepEqual(settings, { fastMode: true });
+ assert.equal(toggle.getAttribute("aria-pressed"), "true");
+ id = "second-model";
+ await act(async () => notifySettingsSaved("models"));
+ assert.equal(selected, "chatgpt:second-model");
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {
