@@ -472,6 +472,64 @@ test("overlapping chat writes reread the saved model after a stale Fast response
 	assert.equal(reads, 2);
 });
 
+test("the Fast toggle waits for confirmed chat settings and can retry a failed refresh", async () => {
+	installFetch();
+	const body = catalog();
+	const model = { provider: "chatgpt", id: a.id };
+	body.models = [{ ...a, ...model, fastServiceTier: "priority" }];
+	const fallback = globalThis.fetch;
+	const fastWrite = deferred<Response>();
+	const refreshes: ReturnType<typeof deferred<Response>>[] = [];
+	const fastWrites: boolean[] = [];
+	let saved = { model, thinkingLevel: "off", fastMode: false };
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/chats/fixture") {
+			if (fastWrites.length === 0) return Response.json({ settings: saved });
+			const refresh = deferred<Response>();
+			refreshes.push(refresh);
+			return refresh.promise;
+		}
+		if (input === "/api/chats/fixture/settings" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body));
+			if (next.fastMode !== undefined) {
+				fastWrites.push(next.fastMode);
+				if (fastWrites.length === 1) return fastWrite.promise;
+				saved = { ...saved, fastMode: next.fastMode };
+			} else saved = { ...saved, thinkingLevel: next.thinkingLevel };
+			return Response.json({ settings: saved });
+		}
+		return fallback(input, init);
+	};
+	await render(<StatsBar chatId="fixture" turns={[]} />);
+	const fast = () => document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!;
+	await act(async () => fast().click());
+	await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
+	assert.equal(saved.thinkingLevel, "low");
+	saved = { ...saved, fastMode: true };
+	await act(async () => fastWrite.resolve(Response.json({ settings: saved })));
+	assert.equal(refreshes.length, 1);
+	assert.equal(fast().disabled, true);
+	assert.equal(element("stats-thinking").hasAttribute("disabled"), false);
+	await act(async () => fast().click());
+	assert.deepEqual(fastWrites, [true]);
+	await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
+	const alert = document.querySelector('[role="alert"]');
+	assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
+	assert.equal(fast().disabled, true);
+	const retry = alert?.querySelector<HTMLButtonElement>("button");
+	assert.ok(retry);
+	await act(async () => retry.click());
+	assert.equal(refreshes.length, 2);
+	assert.equal(fast().disabled, true);
+	await act(async () => refreshes[1]!.resolve(Response.json({ settings: saved })));
+	assert.equal(fast().disabled, false);
+	assert.equal(fast().getAttribute("aria-pressed"), "true");
+	assert.equal(document.querySelector('[role="alert"]'), null);
+	await act(async () => fast().click());
+	assert.deepEqual(fastWrites, [true, false]);
+});
+
 test("the model shortcut and arrow navigation can toggle Fast for the active priority model", async () => {
 	installFetch();
 	const body = catalog();
