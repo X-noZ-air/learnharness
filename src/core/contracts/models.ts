@@ -6,7 +6,7 @@
  * components never import from the server band).
  */
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { BackgroundModelRole, ModelSlotName, ModelsSettings } from "../settings.ts";
+import type { BackgroundModelRole, ModelSlotName, ModelSlot } from "../settings.ts";
 
 /** One picker row: everything the UI shows about a model, projected from
  *  pi-ai's catalog. Costs are USD per 1M tokens (the same catalog, the same
@@ -46,9 +46,7 @@ export type RolePins = Record<
 
 /** Resolved model choice for each slot tier. Null means that tier has no model;
  * configured entries include optional thinking and cache-retention preferences. */
-export type SlotPins = {
-	[Slot in ModelSlotName]: (NonNullable<ModelsSettings[Slot]> & { model: { provider: string; id: string } }) | null;
-};
+export type SlotPins = Record<ModelSlotName, (ModelSlot & { model: { provider: string; id: string } }) | null>;
 
 /** GET /api/models response. */
 export interface ModelCatalogResponse {

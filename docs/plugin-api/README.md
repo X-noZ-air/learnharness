@@ -249,7 +249,6 @@ These are reachable through public data, event, inheritance or helper-type relat
 - [MODEL_SLOTS](settings.md#model_slots) — `settings`
 - [ModelSlot](settings.md#modelslot) — `settings`
 - [ModelSlotName](settings.md#modelslotname) — `settings`
-- [ModelsSettings](settings.md#modelssettings) — `settings`
 - [LhViewMessage](view.md#lhviewmessage) — `view`
 - [LhViewPart](view.md#lhviewpart) — `view`
 
@@ -257,4 +256,4 @@ These are reachable through public data, event, inheritance or helper-type relat
 
 Standard JavaScript/DOM types (`Promise`, `AbortSignal`, `File`, `HTMLElement`, and utility types) use their standard contracts. Pi model/messages/tools and TypeBox schemas use the exact peer versions declared by the bundled SDK's `package.json`. Supply those peers when typechecking; they are development types, not permission to import private LearnHarness runtime modules.
 
-Coverage: **140 public types**, **58 supporting declarations**, **901 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.
+Coverage: **140 public types**, **57 supporting declarations**, **897 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.

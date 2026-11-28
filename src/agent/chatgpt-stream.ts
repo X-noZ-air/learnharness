@@ -87,7 +87,7 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 					onPayload: async (raw, model) => {
 						const replacement = await options?.onPayload?.(raw, model);
 						check();
-						const tier = fastMode ? chatGPTModel(logicalModel.id)?.fastServiceTier : undefined;
+						const tier = fastMode && !purpose ? chatGPTModel(logicalModel.id)?.fastServiceTier : undefined;
 						const payload = chatGPTPayload(replacement === undefined ? raw : replacement, logicalModel.id, tier);
 						capturePreparedBackgroundPayload(payload, logicalModel);
 						return payload;

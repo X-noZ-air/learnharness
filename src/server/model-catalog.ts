@@ -126,10 +126,8 @@ export function catalogRolePins(): RolePins {
 	return rolePinsFor(effectiveSettings().agent.models);
 }
 
-/** The three slot tiers' RESOLVED pins — effectiveSettings().models
- *  verbatim: the same resolution the engine wiring uses, so the Models
- *  settings page's captions cannot drift from what actually runs. NULL
- *  per tier that holds no model. */
+/** The three slot tiers' RESOLVED pins from effectiveSettings().models.
+ *  NULL per tier that holds no model. */
 export function catalogSlots(): SlotPins {
 	const slots = effectiveSettings().models;
 	const pins = {} as SlotPins;
@@ -139,7 +137,6 @@ export function catalogSlots(): SlotPins {
 			? {
 					model: { provider: slot.provider, id: slot.id },
 					...(slot.thinkingLevel !== undefined ? { thinkingLevel: slot.thinkingLevel } : {}),
-					...(name === "strong" && slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
 					...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 				}
 			: null;

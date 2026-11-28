@@ -61,9 +61,10 @@ test("catalog intersects supported capabilities, without inventing model limits"
 	assert.deepEqual(chatGPTModels()[0]!.input, model.input);
 });
 
-test("Responses uses the current account's tier ID only with a Fast opt-in", async () => {
+test("Responses uses the current account's tier ID only with a foreground Fast opt-in", async () => {
 	const spec = { provider: "chatgpt", id: model.id };
-	const optedIn = piEngineForSpec({ ...spec, fastMode: true }, false);
+	let background = false;
+	const optedIn = piEngineForSpec({ ...spec, fastMode: true }, () => background);
 	const run = async (engine = optedIn) => {
 		const options = { onPayload: (raw: unknown) => ({ ...raw as object, service_tier: "caller-cannot-choose" }) };
 		const result = await engine.streamFn(engine.model, context(), options).result();
@@ -79,6 +80,9 @@ test("Responses uses the current account's tier ID only with a Fast opt-in", asy
 			assert.equal(Object.hasOwn(payload, "service_tier"), advertised !== undefined);
 			assert.equal(payload.service_tier, advertised);
 			if (advertised === undefined) continue;
+			background = true;
+			assert.equal(Object.hasOwn(await run(), "service_tier"), false);
+			background = false;
 			assert.equal(Object.hasOwn(await run(piEngineForSpec(spec, false)), "service_tier"), false);
 			assert.equal(Object.hasOwn(await run(piEngineForSpec({ ...spec, fastMode: false }, false)), "service_tier"), false);
 		}

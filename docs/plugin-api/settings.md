@@ -9,7 +9,6 @@
 - [MODEL_SLOTS](#model_slots) — supporting declaration
 - [ModelSlot](#modelslot) — supporting declaration
 - [ModelSlotName](#modelslotname) — supporting declaration
-- [ModelsSettings](#modelssettings) — supporting declaration
 
 ## BACKGROUND_MODEL_ROLES
 
@@ -123,57 +122,3 @@ export type ModelSlotName = (typeof MODEL_SLOTS)[number];
 ```
 
 **Related types:** [MODEL_SLOTS](settings.md#model_slots).
-
-## ModelsSettings
-
-Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
-
-The `models` settings section (owner decision 2026-09-20: a dedicated
-section — slots are engine-level choices, not one session's). All slots
-optional: an absent slot means every role of its tier runs whatever the
-deeper tiers of the chain resolve to (per-role override → factory pin).
-
-```ts
-export interface ModelsSettings {
-    strong?: ModelSlot & {
-        fastMode?: boolean;
-    };
-    cheap?: ModelSlot;
-    vision?: ModelSlot;
-}
-```
-
-**Related types:** [ModelSlot](settings.md#modelslot).
-
-**Member index** (including nested object members; inherited members are defined in the linked base types):
-
-- [strong](#modelssettings-strong)
-- [strong.fastMode](#modelssettings-strongfastmode)
-- [cheap](#modelssettings-cheap)
-- [vision](#modelssettings-vision)
-
-### ModelsSettings strong
-
-```ts
-strong?: ModelSlot & {
-    fastMode?: boolean;
-};
-```
-
-### ModelsSettings strong.fastMode
-
-```ts
-fastMode?: boolean;
-```
-
-### ModelsSettings cheap
-
-```ts
-cheap?: ModelSlot;
-```
-
-### ModelsSettings vision
-
-```ts
-vision?: ModelSlot;
-```

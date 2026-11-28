@@ -168,6 +168,17 @@ describe("the background roles' resolved pins (rolePins)", () => {
 });
 
 describe("the model slots surface (model slots wave, 2026-09-20)", () => {
+	it("projects the strong model's preferences without its Fast opt-in", (t) => {
+		const saved = readSettings();
+		t.after(() => {
+			if (saved) writeSettings(saved);
+			else fs.rmSync(SETTINGS_FILE, { force: true });
+		});
+		const strong = { model: { provider: "chatgpt", id: "scratch" }, thinkingLevel: "low", cacheRetention: "short" } as const;
+		writeSettings({ version: 1, models: { strong: { ...strong, fastMode: true } } });
+		assert.deepEqual(catalogSlots(), { strong, cheap: null, vision: null });
+	});
+
 	it("catalogSlots projects the record's tiers — NULL only where a tier holds no model", () => {
 		// machine-aware (one-fs-owner: READ the record, never pin it)
 		const record = readSettings();

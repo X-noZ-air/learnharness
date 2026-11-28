@@ -345,14 +345,12 @@ Resolved model choice for each slot tier. Null means that tier has no model;
 configured entries include optional thinking and cache-retention preferences.
 
 ```ts
-export type SlotPins = {
-    [Slot in ModelSlotName]: (NonNullable<ModelsSettings[Slot]> & {
-        model: {
-            provider: string;
-            id: string;
-        };
-    }) | null;
-};
+export type SlotPins = Record<ModelSlotName, (ModelSlot & {
+    model: {
+        provider: string;
+        id: string;
+    };
+}) | null>;
 ```
 
-**Related types:** [ModelSlotName](settings.md#modelslotname), [ModelsSettings](settings.md#modelssettings).
+**Related types:** [ModelSlot](settings.md#modelslot), [ModelSlotName](settings.md#modelslotname).
