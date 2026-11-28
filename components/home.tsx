@@ -15,6 +15,7 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
+import type { ComposerModelSettings } from "@/components/model-picker";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { PathInput } from "@/components/path-input";
 import { AttachFilesButton } from "@/components/attach-files-button";
@@ -84,6 +85,7 @@ export function Home({
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
+	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const [startError, setStartError] = useState("");
 	/* Run end focuses the topic input (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop. Falling edge only; this surface's only
@@ -130,7 +132,10 @@ export function Home({
 			void begin();
 			return;
 		}
-		void dictation.finish().then(() => begin());
+		const pendingSave = modelSettingsRef.current.pendingSave;
+		void dictation.finish().then(async () => {
+			if (!pendingSave || await pendingSave) await begin();
+		});
 	};
 	const begin = async () => {
 		const t = topicRef.current.trim();
@@ -161,6 +166,12 @@ export function Home({
 		setBusy(true);
 		setStartError("");
 		try {
+			const pendingSave = modelSettingsRef.current.pendingSave;
+			if (pendingSave && !await pendingSave) {
+				startingRef.current = false;
+				setBusy(false);
+				return;
+			}
 			// The map context (owner, 2026-10-04): picks in EITHER mode ride
 			// the CREATION as graphContext — the server writes a
 			// graph-context marker as message[0] (a separate custom message
@@ -170,7 +181,7 @@ export function Home({
 				title: t,
 				...(mode === "practice" ? { kind: "practice" } : {}),
 				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
-			}, fetch, JSON.stringify(catalog?.slots.strong));
+			}, fetch, JSON.stringify([catalog?.slots.strong, modelSettingsRef.current.fastDefault === true]));
 			router.push(target);
 		} catch (error) {
 			startingRef.current = false;
@@ -316,6 +327,7 @@ export function Home({
 					    while the RIGHT keeps the strong-slot control (fix wave: the
 					    pills write /api/settings/models). */}
 					<StatsBar
+						modelSettingsRef={modelSettingsRef}
 						dictationSlot={<DictationBar dictation={dictation} />}
 						turns={[] as TurnUsage[]}
 						leadingSlot={

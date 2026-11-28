@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
 import { resolveConversationSpec, resolveSlot } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -17,6 +17,11 @@ import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-sig
 import { useModelCatalog } from "@/components/model-catalog";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
+
+export interface ComposerModelSettings {
+	pendingSave?: Promise<boolean>;
+	fastDefault?: boolean;
+}
 
 /** provider:id → known contextWindow over the cached catalog, mirroring
  * the server's catalogContextLimits join. CLI aliases have no global
@@ -42,7 +47,11 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
  * changing the new-session default. Unpicked reads "—" (the
  * no-factory-fallback language: the UI never presents a default model).
  */
-export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
+export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
+	chatId?: string;
+	onModelChange?: (model: string | undefined) => void;
+	modelSettingsRef?: RefObject<ComposerModelSettings>;
+}) {
 	const { catalog, refresh } = useModelCatalog();
 	const [models, setModels] = useState<ModelsSettings | undefined>();
 	// A successful read with no settings is a legacy session; undefined
@@ -51,7 +60,10 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
-	const saveInFlight = useRef(false);
+	const localModelSettings = useRef<ComposerModelSettings>({});
+	const saveState = modelSettingsRef ?? localModelSettings;
+	const sessionRead = useRef(0);
+	const modelsRead = useRef(0);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const interactions = useInteractionLayers();
 
@@ -64,25 +76,33 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
+			const read = ++sessionRead.current;
 			fetch(`/api/chats/${chatId}`)
 				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
-				.then((body) => setSession({ settings: body.settings }))
+				.then((body) => { if (read === sessionRead.current) setSession({ settings: body.settings }); })
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
+		const read = ++modelsRead.current;
 		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
-			.then((body) => setModels(body.settings?.models ?? undefined))
+			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
+			.then((body) => {
+				if (read !== modelsRead.current) return;
+				const stored = body.settings?.models;
+				if (!chatId) saveState.current.fastDefault = stored?.strong?.fastMode;
+				setModels(stored);
+			})
 			.catch(() => {
 				/* the record fetch failing leaves the control read-only
 				   ("—" triggers, closed menus) — same posture as a
 				   catalog failure */
 			});
-	}, [chatId]);
+	}, [chatId, saveState]);
 
 	useEffect(() => {
 		readRecord();
+		return () => { ++sessionRead.current; ++modelsRead.current; };
 	}, [readRecord]);
 
 	useSettingsSaved((section) => {
@@ -96,7 +116,6 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// this session's identity (including to the Send guard). Draft mode is
 	// the strong slot itself.
 	const strong = models?.strong;
-	const sessionModel = session?.settings?.model;
 	const conversation = session && resolveConversationSpec(session.settings, resolveSlot(strong));
 	const override: ChatSettings | undefined = chatId
 		? conversation ? {
@@ -162,7 +181,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
 					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
+					return false;
 				}
 				// Server truth, never the request body (fix wave): a pick
 				// that rides an unsupported level lands CLAMPED in the record
@@ -170,14 +189,19 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				const stored = (
 					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
 				)?.settings?.models;
-				setModels(stored ?? next);
+				++modelsRead.current;
+				const saved = stored ?? next;
+				saveState.current.fastDefault = saved.strong?.fastMode;
+				setModels(saved);
 				setOpen(null);
 				notifySettingsSaved("models");
+				return true;
 			} catch {
 				setError("Could not reach the server — try again.");
+				return false;
 			}
 		},
-		[],
+		[saveState],
 	);
 
 	// The session write seam (chat mode): PUT the per-chat settings route
@@ -197,13 +221,16 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
 					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
+					return false;
 				}
 				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
+				++sessionRead.current;
 				setSession({ settings: stored?.settings ?? next });
 				setOpen(null);
+				return true;
 			} catch {
 				setError("Could not reach the server — try again.");
+				return false;
 			}
 		},
 		[chatId],
@@ -214,26 +241,26 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// draft mode composes the strong slot (siblings preserved,
 	// replace-whole-section discipline).
 	const apply = useCallback(
-		async (provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
-			if (saveInFlight.current) return;
-			saveInFlight.current = true;
+		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
+			if (saveState.current.pendingSave) return;
 			setSaving(true);
-			try {
-				if (chatId) {
-					const sameModel = provider === effectiveProvider && id === effectiveId;
-					const model = fastMode === undefined ? { provider, id } : sessionModel;
-					await saveChat({ model, thinkingLevel: level, fastMode: fastMode ?? (sameModel ? override?.fastMode : undefined) });
-				} else {
-					const next = composeSlotModel(models, "strong", provider, id, level ?? "");
-					if (fastMode !== undefined && next.strong) next.strong.fastMode = fastMode;
-					await save(next);
-				}
-			} finally {
-				saveInFlight.current = false;
-				setSaving(false);
+			let pendingSave: Promise<boolean>;
+			if (chatId) {
+				const sameModel = provider === effectiveProvider && id === effectiveId;
+				pendingSave = saveChat(fastMode !== undefined
+					? { ...session?.settings, fastMode }
+					: { model: { provider, id }, thinkingLevel: level, fastMode: sameModel ? override?.fastMode : undefined });
+			} else {
+				const next = composeSlotModel(models, "strong", provider, id, level ?? "");
+				if (fastMode !== undefined && next.strong) next.strong.fastMode = fastMode;
+				pendingSave = save(next);
 			}
+			saveState.current.pendingSave = pendingSave.finally(() => {
+				saveState.current.pendingSave = undefined;
+				setSaving(false);
+			});
 		},
-		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, sessionModel],
+		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, saveState, session?.settings],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the

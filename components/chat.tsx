@@ -50,6 +50,7 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
+import type { ComposerModelSettings } from "@/components/model-picker";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
@@ -700,6 +701,7 @@ export function Chat({
 	const catalogRef = useRef(catalog);
 	catalogRef.current = catalog;
 	const [selectedModel, setSelectedModel] = useState<string | undefined>();
+	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const recordSelectedModel = useCallback((model: string | undefined) => { submissionModel.observe(model); setSelectedModel(model); }, [submissionModel]);
 	const [setupOpen, setSetupOpen] = useState(false);
 	/** The last explicitly-sent draft (composer send): the
@@ -814,9 +816,14 @@ export function Chat({
 		if (!target || pendingRef.current || pluginOwnsDock || activeProblemRef.current || compacting) return Promise.resolve(false);
 		if (!busyRef.current && zeroKeys) { setSetupOpen(true); return Promise.resolve(false); }
 		if (!busyRef.current && selectedModelUnavailable(catalog, selectedModel)) { openModelPicker(); return Promise.resolve(false); }
+		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
 		let captured = "", capturedRevision = 0;
 		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: [] } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt) => {
 			if (prepared.type !== "text") return false;
+			if (pendingAtSubmit && !await pendingAtSubmit) { attempt.cancel(); return false; }
+			const pendingSave = modelSettingsRef.current.pendingSave;
+			if (pendingSave && !await pendingSave) { attempt.cancel(); return false; }
+			attempt.check();
 			if (!prepared.content.text.trim() && !prepared.content.images.length) throw new Error("Message text or images are required. Your input has been kept.");
 			if (beforePost && !beforePost(captured)) { attempt.cancel(); return false; }
 			draftRef.current = captured;
@@ -1135,9 +1142,11 @@ export function Chat({
 					(b, contentIndex) => b.type === "toolCall" && !!practiceProblemForCall(nativeMessages, { messageId: m.id, contentIndex, toolCallId: b.id, toolName: b.name }),
 				),
 		);
-	const sendNext = useCallback(() => {
+	const sendNext = useCallback(async () => {
 		if (!nextReady || submissionRunner.occupied) return;
 		if (pendingTextInput) { void prepareText(); return; }
+		const pendingSave = modelSettingsRef.current.pendingSave;
+		if (pendingSave && (!await pendingSave || !submissionMounted.current || busyRef.current || pendingRef.current || activeProblemRef.current || !submissionLive.current.ready || submissionRunner.occupied)) return;
 		void send({ type: "next" });
 	}, [nextReady, send, submissionRunner, pendingTextInput]);
 
@@ -2080,6 +2089,7 @@ export function Chat({
 					onSubmitThinking={submitThinking}
 					chatId={chatId}
 					onModelChange={recordSelectedModel}
+					modelSettingsRef={modelSettingsRef}
 					plan={hasPlan ? <PlanMarginalia messages={messages} /> : undefined}
 					onOpenPlan={() => setPlanOpen(true)}
 					requiresReveal={requiresReveal}
@@ -2408,6 +2418,7 @@ export function DockOverlay({
 	onSubmitAnswer,
 	chatId,
 	onModelChange,
+	modelSettingsRef,
 	onReserve,
 	plan,
 	onOpenPlan,
@@ -2470,6 +2481,7 @@ export function DockOverlay({
 	/** The model control's pass-through (the stats bar hosts it). */
 	chatId: string;
 	onModelChange: (model: string | undefined) => void;
+	modelSettingsRef: React.RefObject<ComposerModelSettings>;
 	/** Reports the dock's settled height (block + gradient) — ChatView's
 	 *  dockReserve state feeds the transcript's spacer from it. */
 	onReserve: (h: number) => void;
@@ -3017,6 +3029,7 @@ export function DockOverlay({
 						dictationSlot={dictationSlot}
 						chatId={chatId}
 						onModelChange={onModelChange}
+						modelSettingsRef={modelSettingsRef}
 					/>
 					{/* The scroll-down disc (moved here from the Conversation,
 					    owner refinement round 2026-09-24): anchored to the BLOCK's

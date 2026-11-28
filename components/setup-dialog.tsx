@@ -40,9 +40,10 @@ import { useEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import type React from "react";
-import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings, CUSTOM_PROVIDER } from "@/src/core";
+import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings, type UserSettings, CUSTOM_PROVIDER } from "@/src/core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList } from "@/components/settings/model-menu";
+import { composeSlotModel } from "@/components/settings/agent-section";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -390,24 +391,25 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		if (!allPicked || saving) return;
 		setSaving(true);
 		setError(null);
-		const models: ModelsSettings = {};
-		for (const slot of SLOT_ORDER) {
-			const level = levels[slot];
-			models[slot] = {
-				// Advanced controls stay out of setup; never erase their saved choice.
-				...(catalog?.slots[slot]?.cacheRetention !== undefined ? { cacheRetention: catalog.slots[slot]!.cacheRetention } : {}),
-				model: { provider: picked[slot]!.provider, id: picked[slot]!.id },
-				...(level ? { thinkingLevel: level } : {}),
-			};
-		}
-		const res = await fetch("/api/settings/models", {
-			method: "PUT",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(models),
-		}).catch(() => null);
-		if (!res || !res.ok) {
+		let models: ModelsSettings;
+		try {
+			const record = await fetch("/api/settings");
+			if (!record.ok) throw new Error(`Save failed: ${record.status}`);
+			const { settings } = (await record.json()) as { settings: UserSettings | null };
+			models = settings?.models ?? {};
+			for (const slot of SLOT_ORDER) {
+				const { provider, id } = picked[slot]!;
+				models = composeSlotModel(models, slot, provider, id, levels[slot] ?? "");
+			}
+			const res = await fetch("/api/settings/models", {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(models),
+			});
+			if (!res.ok) throw new Error(`Save failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
+		} catch (error) {
 			setSaving(false);
-			setError(res ? `Save failed: ${(await res.json().catch(() => ({}))).error ?? res.status}` : "Save failed. Check your connection and try again.");
+			setError(error instanceof Error && error.message.startsWith("Save failed:") ? error.message : "Save failed. Check your connection and try again.");
 			return;
 		}
 		notifySettingsSaved("models");

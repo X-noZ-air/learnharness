@@ -43,11 +43,12 @@ function catalog(connected = true): ModelCatalogResponse {
 }
 function Reader() { snapshot = useModelCatalog(); return null; }
 function setup(onClose = () => {}, onDone = (_models: ModelsSettings) => {}) { return <SetupDialog open onClose={onClose} onDone={onDone} />; }
-function installFetch() {
+function installFetch(savedModels?: ModelsSettings) {
 	requests = []; writes = [];
 	globalThis.fetch = async (input, init) => {
 		const path = String(input);
 		if (path === "/api/models") { const request = deferred<Response>(); requests.push(request); return request.promise; }
+		if (path === "/api/settings") return Response.json({ settings: { models: savedModels } });
 		if (path === "/api/settings/models") { writes.push(JSON.parse(String(init?.body))); return Response.json({ settings: { models: writes.at(-1) } }); }
 		if (path === "/api/keys") return Response.json({ providers: [provider], keys: [] });
 		if (path === "/api/settings/prompts") return Response.json({ prober: [], teacher: [], practice: [] });
@@ -352,11 +353,11 @@ test("cache retention is hidden by default, slot-specific, resettable, and prese
 });
 
 test("initial setup exposes no advanced controls and preserves all saved retention preferences on Save", async () => {
-	installFetch();
 	const body = catalog();
 	body.slots.strong!.cacheRetention = "long";
 	body.slots.cheap!.cacheRetention = "short";
 	body.slots.vision!.cacheRetention = "none";
+	installFetch({ strong: body.slots.strong!, cheap: body.slots.cheap!, vision: body.slots.vision! });
 	await warm(body); await render(<><Reader />{setup()}</>); await answer(1, body);
 	assert.equal(document.querySelector('[data-testid="models-advanced"]'), null);
 	assert.equal(document.querySelector('[data-testid^="slot-cache-"]'), null);
@@ -366,6 +367,51 @@ test("initial setup exposes no advanced controls and preserves all saved retenti
 	assert.equal(writes[0]?.cheap?.cacheRetention, "short");
 	assert.equal(writes[0]?.vision?.cacheRetention, "none");
 	assert.equal(writes[0]?.strong?.model?.id, b.id);
+});
+
+test("finishing setup preserves Fast for an unchanged Strong model", async () => {
+	const body = catalog();
+	body.slots.strong!.model.provider = "chatgpt";
+	body.slots.vision = null;
+	installFetch({ strong: { ...body.slots.strong!, fastMode: true }, cheap: body.slots.cheap! });
+	await warm(body);
+	await render(<><Reader />{setup()}</>);
+	await answer(1, body);
+	await click("setup-trigger-vision"); await click("model-option-vendor_model_free");
+	await click("setup-save");
+	assert.equal(writes[0]?.strong?.fastMode, true);
+});
+
+test("a confirmed Fast write survives a delayed session read and keeps inherited settings", async () => {
+	installFetch();
+	const body = catalog();
+	const model = { ...a, provider: "chatgpt", fastServiceTier: "priority" as const };
+	const strong = { model: { provider: model.provider, id: model.id }, thinkingLevel: "low" as const };
+	body.models = [model];
+	body.slots.strong = strong;
+	const delayed = deferred<Response>();
+	const fallback = globalThis.fetch;
+	let readCount = 0;
+	let write: unknown;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/settings") return Response.json({ settings: { models: { strong } } });
+		if (input === "/api/chats/fixture") return ++readCount === 1 ? Response.json({}) : delayed.promise;
+		if (input === "/api/chats/fixture/settings") {
+			write = JSON.parse(String(init?.body));
+			return Response.json({ settings: write });
+		}
+		return fallback(input, init);
+	};
+	await warm(body);
+	await render(<><Reader /><StatsBar turns={[]} chatId="fixture" /></>);
+	const fast = document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
+	assert.ok(fast);
+	await act(async () => notifySettingsSaved("models"));
+	assert.equal(readCount, 2);
+	await act(async () => fast.click());
+	assert.equal(fast.getAttribute("aria-pressed"), "true");
+	await act(async () => delayed.resolve(Response.json({})));
+	assert.deepEqual({ write, pressed: fast.getAttribute("aria-pressed") }, { write: { fastMode: true }, pressed: "true" });
 });
 
 test("OpenCode's saved shared credential names both Pi providers without changing addable-provider semantics", () => {

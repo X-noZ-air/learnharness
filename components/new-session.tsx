@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
@@ -13,6 +13,7 @@ import { SidebarToggle } from "@/components/sidebar";
 import { SetupDialog } from "@/components/setup-dialog";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { StatsBar } from "@/components/stats-bar";
+import type { ComposerModelSettings } from "@/components/model-picker";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
@@ -76,6 +77,7 @@ export function DraftShell({
 	text,
 	onChange,
 	onSend,
+	modelSettingsRef,
 	startError,
 	setupCta,
 	mode = "teach",
@@ -88,6 +90,7 @@ export function DraftShell({
 	text: string;
 	onChange: (v: string) => void;
 	onSend: () => void;
+	modelSettingsRef?: RefObject<ComposerModelSettings>;
 	startError?: string;
 	/** The practice draft (owner, 2026-10-04): ?mode=practice — the
 	 *  created session carries kind:"practice" and the copy changes
@@ -139,7 +142,10 @@ export function DraftShell({
 	 * re-render cannot eat the dictated tail. */
 	const handleSend = () => {
 		if (dictation.active) {
-			void dictation.finish().then(onSend);
+			const pendingSave = modelSettingsRef?.current.pendingSave;
+			void dictation.finish().then(async () => {
+				if (!pendingSave || await pendingSave) onSend();
+			});
 			return;
 		}
 		onSend();
@@ -219,6 +225,7 @@ export function DraftShell({
 									/>
 								</div>
 								<StatsBar
+									modelSettingsRef={modelSettingsRef}
 									dictationSlot={<DictationBar dictation={dictation} />}
 									turns={[]}
 								/>
@@ -257,6 +264,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
+	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const [startError, setStartError] = useState("");
 	// THE PICK BAR (owner round 10): the draft's lifted pick set + the
 	// snapshot the standalone chain-table picker reads. Lazy — the graph
@@ -293,7 +301,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const { catalog, configured, zeroKeys } = useModelSetup(initialConfigured);
 	const [setupOpen, setSetupOpen] = useState(false);
 
-	const send = useCallback(() => {
+	const send = useCallback(async () => {
 		const draft = textRef.current.trim();
 		if (!draft || startingRef.current) return;
 		if (!configured) {
@@ -318,17 +326,21 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		startingRef.current = true;
 		setBusy(true);
 		setStartError("");
-		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
-			starterRef.current, JSON.stringify(catalog?.slots.strong))
-			.then((target) => {
-				if (target) router.push(target);
-				else { startingRef.current = false; setBusy(false); }
-			})
-			.catch((error) => {
-				startingRef.current = false;
-				setBusy(false);
-				setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
-			});
+		try {
+			const pendingSave = modelSettingsRef.current.pendingSave;
+			if (!pendingSave || await pendingSave) {
+				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
+					starterRef.current, JSON.stringify([catalog?.slots.strong, modelSettingsRef.current.fastDefault === true]));
+				if (target) {
+					router.push(target);
+					return;
+				}
+			}
+		} catch (error) {
+			setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
+		}
+		startingRef.current = false;
+		setBusy(false);
 	}, [router, configured, zeroKeys, catalog, mode]);
 
 	return (
@@ -339,6 +351,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				text={text}
 				onChange={applyText}
 				onSend={send}
+				modelSettingsRef={modelSettingsRef}
 				mode={mode}
 				picks={picks}
 				onOpenPicker={openPicker}
