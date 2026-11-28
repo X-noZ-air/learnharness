@@ -42,7 +42,6 @@ import {
 	type GraphSettings,
 	type ModelSlot,
 	type ModelSlotName,
-	type ModelsSettings,
 	type RoleModelOverride,
 	type UserSettings,
 } from "./settings.ts";
@@ -57,7 +56,6 @@ export interface EffectiveSlot {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
-	fastMode?: boolean;
 }
 
 /** A fully-resolved model pin for one role — same shape/level semantics
@@ -117,8 +115,7 @@ export function resolveConversationSpec(
 ): (EffectiveModelSpec & Pick<ChatSettings, "fastMode">) | null {
 	const model = chat?.model ?? (strong ? { provider: strong.provider, id: strong.id } : undefined);
 	if (!model) return null;
-	// A pinned session owns its opt-in, including sessions saved before Fast Mode.
-	const fastMode = chat?.fastMode ?? (chat?.model ? undefined : strong?.fastMode);
+	const fastMode = chat?.fastMode;
 	return {
 		provider: model.provider,
 		id: model.id,
@@ -153,11 +150,10 @@ export function resolveRoleSpec(role: ModelRole, record: UserSettings | null): E
 /** Resolve one slot to its configured view, or null when the tier holds
  *  no model (a thinkingLevel-only slot is inert — the level has nothing
  *  to ride without the factory floor). */
-export function resolveSlot(slot: ModelsSettings["strong"]): EffectiveSlot | null {
+export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 	if (!slot?.model) return null;
 	return {
 		provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel,
-		...(slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
 		...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 	};
 }

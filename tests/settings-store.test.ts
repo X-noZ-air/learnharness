@@ -49,9 +49,10 @@ describe("the settings store", () => {
 		const effective = resolveSettings(stored);
 		assert.deepEqual(effective.agent.models.extractor, { ...model, thinkingLevel: undefined });
 		assert.deepEqual(resolveSideQuestionSpec({ model, fastMode: true }, stored), { ...model, thinkingLevel: undefined });
-		assert.equal(resolveConversationSpec(undefined, effective.models.strong)?.fastMode, true);
+		assert.equal(resolveConversationSpec(undefined, effective.models.strong)?.fastMode, undefined);
 		assert.equal(resolveConversationSpec({ model }, effective.models.strong)?.fastMode, undefined);
-		assert.equal(resolveConversationSpec({ model, fastMode: false }, effective.models.strong)?.fastMode, false);
+		assert.equal(resolveConversationSpec({ fastMode: true }, effective.models.strong)?.fastMode, true);
+		assert.equal(resolveConversationSpec({ fastMode: false }, effective.models.strong)?.fastMode, false);
 		assert.equal(parseModelsSettingsBody({ strong: { model, fastMode: "true" } }).ok, false);
 	});
 	it("persists worker concurrency, drops invalid disk values, and resets to 8 when unset", () => {

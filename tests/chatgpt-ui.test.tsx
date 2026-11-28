@@ -93,7 +93,7 @@ test("toggling Fast keeps a legacy chat on its inherited model", async () => {
    catalog.models[0]!.fastServiceTier = "priority";
    return Response.json(catalog);
   }
-  if (input === "/api/settings") return Response.json({ settings: { models: { strong: { model: model() } } } });
+  if (input === "/api/settings") return Response.json({ settings: { models: { strong: { model: model(), fastMode: true } } } });
   if (input === "/api/chats/legacy") return Response.json({ settings });
   if (input === "/api/chats/legacy/settings" && init?.method === "PUT") {
    settings = JSON.parse(String(init.body));
@@ -104,6 +104,7 @@ test("toggling Fast keeps a legacy chat on its inherited model", async () => {
  let selected: string | undefined;
  await mount(<ModelControl chatId="legacy" onModelChange={(value) => { selected = value; }} />);
  const toggle = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
+ assert.equal(toggle.getAttribute("aria-pressed"), "false");
  await act(async () => toggle.click());
  assert.deepEqual(settings, { fastMode: true });
  assert.equal(toggle.getAttribute("aria-pressed"), "true");
