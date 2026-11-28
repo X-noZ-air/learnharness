@@ -41,6 +41,7 @@ export function ModelMenuList({
 	onPick,
 	footer,
 	vision,
+	fastMode,
 }: {
 	/** The full catalog — undefined while it loads. */
 	models: ModelCatalogEntry[] | undefined;
@@ -59,6 +60,7 @@ export function ModelMenuList({
 	 *  custom-endpoint model, whose capability the endpoint may not report.
 	 *  Image-capable ones float to the top. */
 	vision?: boolean;
+	fastMode?: { checked: boolean; disabled: boolean; onToggle: () => void };
 }) {
 	// Vision slot: built-ins must report image input; custom-endpoint models
 	// stay selectable (the endpoint may not report a modality). Image-capable
@@ -69,20 +71,21 @@ export function ModelMenuList({
 	return (
 		<>
 			<SearchMenuList
-				items={visionItems}
-				itemKey={(m) => `${m.provider}/${m.id}`}
-				searchTerms={(m) => [m.provider, m.id, m.name]}
-				compare={(a, b) => a.id.localeCompare(b.id)}
-				prioritize={vision ? (m) => m.input.includes("image") : undefined}
-				isSelected={(m) => m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider)}
-				onPick={onPick}
+				items={visionItems && fastMode ? [...visionItems, null] : visionItems}
+				itemKey={(m) => m ? `${m.provider}/${m.id}` : "fast-mode"}
+				searchTerms={(m) => m ? [m.provider, m.id, m.name] : ["Fast Mode"]}
+				compare={(a, b) => a && b ? a.id.localeCompare(b.id) : Number(a === null) - Number(b === null)}
+				prioritize={vision ? (m) => m?.input.includes("image") ?? false : undefined}
+				isSelected={(m) => m ? m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider) : fastMode?.checked === true}
+				isItemDisabled={fastMode && ((m) => m === null && fastMode.disabled)}
+				onPick={(m) => { if (m) onPick(m); else fastMode?.onToggle(); }}
 				searchTestid="model-search"
 				listTestid="model-list"
-				optionTestid={(m) => `model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
+				optionTestid={(m) => m ? `model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}` : "model-menu-fast"}
 				placeholder="Search models…"
 				loading="Loading models…"
 				empty="No models match."
-				renderItem={(m) => <>
+				renderItem={(m) => m ? <>
 					<span className="flex items-center justify-between gap-2">
 						<span className="truncate text-card-foreground">{m.name}</span>
 						<span className="shrink-0 tabular-nums text-muted-foreground" title={m.provider === CLAUDE_CODE_PROVIDER ? "Billing is determined by your Claude Code configuration; LearnHarness does not estimate it." : subscriptionLabel(`${m.provider}:${m.id}`) ? "Subscription connection" : m.cost ? "USD per 1M tokens in/out" : "Price unavailable"}>
@@ -93,7 +96,10 @@ export function ModelMenuList({
 						<span className="truncate">{subscriptionLabel(`${m.provider}:${m.id}`) ? `${subscriptionLabel(`${m.provider}:${m.id}`)} (subscription)` : m.provider} · {m.id}</span>
 						<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : formatTokens(m.contextWindow)}</span>
 					</span>
-				</>}
+				</> : <span className="flex items-center justify-between gap-2">
+					<span>Fast Mode</span>
+					<span className="text-muted-foreground">{fastMode?.checked ? "On" : "Off"}</span>
+				</span>}
 			/>
 			{footer && (
 				<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">{footer}</div>

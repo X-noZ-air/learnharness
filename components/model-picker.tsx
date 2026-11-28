@@ -136,7 +136,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const entry = catalog?.models.find(
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
 	);
-	const fastAvailable = entry?.provider === "chatgpt" && !!entry.fastServiceTier;
+	const fastAvailable = entry?.provider === "chatgpt" && entry.fastServiceTier === "priority";
 	const levels = entry?.supportedLevels ?? [];
 	// Legacy display (chunk 2 item 4, owner): a record with a model but no
 	// stored level shows the RESOLVED level — the ordering's first supported
@@ -323,6 +323,14 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 		setError(null);
 		if (kind === "model") refresh();
 	};
+	const fastMode = fastAvailable ? {
+		checked: override?.fastMode === true,
+		disabled: savingFast || savingModel,
+		onToggle: () => {
+			setOpen(null);
+			apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
+		},
+	} : undefined;
 
 	return (
 		<div
@@ -364,12 +372,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				>{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}</ModelPickerPill>
 			</Hint>
 
-			{fastAvailable && (
-				<FastModeButton checked={override?.fastMode === true} disabled={savingFast || savingModel} onToggle={() => {
-					setOpen(null);
-					void apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
-				}} />
-			)}
+			{fastMode && <FastModeButton {...fastMode} />}
 			{open === null && error?.fast && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{error.message}</div>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
@@ -388,6 +391,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 						effectiveId={effectiveId}
 						effectiveProvider={effectiveProvider}
 						onPick={pickModel}
+						fastMode={fastMode}
 						footer={
 							catalog && catalog.models.length === 0
 								? "No models — add a provider key in Keys"

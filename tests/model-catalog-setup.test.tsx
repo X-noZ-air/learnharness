@@ -430,6 +430,48 @@ test("a confirmed Fast write survives a delayed session read and keeps inherited
 	assert.deepEqual({ write, pressed: fast.getAttribute("aria-pressed") }, { write: { fastMode: true }, pressed: "true" });
 });
 
+test("the model shortcut and arrow navigation can toggle Fast for the active priority model", async () => {
+	installFetch();
+	const body = catalog();
+	const priority = { ...a, provider: "chatgpt", fastServiceTier: "priority" as const };
+	body.models = [priority, { ...b, provider: "chatgpt" }];
+	let strong: ModelsSettings["strong"] = { model: { provider: priority.provider, id: priority.id }, thinkingLevel: "low" };
+	const fallback = globalThis.fetch;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/settings/models" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body)) as ModelsSettings;
+			writes.push(next);
+			strong = { ...strong, ...next.strong };
+		}
+		if (input === "/api/settings" || input === "/api/settings/models") return Response.json({ settings: { models: { strong } } });
+		return fallback(input, init);
+	};
+	await render(<StatsBar turns={[]} />);
+	const openModelMenu = () => act(async () => { window.dispatchEvent(new CustomEvent("lh:kbd-open-model-picker")); });
+	const fastEntry = () => document.querySelector('[data-testid="model-menu-fast"]');
+	await openModelMenu();
+	const search = element("model-search");
+	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
+	assert.equal(document.activeElement, search);
+	assert.match(fastEntry()?.textContent ?? "", /Fast Mode.*Off/);
+	const press = (key: string) => act(async () => {
+		const event = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
+		search.dispatchEvent(Object.assign(event, { key }));
+		assert.equal(event.defaultPrevented, true);
+	});
+	await press("ArrowUp");
+	assert.deepEqual(writes, []);
+	await press("Enter");
+	assert.deepEqual(writes, [{ strong: { fastMode: true } }]);
+	assert.equal(document.querySelector('[aria-label="Fast Mode"]')?.getAttribute("aria-pressed"), "true");
+	await openModelMenu();
+	assert.match(fastEntry()?.textContent ?? "", /Fast Mode.*On/);
+	strong = { model: { provider: "chatgpt", id: b.id } };
+	await act(async () => notifySettingsSaved("models"));
+	assert.equal(fastEntry(), null);
+});
+
 test("OpenCode's saved shared credential names both Pi providers without changing addable-provider semantics", () => {
 	const providers = [{ id: "opencode", envVar: "OPENCODE_API_KEY", label: "OpenCode Zen" }, { id: "opencode-go", envVar: "OPENCODE_API_KEY", label: "OpenCode Go" }];
 	assert.equal(providerKeyLabel("OPENCODE_API_KEY", providers), "OpenCode (Zen / Go)");
