@@ -223,9 +223,9 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					setError(body.error ?? `settings rejected (${res.status})`);
 					return false;
 				}
-				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
+				const { settings } = await res.json() as { settings: ChatSettings };
 				++sessionRead.current;
-				setSession({ settings: stored?.settings ?? next });
+				setSession({ settings });
 				setOpen(null);
 				return true;
 			} catch {
@@ -237,7 +237,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	);
 
 	// One apply seam over both write paths: a pick names provider + id +
-	// level; chat mode writes the session's own record (any pick pins it),
+	// level; chat mode writes the session's own record,
 	// draft mode composes the strong slot (siblings preserved,
 	// replace-whole-section discipline).
 	const apply = useCallback(
@@ -248,7 +248,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			if (chatId) {
 				const sameModel = provider === effectiveProvider && id === effectiveId;
 				pendingSave = saveChat(fastMode !== undefined
-					? { ...session?.settings, fastMode }
+					? { fastMode }
 					: { model: { provider, id }, thinkingLevel: level, fastMode: sameModel ? override?.fastMode : undefined });
 			} else {
 				const next = composeSlotModel(models, "strong", provider, id, level ?? "");
@@ -260,7 +260,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				setSaving(false);
 			});
 		},
-		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, saveState, session?.settings],
+		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, saveState],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the

@@ -113,6 +113,32 @@ test("toggling Fast keeps a legacy chat on its inherited model", async () => {
  assert.equal(selected, "chatgpt:second-model");
 });
 
+test("the Fast toggle sends only its own field from a stale tab", async () => {
+ const model = { provider: "chatgpt", id: "tier-model" };
+ const persisted = { model, thinkingLevel: "off", fastMode: true };
+ let write: unknown;
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(model.id);
+   catalog.models[0]!.fastServiceTier = "priority";
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings") return Response.json({ settings: null });
+  if (input === "/api/chats/fixture") return Response.json({ settings: { model, thinkingLevel: "high" } });
+  if (input === "/api/chats/fixture/settings") {
+   write = JSON.parse(String(init?.body));
+   return Response.json({ settings: persisted });
+  }
+  throw new Error(`Unexpected request: ${input}`);
+ };
+ await mount(<ModelControl chatId="fixture" />);
+ const toggle = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
+ await act(async () => toggle.click());
+ assert.deepEqual(write, { fastMode: true });
+ assert.equal(toggle.getAttribute("aria-pressed"), "true");
+ assert.match(host!.querySelector('[data-testid="stats-thinking"]')!.textContent ?? "", /off/i);
+});
+
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {
  const step = { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
  const plan = { model: "chatgpt:gpt-5", steps: [step] };
