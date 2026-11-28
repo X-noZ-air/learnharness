@@ -16,7 +16,7 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
-import { waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
+import { strongFastSaveRef, waitForFastSave } from "@/components/model-picker";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { PathInput } from "@/components/path-input";
 import { AttachFilesButton } from "@/components/attach-files-button";
@@ -86,7 +86,6 @@ export function Home({
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
-	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const [startError, setStartError] = useState("");
 	/* Run end focuses the topic input (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop. Falling edge only; this surface's only
@@ -129,7 +128,7 @@ export function Home({
 	 * state closure) and run. Applies before the setup/key guards too, so
 	 * an intercepted draft is the complete one. */
 	const start = () => {
-		const pendingAtSubmit = modelSettingsRef.current.pendingSave;
+		const pendingAtSubmit = strongFastSaveRef.current.pendingSave;
 		if (!dictation.active) {
 			void begin(pendingAtSubmit);
 			return;
@@ -165,7 +164,7 @@ export function Home({
 		setBusy(true);
 		setStartError("");
 		try {
-			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			const pendingSave = waitForFastSave(strongFastSaveRef.current, pendingAtSubmit);
 			if (pendingSave && (!await pendingSave || !isCurrentPageSurface(surfaceTarget))) {
 				startingRef.current = false;
 				setBusy(false);
@@ -326,7 +325,7 @@ export function Home({
 					    while the RIGHT keeps the strong-slot control (fix wave: the
 					    pills write /api/settings/models). */}
 					<StatsBar
-						modelSettingsRef={modelSettingsRef}
+						modelSettingsRef={strongFastSaveRef}
 						dictationSlot={<DictationBar dictation={dictation} />}
 						turns={[] as TurnUsage[]}
 						leadingSlot={

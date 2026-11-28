@@ -22,6 +22,8 @@ export interface ComposerModelSettings {
 	pendingSave?: Promise<boolean>;
 }
 
+export const strongFastSaveRef: RefObject<ComposerModelSettings> = { current: {} };
+
 export function waitForFastSave(settings: ComposerModelSettings, pending = settings.pendingSave): Promise<boolean> | undefined {
 	return pending?.then(saved => saved && (settings.pendingSave ?? true));
 }
@@ -104,9 +106,16 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	}, [chatId]);
 
 	useEffect(() => {
-		readRecord();
-		return () => { ++sessionRead.current; ++modelsRead.current; };
-	}, [readRecord]);
+		let active = true;
+		const pendingStrongSave = chatId ? undefined : saveState.current.pendingSave;
+		if (pendingStrongSave) void pendingStrongSave.then(() => { if (active) readRecord(); });
+		else readRecord();
+		return () => {
+			active = false;
+			++sessionRead.current;
+			++modelsRead.current;
+		};
+	}, [chatId, readRecord, saveState]);
 
 	useSettingsSaved((section) => {
 		if (section === "models") readRecord();
@@ -174,6 +183,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// model + thinkingLevel within the strong slot.
 	const save = useCallback(
 		async (next: ModelsSettings, changingFast: boolean) => {
+			const readAtStart = modelsRead.current;
 			setError(null);
 			try {
 				const res = await fetch("/api/settings/models", {
@@ -190,8 +200,10 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				// that rides an unsupported level lands CLAMPED in the record
 				// — the pill must show the stored value in this interaction.
 				const { settings } = await res.json() as { settings: UserSettings };
-				++modelsRead.current;
-				setModels(settings.models);
+				if (!changingFast || modelsRead.current === readAtStart) {
+					++modelsRead.current;
+					setModels(settings.models);
+				}
 				setOpen(null);
 				if (!changingFast) notifySettingsSaved("models");
 				return true;

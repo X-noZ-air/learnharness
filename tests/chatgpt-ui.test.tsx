@@ -94,6 +94,35 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
  assert.equal(toggle(), null);
 });
 
+test("a late Strong Fast response cannot replace a newer model read", async () => {
+ const first = { provider: "chatgpt", id: "first-model" };
+ const second = { provider: "chatgpt", id: "second-model" };
+ const put = deferred<Response>();
+ const newerRead = deferred<Response>();
+ let reads = 0;
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(first.id);
+   catalog.models[0]!.fastServiceTier = "priority";
+   catalog.models.push(body(second.id).models[0]!);
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings/models" && init?.method === "PUT") return put.promise;
+  assert.equal(input, "/api/settings");
+  return ++reads === 1 ? Response.json({ settings: { models: { strong: { model: first } } } }) : newerRead.promise;
+ };
+ let selected: string | undefined;
+ await mount(<ModelControl onModelChange={(model) => { selected = model; }} />);
+ const fast = () => host!.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
+ await act(async () => fast()!.click());
+ await act(async () => notifySettingsSaved("models"));
+ await act(async () => newerRead.resolve(Response.json({ settings: { models: { strong: { model: second } } } })));
+ assert.equal(selected, "chatgpt:second-model");
+ await act(async () => put.resolve(Response.json({ settings: { models: { strong: { model: first, fastMode: true } } } })));
+ assert.equal(selected, "chatgpt:second-model");
+ assert.equal(fast(), null);
+});
+
 test("toggling Fast keeps a legacy chat on its inherited model", async () => {
  let id = "first-model";
  let settings = {};

@@ -11,6 +11,7 @@ import { SettingsDialogProvider } from "../components/settings/settings-dialog.t
 import { useInteractionLayers, type InteractionLayersController } from "../components/interaction-layers.tsx";
 import { findCurrentSurfaceBoundary, findSurfaceBoundary } from "../components/plugin-surface-targets.ts";
 import type { PluginUi, PluginWidgetHandle, PluginSurfaceProps } from "../src/core/plugin-ui.ts";
+import type { ModelCatalogResponse } from "../src/core/index.ts";
 import { mountPluginChrome } from "./helpers/plugin-chrome.tsx";
 import { renderWithInteractionLayers } from "./interaction-layer-render.tsx";
 import { parseHTML } from "linkedom";
@@ -35,9 +36,9 @@ async function withPage(page: Page, run: (f: {
 	viewCleanups: number;
 	registerView(): Promise<void>;
 	unregisterView(): Promise<void>;
-	render(path?: string, hidden?: boolean): Promise<void>;
+	render(path?: string, hidden?: boolean, node?: ReactNode): Promise<void>;
 	open(): Promise<PluginWidgetHandle<PluginSurfaceProps>>;
-}) => Promise<void>) {
+}) => Promise<void>, fetch?: typeof globalThis.fetch) {
 	let ui!: PluginUi;
 	let controller!: InteractionLayersController;
 	let activationSignal!: AbortSignal;
@@ -45,9 +46,9 @@ async function withPage(page: Page, run: (f: {
 	let unregisterView!: () => void;
 	let viewCleanups = 0;
 	function Capture() { controller = useInteractionLayers(); return null; }
-	const wrap = (path = page.path, hidden = false) => <PathnameContext.Provider value={path}><SettingsDialogProvider>
+	const wrap = (path = page.path, hidden = false, node = page.node) => <PathnameContext.Provider value={path}><SettingsDialogProvider>
 		<Capture /><aside data-page-sidebar=""><button>Fixture sidebar</button></aside>
-		<main data-page-main="" className="relative isolate"><React.Activity mode={hidden ? "hidden" : "visible"}>{page.node}</React.Activity></main>
+		<main data-page-main="" className="relative isolate"><React.Activity mode={hidden ? "hidden" : "visible"}>{node}</React.Activity></main>
 		<PluginWidgets />
 	</SettingsDialogProvider></PathnameContext.Provider>;
 	const observerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
@@ -66,13 +67,13 @@ async function withPage(page: Page, run: (f: {
 			} });
 		};
 		registerView();
-	} }, wrap());
+	} }, wrap(), { fetch });
 	try {
 		await run({ document: f.document as unknown as Document, get controller() { return controller; }, get ui() { return ui; },
 			get activationSignal() { return activationSignal; }, get viewCleanups() { return viewCleanups; },
 			registerView: async () => { await act(async () => { registerView(); }); },
 			unregisterView: async () => { await act(async () => { unregisterView(); }); },
-			render: async (path, hidden) => { await f.render(wrap(path, hidden)); },
+			render: async (path, hidden, node) => { await f.render(wrap(path, hidden, node)); },
 			open: async () => {
 				const boundary = findCurrentSurfaceBoundary(document); assert.ok(boundary?.stack);
 				let handle!: PluginWidgetHandle<PluginSurfaceProps>;
@@ -88,6 +89,55 @@ async function withPage(page: Page, run: (f: {
 		else Reflect.deleteProperty(globalThis, "ResizeObserver");
 	}
 }
+
+it("a new draft waits for the Strong Fast write started on Home", async () => {
+	const model = { provider: "chatgpt", id: "priority-model" };
+	let fastMode = true;
+	const slots = () => ({ strong: { model, fastMode }, cheap: { model }, vision: { model } });
+	let finishFast!: () => void;
+	const pending = new Promise<void>((resolve) => { finishFast = resolve; });
+	let fastWrites = 0;
+	const createdWithFast: boolean[] = [];
+	await withPage(pages[1]!, async f => {
+		const fastButton = () => f.document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]');
+		try {
+			assert.equal(fastButton()?.getAttribute("aria-pressed"), "true");
+			await act(async () => fastButton()!.click());
+			assert.equal(fastWrites, 1);
+			await f.render("/chat/new", false, <NewSession initialConfigured />);
+			const form = f.document.querySelector<HTMLFormElement>('[data-testid="composer"]')!;
+			const draft = form.querySelector<HTMLElement>("[contenteditable]")!;
+			await act(async () => {
+				draft.textContent = "Learn about model settings";
+				draft.dispatchEvent(new window.Event("input", { bubbles: true }));
+			});
+			assert.equal(form.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled, false);
+			await act(async () => form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+			assert.deepEqual(createdWithFast, []);
+			await act(async () => finishFast());
+			assert.deepEqual(createdWithFast, [false]);
+			assert.equal(fastButton()?.getAttribute("aria-pressed"), "false");
+		} finally { await act(async () => finishFast()); }
+	}, async (input, init) => {
+		if (input === "/api/models") return Response.json({
+			models: [{ ...model, name: model.id, fastServiceTier: "priority", input: ["text"], reasoning: false, supportedLevels: ["off"], cost: null, contextWindow: null, maxTokens: null }],
+			providers: [{ id: model.provider, envVar: "", keyPresent: true }], slots: slots(), defaults: null,
+			rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, sideQuestion: null },
+		} satisfies ModelCatalogResponse);
+		if (input === "/api/settings/models" && init?.method === "PUT") {
+			fastWrites++;
+			const next = JSON.parse(String(init.body));
+			await pending;
+			fastMode = next.strong.fastMode;
+		}
+		if (input === "/api/settings" || input === "/api/settings/models") return Response.json({ settings: { models: slots() } });
+		if (input === "/api/chats" && init?.method === "POST") {
+			createdWithFast.push(fastMode);
+			return Response.json({ id: "fast-draft" });
+		}
+		throw new Error(`Unexpected request: ${String(input)}`);
+	});
+});
 
 for (const page of pages) it(`${page.name}: covers page content but not native chrome, preserving page geometry and shared paint stratum`, async () => withPage(page, async f => {
 	const boundary = findCurrentSurfaceBoundary(f.document); assert.ok(boundary?.stack);

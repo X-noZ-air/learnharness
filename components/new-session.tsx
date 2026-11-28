@@ -14,7 +14,7 @@ import { SidebarToggle } from "@/components/sidebar";
 import { SetupDialog } from "@/components/setup-dialog";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { StatsBar } from "@/components/stats-bar";
-import { waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
+import { strongFastSaveRef, waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
@@ -263,7 +263,6 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const [busy, setBusy] = useState(false);
 	const startingRef = useRef(false);
 	const starterRef = useRef(new SessionStarter());
-	const modelSettingsRef = useRef<ComposerModelSettings>({});
 	const [startError, setStartError] = useState("");
 	// THE PICK BAR (owner round 10): the draft's lifted pick set + the
 	// snapshot the standalone chain-table picker reads. Lazy — the graph
@@ -327,7 +326,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		setBusy(true);
 		setStartError("");
 		try {
-			const pendingSave = waitForFastSave(modelSettingsRef.current, pendingAtSubmit);
+			const pendingSave = waitForFastSave(strongFastSaveRef.current, pendingAtSubmit);
 			if (!pendingSave || (await pendingSave && isCurrentPageSurface(surfaceTarget))) {
 				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, practicePicks,
 					starterRef.current, JSON.stringify(catalog?.slots.strong));
@@ -351,7 +350,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				text={text}
 				onChange={applyText}
 				onSend={send}
-				modelSettingsRef={modelSettingsRef}
+				modelSettingsRef={strongFastSaveRef}
 				mode={mode}
 				picks={picks}
 				onOpenPicker={openPicker}
