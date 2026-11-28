@@ -11,7 +11,7 @@ import { SettingsDialogProvider } from "../components/settings/settings-dialog.t
 import { useInteractionLayers, type InteractionLayersController } from "../components/interaction-layers.tsx";
 import { findCurrentSurfaceBoundary, findSurfaceBoundary } from "../components/plugin-surface-targets.ts";
 import type { PluginUi, PluginWidgetHandle, PluginSurfaceProps } from "../src/core/plugin-ui.ts";
-import type { ModelCatalogResponse } from "../src/core/index.ts";
+import type { ModelCatalogResponse, ModelsSettings } from "../src/core/index.ts";
 import { mountPluginChrome } from "./helpers/plugin-chrome.tsx";
 import { renderWithInteractionLayers } from "./interaction-layer-render.tsx";
 import { parseHTML } from "linkedom";
@@ -93,7 +93,8 @@ async function withPage(page: Page, run: (f: {
 it("a new draft waits for the Strong Fast write started on Home", async () => {
 	const model = { provider: "chatgpt", id: "priority-model" };
 	let fastMode = true;
-	const slots = () => ({ strong: { model, fastMode }, cheap: { model }, vision: { model } });
+	let thinkingLevel: NonNullable<ModelsSettings["strong"]>["thinkingLevel"] = "off";
+	const slots = () => ({ strong: { model, fastMode, thinkingLevel }, cheap: { model }, vision: { model } });
 	let finishFast!: () => void;
 	const pending = new Promise<void>((resolve) => { finishFast = resolve; });
 	let fastWrites = 0;
@@ -105,6 +106,8 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 			await act(async () => fastButton()!.click());
 			assert.equal(fastWrites, 1);
 			await f.render("/chat/new", false, <NewSession initialConfigured />);
+			await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
+			assert.equal(thinkingLevel, "low");
 			const form = f.document.querySelector<HTMLFormElement>('[data-testid="composer"]')!;
 			const draft = form.querySelector<HTMLElement>("[contenteditable]")!;
 			await act(async () => {
@@ -120,15 +123,20 @@ it("a new draft waits for the Strong Fast write started on Home", async () => {
 		} finally { await act(async () => finishFast()); }
 	}, async (input, init) => {
 		if (input === "/api/models") return Response.json({
-			models: [{ ...model, name: model.id, fastServiceTier: "priority", input: ["text"], reasoning: false, supportedLevels: ["off"], cost: null, contextWindow: null, maxTokens: null }],
+			models: [{ ...model, name: model.id, fastServiceTier: "priority", input: ["text"], reasoning: true, supportedLevels: ["off", "low"], cost: null, contextWindow: null, maxTokens: null }],
 			providers: [{ id: model.provider, envVar: "", keyPresent: true }], slots: slots(), defaults: null,
 			rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, sideQuestion: null },
 		} satisfies ModelCatalogResponse);
 		if (input === "/api/settings/models" && init?.method === "PUT") {
-			fastWrites++;
-			const next = JSON.parse(String(init.body));
-			await pending;
-			fastMode = next.strong.fastMode;
+			const next = JSON.parse(String(init.body)) as ModelsSettings;
+			if (next.strong?.fastMode !== undefined) {
+				fastWrites++;
+				await pending;
+				fastMode = next.strong.fastMode;
+			} else {
+				assert.deepEqual(next, { strong: { model, thinkingLevel: "low" }, cheap: { model }, vision: { model } });
+				thinkingLevel = next.strong?.thinkingLevel;
+			}
 		}
 		if (input === "/api/settings" || input === "/api/settings/models") return Response.json({ settings: { models: slots() } });
 		if (input === "/api/chats" && init?.method === "POST") {

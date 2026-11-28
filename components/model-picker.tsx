@@ -108,8 +108,13 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	useEffect(() => {
 		let active = true;
 		const pendingStrongSave = chatId ? undefined : saveState.current.pendingSave;
-		if (pendingStrongSave) void pendingStrongSave.then(() => { if (active) readRecord(); });
-		else readRecord();
+		readRecord();
+		if (!chatId) setSavingFast(pendingStrongSave !== undefined);
+		if (pendingStrongSave) void pendingStrongSave.then(() => {
+			if (!active) return;
+			setSavingFast(false);
+			readRecord();
+		});
 		return () => {
 			active = false;
 			++sessionRead.current;
@@ -204,8 +209,10 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					++modelsRead.current;
 					setModels(settings.models);
 				}
-				setOpen(null);
-				if (!changingFast) notifySettingsSaved("models");
+				if (!changingFast) {
+					setOpen(null);
+					notifySettingsSaved("models");
+				}
 				return true;
 			} catch {
 				setError({ message: "Could not reach the server — try again.", fast: changingFast });
@@ -237,7 +244,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				const { settings } = await res.json() as { settings: ChatSettings };
 				++sessionRead.current;
 				setSession({ settings });
-				setOpen(null);
+				if (!changingFast) setOpen(null);
 				return true;
 			} catch {
 				setError({ message: "Could not reach the server — try again.", fast: changingFast });
@@ -254,7 +261,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
 			const changingFast = fastMode !== undefined;
-			if (saveState.current.pendingSave || (changingFast && modelSavesInFlight.current > 0)) return;
+			if (changingFast && (saveState.current.pendingSave || modelSavesInFlight.current > 0)) return;
 			if (changingFast) setSavingFast(true);
 			else {
 				modelSavesInFlight.current++;
@@ -358,7 +365,6 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
-					disabled={savingFast}
 					className="min-w-0 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate narrow:min-h-11 narrow:min-w-11"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
@@ -374,7 +380,6 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			>
 				<ModelPickerPill
 					data-testid="stats-thinking"
-					disabled={savingFast}
 					className="shrink-0 narrow:min-h-11 narrow:min-w-11"
 					onClick={() => {
 						if (entry === undefined) return;
