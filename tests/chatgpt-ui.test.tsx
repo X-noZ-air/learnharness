@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { ModelControl, useModelCatalog, catalogLimits } from "../components/model-picker.tsx";
 import { useZeroKeys, useStrongKeyless } from "../components/setup-cta.tsx";
-import { notifySettingsSaved } from "../components/settings-signal.ts";
+import { notifySettingsSaved, onSettingsSaved } from "../components/settings-signal.ts";
 import { SidebarProvider } from "../components/sidebar.tsx";
 import { ChatGPTConnection, ChatGPTUIProvider } from "../components/settings/chatgpt-connection.tsx";
 import { AgentSection } from "../components/settings/agent-section.tsx";
@@ -55,8 +55,10 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
  const tier: NonNullable<ModelsSettings["strong"]> = { model };
  const models = { strong: tier, cheap: { model }, vision: { model } };
  let supportsFast = true;
+ let catalogReads = 0;
  globalThis.fetch = async (input, init) => {
   if (input === "/api/models") {
+   catalogReads++;
    const catalog = body(model.id);
    if (supportsFast) catalog.models[0]!.fastServiceTier = "priority";
    return Response.json(catalog);
@@ -75,7 +77,16 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
   onModelsChange={() => {}} onSectionChange={() => true} onCompactionChange={() => true} /></>);
  assert.equal(host?.querySelectorAll('button[aria-label$="Fast Mode"]').length, 1);
  assert.equal(toggle()?.getAttribute("aria-pressed"), "false");
- await act(async () => toggle()!.click());
+ const readsBeforeToggle = catalogReads;
+ const savedSections: string[] = [];
+ const unsubscribe = onSettingsSaved(section => savedSections.push(section));
+ try {
+  await act(async () => toggle()!.click());
+  assert.deepEqual(savedSections, ["models"]);
+  assert.equal(catalogReads, readsBeforeToggle);
+ } finally {
+  unsubscribe();
+ }
  assert.equal(tier.fastMode, true);
  assert.equal(toggle()?.getAttribute("aria-pressed"), "true");
  supportsFast = false;

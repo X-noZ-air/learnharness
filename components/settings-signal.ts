@@ -22,19 +22,23 @@ export const SETTINGS_SAVED_EVENT = "lh:settings-saved";
 // the zero-keys pill and the setup dialog's auto-advance.
 export type SettingsSection = "general" | "keys" | "agent" | "models" | "appearance" | "graph" | "compaction" | "dictation" | "claudeCode";
 
+interface SettingsSavedOptions {
+	refreshCatalog?: boolean;
+}
+
 /** Writers call this after the PUT resolves ok — never before (a failed
  *  write notifies nothing; the record is unchanged). */
-export function notifySettingsSaved(section: SettingsSection): void {
+export function notifySettingsSaved(section: SettingsSection, options?: SettingsSavedOptions): void {
 	window.dispatchEvent(
-		new CustomEvent(SETTINGS_SAVED_EVENT, { detail: { section } }),
+		new CustomEvent(SETTINGS_SAVED_EVENT, { detail: { section, ...options } }),
 	);
 }
 
 /** Non-hook listener (imperative seams, tests). Returns an unsubscribe. */
-export function onSettingsSaved(handler: (section: SettingsSection) => void): () => void {
+export function onSettingsSaved(handler: (section: SettingsSection, options: SettingsSavedOptions) => void): () => void {
 	const listener = (e: Event) => {
-		const section = (e as CustomEvent<{ section?: SettingsSection }>).detail?.section;
-		if (section !== undefined) handler(section);
+		const detail = (e as CustomEvent<SettingsSavedOptions & { section?: SettingsSection }>).detail;
+		if (detail?.section !== undefined) handler(detail.section, detail);
 	};
 	window.addEventListener(SETTINGS_SAVED_EVENT, listener);
 	return () => window.removeEventListener(SETTINGS_SAVED_EVENT, listener);

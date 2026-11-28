@@ -170,7 +170,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// (replace-whole-section discipline) and the per-field independence of
 	// model + thinkingLevel within the strong slot.
 	const save = useCallback(
-		async (next: ModelsSettings) => {
+		async (next: ModelsSettings, refreshCatalog = true) => {
 			setError(null);
 			try {
 				const res = await fetch("/api/settings/models", {
@@ -192,7 +192,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				saveState.current.fastDefault = saved?.strong?.fastMode;
 				setModels(saved);
 				setOpen(null);
-				notifySettingsSaved("models");
+				notifySettingsSaved("models", { refreshCatalog });
 				return true;
 			} catch {
 				setError("Could not reach the server — try again.");
@@ -248,9 +248,9 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					? { fastMode }
 					: { model: { provider, id }, thinkingLevel: level });
 			} else {
-				pendingSave = save(fastMode !== undefined
-					? { strong: { fastMode } }
-					: composeSlotModel(models, "strong", provider, id, level ?? ""));
+				pendingSave = fastMode !== undefined
+					? save({ strong: { fastMode } }, false)
+					: save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 			saveState.current.pendingSave = pendingSave.finally(() => {
 				saveState.current.pendingSave = undefined;
