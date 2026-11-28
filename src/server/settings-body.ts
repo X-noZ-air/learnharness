@@ -74,7 +74,7 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 
 export function parseSessionSettingsBody(body: unknown): SettingsBodyResult<ChatSettings> {
 	const parsed = parseSettingsBody(body);
-	if (!parsed.ok) return parsed;
+	if (!parsed.ok || parsed.settings.model !== undefined || parsed.settings.thinkingLevel !== undefined) return parsed;
 	const fastMode = asRecord(body)?.fastMode;
 	if (fastMode === undefined) return parsed;
 	if (typeof fastMode !== "boolean") return { ok: false, error: "fastMode must be a boolean" };

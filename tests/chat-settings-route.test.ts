@@ -65,7 +65,8 @@ test("a chat effort write keeps the current Fast preference", async () => {
 	assert.equal((await chat.put({ model })).status, 200);
 	for (const fastMode of [true, false]) {
 		assert.equal((await chat.put({ fastMode })).status, 200);
-		assert.equal((await chat.put({ model, thinkingLevel: "max", fastMode: !fastMode })).status, 200);
+		assert.equal((await chat.put({ model, thinkingLevel: "max", fastMode: String(!fastMode) })).status, 200);
+		assert.equal((await chat.put({ fastMode: String(!fastMode) })).status, 400);
 		assert.deepEqual(await chat.read(), { model, thinkingLevel: "max", fastMode });
 	}
 	const replacement = { provider: "openai", id: "gpt-5.2" };

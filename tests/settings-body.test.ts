@@ -35,6 +35,14 @@ describe("session settings", () => {
 		}
 		assert.equal(parseSessionSettingsBody({ fastMode: "true" }).ok, false);
 	});
+
+	it("ignores Fast in model and thinking level writes", () => {
+		const model = { provider: "chatgpt", id: "fixture" };
+		assert.deepEqual(parseSessionSettingsBody({ model, fastMode: "true" }), { ok: true, settings: { model } });
+		assert.deepEqual(parseSessionSettingsBody({ thinkingLevel: "low", fastMode: true }), {
+			ok: true, settings: { thinkingLevel: "low" },
+		});
+	});
 });
 
 describe("parseGeneralSettingsBody", () => {
