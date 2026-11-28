@@ -14,6 +14,7 @@ after(() => fs.rmSync(directory, { recursive: true, force: true }));
 const { POST } = await import("../app/api/chats/route.ts");
 const { GET } = await import("../app/api/chats/[id]/route.ts");
 const { PUT } = await import("../app/api/chats/[id]/settings/route.ts");
+const { PUT: putSection } = await import("../app/api/settings/[section]/route.ts");
 const model = { provider: "openrouter", id: "z-ai/glm-5.3-flash" };
 
 async function createChat() {
@@ -57,4 +58,37 @@ test("Fast-only PUT keeps missing overrides absent and an empty PUT still clears
 	}
 	assert.equal((await chat.put({})).status, 200);
 	assert.deepEqual(await chat.read(), {});
+});
+
+test("a chat effort write keeps the current Fast preference", async () => {
+	const chat = await createChat();
+	assert.equal((await chat.put({ model })).status, 200);
+	for (const fastMode of [true, false]) {
+		assert.equal((await chat.put({ fastMode })).status, 200);
+		assert.equal((await chat.put({ model, thinkingLevel: "max", fastMode: !fastMode })).status, 200);
+		assert.deepEqual(await chat.read(), { model, thinkingLevel: "max", fastMode });
+	}
+	const replacement = { provider: "openai", id: "gpt-5.2" };
+	assert.equal((await chat.put({ model: replacement })).status, 200);
+	assert.deepEqual(await chat.read(), { model: replacement });
+});
+
+test("draft Fast writes preserve current slots and slot writes preserve current Fast", async () => {
+	const put = (body: unknown) => putSection(new Request("http://localhost/api/settings/models", {
+		method: "PUT", body: JSON.stringify(body),
+	}), { params: Promise.resolve({ section: "models" }) });
+	const strong = { model, thinkingLevel: "max" };
+	const cheap = { model };
+	assert.equal((await put({ strong, cheap })).status, 200);
+	const fast = await put({ strong: { fastMode: true } });
+	assert.equal(fast.status, 200);
+	assert.deepEqual((await fast.json()).settings.models, { strong: { ...strong, fastMode: true }, cheap });
+
+	const slots = await put({ strong: { model, fastMode: false }, cheap });
+	assert.equal(slots.status, 200);
+	assert.deepEqual((await slots.json()).settings.models, { strong: { model, fastMode: true }, cheap });
+	const replacement = { provider: "openai", id: "gpt-5.2" };
+	const replaced = await put({ strong: { model: replacement }, cheap });
+	assert.equal(replaced.status, 200);
+	assert.deepEqual((await replaced.json()).settings.models, { strong: { model: replacement }, cheap });
 });

@@ -71,6 +71,7 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	// Compare against the same record that this whole-section write replaces.
 	const record = readSettingsRecord() ?? { version: 1 };
 	let agentHealed: AgentSettings | undefined;
+	let modelsOut: ModelsSettings | undefined;
 
 	// Section-specific cross-validation (against the catalog / the prompt
 	// store) — the parsers only see shapes.
@@ -84,9 +85,23 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	// references may survive disconnect, including thinking-preference edits,
 	// so each unavailable slot can be repaired independently of the others.
 	if (section === "models") {
-		const verdict = validateModelsSettings(parsed.settings as ModelsSettings, record.models);
-		if (!verdict.ok) {
-			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
+		const submitted = parsed.settings as ModelsSettings;
+		const current = record.models?.strong;
+		const fastMode = submitted.strong?.fastMode;
+		if (fastMode !== undefined) {
+			if (!current?.model) return Response.json({ error: "Strong must have a model before setting Fast Mode" }, { status: 400 });
+			modelsOut = { ...record.models, strong: { ...current, fastMode } };
+		} else {
+			const verdict = validateModelsSettings(submitted, record.models);
+			if (!verdict.ok) {
+				return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
+			}
+			modelsOut = clampModelsLevels(submitted);
+			const strong = modelsOut.strong;
+			if (strong?.model && current?.fastMode !== undefined &&
+				strong.model.provider === current.model?.provider && strong.model.id === current.model?.id) {
+				strong.fastMode = current.fastMode;
+			}
 		}
 	}
 	// A newly selected theme must exist. A saved theme whose file vanished
@@ -136,8 +151,8 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	const sectionOut =
 		section === "chat"
 			? clampChatLevel(parsed.settings as ChatSettings, effectiveSettings().models.strong)
-			: section === "models"
-				? clampModelsLevels(parsed.settings as ModelsSettings)
+			: modelsOut
+				? modelsOut
 				: section === "agent" && agentHealed
 					? agentHealed
 					: parsed.settings;

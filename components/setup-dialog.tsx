@@ -407,6 +407,8 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 				body: JSON.stringify(models),
 			});
 			if (!res.ok) throw new Error(`Save failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
+			const reply = await res.json().catch(() => null) as { settings?: UserSettings } | null;
+			models = reply?.settings?.models ?? models;
 		} catch (error) {
 			setSaving(false);
 			setError(error instanceof Error && error.message.startsWith("Save failed:") ? error.message : "Save failed. Check your connection and try again.");

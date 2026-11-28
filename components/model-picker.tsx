@@ -186,12 +186,10 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				// Server truth, never the request body (fix wave): a pick
 				// that rides an unsupported level lands CLAMPED in the record
 				// — the pill must show the stored value in this interaction.
-				const stored = (
-					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
-				)?.settings?.models;
+				const { settings } = await res.json() as { settings: UserSettings };
+				const saved = settings.models;
 				++modelsRead.current;
-				const saved = stored ?? next;
-				saveState.current.fastDefault = saved.strong?.fastMode;
+				saveState.current.fastDefault = saved?.strong?.fastMode;
 				setModels(saved);
 				setOpen(null);
 				notifySettingsSaved("models");
@@ -246,21 +244,20 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			setSaving(true);
 			let pendingSave: Promise<boolean>;
 			if (chatId) {
-				const sameModel = provider === effectiveProvider && id === effectiveId;
 				pendingSave = saveChat(fastMode !== undefined
 					? { fastMode }
-					: { model: { provider, id }, thinkingLevel: level, fastMode: sameModel ? override?.fastMode : undefined });
+					: { model: { provider, id }, thinkingLevel: level });
 			} else {
-				const next = composeSlotModel(models, "strong", provider, id, level ?? "");
-				if (fastMode !== undefined && next.strong) next.strong.fastMode = fastMode;
-				pendingSave = save(next);
+				pendingSave = save(fastMode !== undefined
+					? { strong: { fastMode } }
+					: composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 			saveState.current.pendingSave = pendingSave.finally(() => {
 				saveState.current.pendingSave = undefined;
 				setSaving(false);
 			});
 		},
-		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat, saveState],
+		[chatId, models, save, saveChat, saveState],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the

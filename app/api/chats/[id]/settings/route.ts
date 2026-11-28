@@ -37,7 +37,12 @@ async function handlePut(req: Request, { params }: { params: Promise<{ id: strin
 		if (!verdict.ok) {
 			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 		}
-		settings = clampChatLevel(parsed.settings, effectiveSettings().models.strong);
+		settings = clampChatLevel({ model, thinkingLevel }, effectiveSettings().models.strong);
+		const current = chat.settings;
+		if ((model || thinkingLevel !== undefined) && current?.fastMode !== undefined &&
+			model?.provider === current.model?.provider && model?.id === current.model?.id) {
+			settings.fastMode = current.fastMode;
+		}
 	}
 	stores.chatStore.saveSettings(id, settings);
 	return Response.json({ settings });

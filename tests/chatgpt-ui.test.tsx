@@ -63,7 +63,7 @@ test("the picker offers Fast only for an advertised ChatGPT tier and saves the o
   }
   if (input === "/api/settings/models" && init?.method === "PUT") {
    const next = JSON.parse(String(init.body));
-   assert.deepEqual(next.strong.model, model);
+   assert.deepEqual(next, { strong: { fastMode: true } });
    tier.fastMode = next.strong.fastMode;
   } else {
    assert.equal(input, "/api/settings");
@@ -137,6 +137,8 @@ test("the Fast toggle sends only its own field from a stale tab", async () => {
  assert.deepEqual(write, { fastMode: true });
  assert.equal(toggle.getAttribute("aria-pressed"), "true");
  assert.match(host!.querySelector('[data-testid="stats-thinking"]')!.textContent ?? "", /off/i);
+ await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
+ assert.deepEqual(write, { model, thinkingLevel: "off" });
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {

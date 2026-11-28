@@ -405,6 +405,11 @@ export function parseGraphSettingsBody(body: unknown): SettingsBodyResult<GraphS
 export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<ModelsSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const strong = asRecord(raw.strong);
+	if (strong && Object.keys(raw).length === 1 && Object.keys(strong).length === 1 && "fastMode" in strong) {
+		if (typeof strong.fastMode !== "boolean") return { ok: false, error: "strong.fastMode must be a boolean" };
+		return { ok: true, settings: { strong: { fastMode: strong.fastMode } } };
+	}
 	const settings: ModelsSettings = {};
 	for (const key of Object.keys(raw)) {
 		const known = MODEL_SLOTS as readonly string[];
@@ -428,12 +433,10 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 			}
 			slot.cacheRetention = retention as ModelSlot["cacheRetention"];
 		}
-		if (key === "strong" && fastMode !== undefined) {
-			if (typeof fastMode !== "boolean") return { ok: false, error: "strong.fastMode must be a boolean" };
-			settings.strong = { ...slot, fastMode };
-		} else {
-			settings[key as (typeof MODEL_SLOTS)[number]] = slot;
+		if (key === "strong" && fastMode !== undefined && typeof fastMode !== "boolean") {
+			return { ok: false, error: "strong.fastMode must be a boolean" };
 		}
+		settings[key as (typeof MODEL_SLOTS)[number]] = slot;
 	}
 	return { ok: true, settings };
 }

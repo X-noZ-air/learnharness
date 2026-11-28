@@ -39,12 +39,12 @@ describe("the settings store", () => {
 		const input = { strong: { model, fastMode: true }, cheap: { model, fastMode: true }, vision: { model, fastMode: true } };
 		const parsed = parseModelsSettingsBody(input);
 		assert.ok(parsed.ok);
-		assert.deepEqual(parsed.settings, { strong: input.strong, cheap: { model }, vision: { model } });
+		assert.deepEqual(parsed.settings, { strong: { model }, cheap: { model }, vision: { model } });
 		const agent = { models: { researcher: { model, fastMode: true } } };
 		assert.deepEqual(parseAgentSettingsBody(agent), { ok: true, settings: { models: { researcher: { model } } } });
 		writeSettings({ version: 1, models: input, agent });
 		const stored = readSettings();
-		assert.deepEqual(stored?.models, parsed.settings);
+		assert.deepEqual(stored?.models, { ...parsed.settings, strong: input.strong });
 		assert.deepEqual(stored?.agent, { models: { researcher: { model } } });
 		const effective = resolveSettings(stored);
 		assert.deepEqual(effective.agent.models.extractor, { ...model, thinkingLevel: undefined });

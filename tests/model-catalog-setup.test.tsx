@@ -369,7 +369,7 @@ test("initial setup exposes no advanced controls and preserves all saved retenti
 	assert.equal(writes[0]?.strong?.model?.id, b.id);
 });
 
-test("finishing setup preserves Fast for an unchanged Strong model", async () => {
+test("finishing setup saves the missing slot without writing Fast", async () => {
 	const body = catalog();
 	body.slots.strong!.model.provider = "chatgpt";
 	body.slots.vision = null;
@@ -379,7 +379,7 @@ test("finishing setup preserves Fast for an unchanged Strong model", async () =>
 	await answer(1, body);
 	await click("setup-trigger-vision"); await click("model-option-vendor_model_free");
 	await click("setup-save");
-	assert.equal(writes[0]?.strong?.fastMode, true);
+	assert.deepEqual(writes[0]?.strong, body.slots.strong);
 });
 
 test("a confirmed Fast write survives a delayed session read and keeps inherited settings", async () => {
