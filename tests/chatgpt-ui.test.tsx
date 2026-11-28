@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test, afterEach } from "node:test";
 import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
-import { ModelControl, useModelCatalog, catalogLimits } from "../components/model-picker.tsx";
+import { ModelControl, useModelCatalog, catalogLimits, type ComposerModelSettings } from "../components/model-picker.tsx";
 import { useZeroKeys, useStrongKeyless } from "../components/setup-cta.tsx";
 import { notifySettingsSaved, onSettingsSaved } from "../components/settings-signal.ts";
 import { SidebarProvider } from "../components/sidebar.tsx";
@@ -150,6 +150,48 @@ test("the Fast toggle sends only its own field from a stale tab", async () => {
  assert.match(host!.querySelector('[data-testid="stats-thinking"]')!.textContent ?? "", /off/i);
  await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
  assert.deepEqual(write, { model, thinkingLevel: "off" });
+});
+
+test("only Fast writes hold the composer while both writes lock the picker", async () => {
+ const model = { provider: "chatgpt", id: "tier-model" };
+ const requests: ReturnType<typeof deferred<Response>>[] = [];
+ const modelSettingsRef = { current: {} as ComposerModelSettings };
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(model.id);
+   catalog.models[0]!.fastServiceTier = "priority";
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings/models" && init?.method === "PUT") {
+   const request = deferred<Response>();
+   requests.push(request);
+   return request.promise;
+  }
+  assert.equal(input, "/api/settings");
+  return Response.json({ settings: { models: { strong: { model } } } });
+ };
+ await mount(<ModelControl modelSettingsRef={modelSettingsRef} />);
+ const fast = host!.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]')!;
+ const effort = host!.querySelector<HTMLButtonElement>('[data-testid="stats-thinking"]')!;
+ const cycleEffort = () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking"));
+
+ await act(async () => { cycleEffort(); cycleEffort(); });
+ assert.equal(requests.length, 1);
+ assert.equal(effort.disabled, true);
+ assert.equal(fast.disabled, true);
+ assert.equal(modelSettingsRef.current.pendingSave, undefined);
+ await act(async () => requests[0]!.resolve(new Response(null, { status: 503 })));
+ assert.equal(fast.disabled, false);
+
+ await act(async () => { fast.click(); cycleEffort(); });
+ assert.equal(requests.length, 2);
+ assert.equal(effort.disabled, true);
+ const pendingFast = modelSettingsRef.current.pendingSave;
+ assert.ok(pendingFast);
+ await act(async () => requests[1]!.resolve(new Response(null, { status: 503 })));
+ assert.equal(await pendingFast, false);
+ assert.equal(modelSettingsRef.current.pendingSave, undefined);
+ assert.equal(fast.disabled, false);
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {

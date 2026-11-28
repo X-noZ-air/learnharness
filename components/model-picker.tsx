@@ -60,6 +60,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
+	const pickerSaveInFlight = useRef(false);
 	const localModelSettings = useRef<ComposerModelSettings>({});
 	const saveState = modelSettingsRef ?? localModelSettings;
 	const sessionRead = useRef(0);
@@ -240,7 +241,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// replace-whole-section discipline).
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
-			if (saveState.current.pendingSave) return;
+			if (pickerSaveInFlight.current || saveState.current.pendingSave) return;
+			pickerSaveInFlight.current = true;
 			setSaving(true);
 			let pendingSave: Promise<boolean>;
 			if (chatId) {
@@ -252,10 +254,12 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					? save({ strong: { fastMode } }, false)
 					: save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
-			saveState.current.pendingSave = pendingSave.finally(() => {
-				saveState.current.pendingSave = undefined;
+			const settled = pendingSave.finally(() => {
+				if (fastMode !== undefined) saveState.current.pendingSave = undefined;
+				pickerSaveInFlight.current = false;
 				setSaving(false);
 			});
+			if (fastMode !== undefined) saveState.current.pendingSave = settled;
 		},
 		[chatId, models, save, saveChat, saveState],
 	);

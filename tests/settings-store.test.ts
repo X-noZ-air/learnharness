@@ -53,7 +53,8 @@ describe("the settings store", () => {
 		assert.equal(resolveConversationSpec({ model }, effective.models.strong)?.fastMode, undefined);
 		assert.equal(resolveConversationSpec({ fastMode: true }, effective.models.strong)?.fastMode, true);
 		assert.equal(resolveConversationSpec({ fastMode: false }, effective.models.strong)?.fastMode, false);
-		assert.equal(parseModelsSettingsBody({ strong: { model, fastMode: "true" } }).ok, false);
+		assert.deepEqual(parseModelsSettingsBody({ strong: { model, fastMode: "true" } }), { ok: true, settings: { strong: { model } } });
+		assert.equal(parseModelsSettingsBody({ strong: { fastMode: "true" } }).ok, false);
 	});
 	it("persists worker concurrency, drops invalid disk values, and resets to 8 when unset", () => {
 		writeSettings({ version: 1, agent: { workerRequestConcurrency: 29, tools: { research: false } } });

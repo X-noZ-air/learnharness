@@ -84,7 +84,7 @@ test("draft Fast writes preserve current slots and slot writes preserve current 
 	assert.equal(fast.status, 200);
 	assert.deepEqual((await fast.json()).settings.models, { strong: { ...strong, fastMode: true }, cheap });
 
-	const slots = await put({ strong: { model, fastMode: false }, cheap });
+	const slots = await put({ strong: { model, fastMode: "false" }, cheap });
 	assert.equal(slots.status, 200);
 	assert.deepEqual((await slots.json()).settings.models, { strong: { model, fastMode: true }, cheap });
 	const replacement = { provider: "openai", id: "gpt-5.2" };

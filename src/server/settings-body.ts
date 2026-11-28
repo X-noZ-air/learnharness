@@ -426,15 +426,12 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 			return { ok: false, error: `slot "${key}" must set a model (thinkingLevel alone cannot run — absent slot = unset)` };
 		}
 		const slot: ModelSlot = parsed.override;
-		const { cacheRetention: retention, fastMode } = raw[key] as Record<string, unknown>;
+		const { cacheRetention: retention } = raw[key] as Record<string, unknown>;
 		if (retention !== undefined) {
 			if (!CACHE_RETENTIONS.some((value) => value === retention)) {
 				return { ok: false, error: `${key}.cacheRetention must be none, short, or long` };
 			}
 			slot.cacheRetention = retention as ModelSlot["cacheRetention"];
-		}
-		if (key === "strong" && fastMode !== undefined && typeof fastMode !== "boolean") {
-			return { ok: false, error: "strong.fastMode must be a boolean" };
 		}
 		settings[key as (typeof MODEL_SLOTS)[number]] = slot;
 	}
