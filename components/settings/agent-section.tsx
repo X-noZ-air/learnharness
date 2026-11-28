@@ -215,15 +215,6 @@ export function composeGraphTools(agent: AgentSettings | undefined, on: boolean)
 	return { ...agent, graphTools: { enabled: on } };
 }
 
-function modelWritePayload(models: ModelsSettings | undefined): ModelsSettings {
-	const next = { ...models };
-	if (next.strong?.fastMode !== undefined) {
-		next.strong = { ...next.strong };
-		delete next.strong.fastMode;
-	}
-	return next;
-}
-
 /** Compose: one slot's model/thinking override. Empty model = absent
  *  override (Default — falls to the factory pin); empty thinking = the
  *  tier keeps its resolved thinking budget. Per-field independence, same
@@ -236,7 +227,7 @@ export function composeSlotModel(
 	thinking: string,
 ): ModelsSettings {
 	const prev = models?.[slot];
-	const next = modelWritePayload(models);
+	const next = { ...models };
 	if (!provider && !id && !thinking) {
 		delete next[slot];
 		return next;
@@ -252,11 +243,10 @@ export function composeSlotModel(
 
 /** Retention is slot-only; selecting Pi default removes the field entirely. */
 export function composeSlotCacheRetention(models: ModelsSettings | undefined, slot: ModelSlotName, value: CacheRetention | undefined): ModelsSettings {
-	const payload = modelWritePayload(models);
-	const next = { ...payload[slot] };
+	const next = { ...models?.[slot] };
 	if (value === undefined) delete next.cacheRetention;
 	else next.cacheRetention = value;
-	return { ...payload, [slot]: next };
+	return { ...models, [slot]: next };
 }
 
 /** Compose: the search-engine preference. null = the explicit pin is
