@@ -1,3 +1,4 @@
+import { resolveConversationSpec } from "@/src/core";
 import {
 	mutation,
 	clampChatLevel,
@@ -7,6 +8,7 @@ import {
 	stores,
 	validateChatSettings,
 } from "@/src/server";
+
 /**
  * The per-chat model control (model-control wave).
  * PER-SESSION MODELS (owner, 2026-09-28): this route is THE in-session
@@ -37,11 +39,15 @@ async function handlePut(req: Request, { params }: { params: Promise<{ id: strin
 		if (!verdict.ok) {
 			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 		}
-		settings = clampChatLevel({ model, thinkingLevel }, effectiveSettings().models.strong);
+		const strong = effectiveSettings().models.strong;
+		settings = clampChatLevel({ model, thinkingLevel }, strong);
 		const current = chat.settings;
-		if ((model || thinkingLevel !== undefined) && current?.fastMode !== undefined &&
-			model?.provider === current.model?.provider && model?.id === current.model?.id) {
-			settings.fastMode = current.fastMode;
+		if ((model || thinkingLevel !== undefined) && current?.fastMode !== undefined) {
+			const before = resolveConversationSpec(current, strong);
+			const after = resolveConversationSpec(settings, strong);
+			if (before?.provider === after?.provider && before?.id === after?.id) {
+				settings.fastMode = current.fastMode;
+			}
 		}
 	}
 	stores.chatStore.saveSettings(id, settings);

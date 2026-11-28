@@ -40,10 +40,9 @@ import { useEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import type React from "react";
-import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings, type UserSettings, CUSTOM_PROVIDER } from "@/src/core";
+import { type ModelCatalogEntry, type ModelSlotName, type ModelsSettings, CUSTOM_PROVIDER } from "@/src/core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList } from "@/components/settings/model-menu";
-import { composeSlotModel } from "@/components/settings/agent-section";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -391,27 +390,25 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		if (!allPicked || saving) return;
 		setSaving(true);
 		setError(null);
-		let models: ModelsSettings;
-		try {
-			const record = await fetch("/api/settings");
-			if (!record.ok) throw new Error(`Save failed: ${record.status}`);
-			const { settings } = (await record.json()) as { settings: UserSettings | null };
-			models = settings?.models ?? {};
-			for (const slot of SLOT_ORDER) {
-				const { provider, id } = picked[slot]!;
-				models = composeSlotModel(models, slot, provider, id, levels[slot] ?? "");
-			}
-			const res = await fetch("/api/settings/models", {
-				method: "PUT",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(models),
-			});
-			if (!res.ok) throw new Error(`Save failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
-			const reply = await res.json().catch(() => null) as { settings?: UserSettings } | null;
-			models = reply?.settings?.models ?? models;
-		} catch (error) {
+		const models: ModelsSettings = {};
+		for (const slot of SLOT_ORDER) {
+			const { provider, id } = picked[slot]!;
+			const thinkingLevel = levels[slot];
+			const cacheRetention = catalog?.slots[slot]?.cacheRetention;
+			models[slot] = {
+				model: { provider, id },
+				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+				...(cacheRetention !== undefined ? { cacheRetention } : {}),
+			};
+		}
+		const res = await fetch("/api/settings/models", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(models),
+		}).catch(() => null);
+		if (!res || !res.ok) {
 			setSaving(false);
-			setError(error instanceof Error && error.message.startsWith("Save failed:") ? error.message : "Save failed. Check your connection and try again.");
+			setError(res ? `Save failed: ${(await res.json().catch(() => ({}))).error ?? res.status}` : "Save failed. Check your connection and try again.");
 			return;
 		}
 		notifySettingsSaved("models");

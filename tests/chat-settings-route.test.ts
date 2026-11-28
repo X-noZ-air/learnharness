@@ -92,3 +92,16 @@ test("draft Fast writes preserve current slots and slot writes preserve current 
 	assert.equal(replaced.status, 200);
 	assert.deepEqual((await replaced.json()).settings.models, { strong: { model: replacement }, cheap });
 });
+
+test("pinning the inherited model during an effort change preserves Fast", async () => {
+	const chat = await createChat();
+	assert.equal((await chat.put({})).status, 200);
+	assert.equal((await chat.put({ fastMode: true })).status, 200);
+	assert.equal((await putSection(new Request("http://localhost/api/settings/models", {
+		method: "PUT", body: JSON.stringify({ strong: { model } }),
+	}), { params: Promise.resolve({ section: "models" }) })).status, 200);
+	assert.deepEqual(await chat.read(), { fastMode: true });
+
+	assert.equal((await chat.put({ model, thinkingLevel: "max" })).status, 200);
+	assert.deepEqual(await chat.read(), { model, thinkingLevel: "max", fastMode: true });
+});

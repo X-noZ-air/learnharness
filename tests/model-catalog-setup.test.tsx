@@ -43,12 +43,12 @@ function catalog(connected = true): ModelCatalogResponse {
 }
 function Reader() { snapshot = useModelCatalog(); return null; }
 function setup(onClose = () => {}, onDone = (_models: ModelsSettings) => {}) { return <SetupDialog open onClose={onClose} onDone={onDone} />; }
-function installFetch(savedModels?: ModelsSettings) {
+function installFetch() {
 	requests = []; writes = [];
 	globalThis.fetch = async (input, init) => {
 		const path = String(input);
 		if (path === "/api/models") { const request = deferred<Response>(); requests.push(request); return request.promise; }
-		if (path === "/api/settings") return Response.json({ settings: { models: savedModels } });
+		if (path === "/api/settings") return Response.json({ settings: null });
 		if (path === "/api/settings/models") { writes.push(JSON.parse(String(init?.body))); return Response.json({ settings: { models: writes.at(-1) } }); }
 		if (path === "/api/keys") return Response.json({ providers: [provider], keys: [] });
 		if (path === "/api/settings/prompts") return Response.json({ prober: [], teacher: [], practice: [] });
@@ -357,7 +357,7 @@ test("initial setup exposes no advanced controls and preserves all saved retenti
 	body.slots.strong!.cacheRetention = "long";
 	body.slots.cheap!.cacheRetention = "short";
 	body.slots.vision!.cacheRetention = "none";
-	installFetch({ strong: body.slots.strong!, cheap: body.slots.cheap!, vision: body.slots.vision! });
+	installFetch();
 	await warm(body); await render(<><Reader />{setup()}</>); await answer(1, body);
 	assert.equal(document.querySelector('[data-testid="models-advanced"]'), null);
 	assert.equal(document.querySelector('[data-testid^="slot-cache-"]'), null);
@@ -369,16 +369,32 @@ test("initial setup exposes no advanced controls and preserves all saved retenti
 	assert.equal(writes[0]?.strong?.model?.id, b.id);
 });
 
-test("finishing setup saves the missing slot without writing Fast", async () => {
+test("finishing setup saves the missing slot with one PUT", async () => {
 	const body = catalog();
 	body.slots.strong!.model.provider = "chatgpt";
 	body.slots.vision = null;
-	installFetch({ strong: { ...body.slots.strong!, fastMode: true }, cheap: body.slots.cheap! });
+	installFetch();
+	const fallback = globalThis.fetch;
+	const writesAndReads: string[] = [];
+	globalThis.fetch = async (input, init) => {
+		const path = String(input);
+		if (path === "/api/settings") {
+			writesAndReads.push("GET settings");
+			return new Response(null, { status: 503 });
+		}
+		const response = await fallback(input, init);
+		if (path === "/api/settings/models") {
+			writesAndReads.push("PUT models");
+			response.json = async () => { writesAndReads.push("read PUT body"); };
+		}
+		return response;
+	};
 	await warm(body);
 	await render(<><Reader />{setup()}</>);
 	await answer(1, body);
 	await click("setup-trigger-vision"); await click("model-option-vendor_model_free");
 	await click("setup-save");
+	assert.deepEqual(writesAndReads, ["PUT models"]);
 	assert.deepEqual(writes[0]?.strong, body.slots.strong);
 });
 
