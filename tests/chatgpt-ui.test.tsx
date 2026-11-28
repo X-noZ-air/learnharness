@@ -137,11 +137,12 @@ test("a Strong read during the Fast write requires confirmation after the write"
  const put = deferred<Response>();
  const refreshes: ReturnType<typeof deferred<Response>>[] = [];
  let reads = 0;
+ let supportsFast = true;
  const settings = (fastMode: boolean) => Response.json({ settings: { models: { strong: { model, fastMode } } } });
  globalThis.fetch = async (input, init) => {
   if (input === "/api/models") {
    const catalog = body(model.id);
-   catalog.models[0]!.fastServiceTier = "priority";
+   if (supportsFast) catalog.models[0]!.fastServiceTier = "priority";
    return Response.json(catalog);
   }
   if (input === "/api/settings/models" && init?.method === "PUT") return put.promise;
@@ -162,10 +163,14 @@ test("a Strong read during the Fast write requires confirmation after the write"
  await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
  const alert = document.querySelector('[role="alert"]');
  assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
- assert.match(fastRow()?.textContent ?? "", /Retry Fast Mode confirmation/);
- await act(async () => fastRow()!.click());
+ supportsFast = false;
+ await act(async () => notifySettingsSaved("keys"));
+ assert.equal(Boolean(fastRow()), false);
+ assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /Could not confirm Fast Mode/);
+ assert.equal(Boolean(alert?.querySelector("button")), false);
+ supportsFast = true;
+ await act(async () => notifySettingsSaved("models"));
  assert.equal(refreshes.length, 2);
- await toggleModelMenu();
  assert.equal(fastRow()?.disabled, true);
  await act(async () => refreshes[1]!.resolve(settings(true)));
  assert.equal(fastRow()?.disabled, false);

@@ -373,12 +373,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 		setError(null);
 		if (kind === "model") refresh();
 	};
-	const fastMode = fastRefreshFailed ? {
-		retry: true,
-		checked: false,
-		disabled: savingModel,
-		onToggle: () => { setOpen(null); readFastSettings(); },
-	} : fastAvailable ? {
+	const fastMode = fastAvailable ? {
 		checked: override?.fastMode === true,
 		disabled: savingFast || savingModel,
 		onToggle: () => {

@@ -476,7 +476,7 @@ test("overlapping chat writes reread the saved model after a stale Fast response
 	assert.equal(reads, 2);
 });
 
-test("the Fast toggle waits for confirmed chat settings and can retry a failed refresh", async () => {
+test("the Fast toggle stays disabled after a failed chat settings refresh", async () => {
 	installFetch();
 	const body = catalog();
 	const model = { provider: "chatgpt", id: a.id };
@@ -521,13 +521,17 @@ test("the Fast toggle waits for confirmed chat settings and can retry a failed r
 	await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
 	const alert = document.querySelector('[role="alert"]');
 	assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
+	assert.equal(Boolean(alert?.querySelector("button")), false);
+	assert.equal(fastRow()?.disabled, true);
 	const search = element("model-search");
 	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
 	for (const key of ["ArrowUp", "Enter"]) await act(async () => {
 		search.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key }));
 	});
+	assert.equal(refreshes.length, 1);
+	assert.deepEqual(fastWrites, [true]);
+	await act(async () => notifySettingsSaved("models"));
 	assert.equal(refreshes.length, 2);
-	await click("stats-model");
 	assert.equal(fastRow()?.disabled, true);
 	await act(async () => refreshes[1]!.resolve(Response.json({ settings: saved })));
 	assert.equal(fastRow()?.disabled, false);

@@ -60,7 +60,7 @@ export function ModelMenuList({
 	 *  custom-endpoint model, whose capability the endpoint may not report.
 	 *  Image-capable ones float to the top. */
 	vision?: boolean;
-	fastMode?: { checked: boolean; disabled: boolean; onToggle: () => void; retry?: boolean };
+	fastMode?: { checked: boolean; disabled: boolean; onToggle: () => void };
 }) {
 	// Vision slot: built-ins must report image input; custom-endpoint models
 	// stay selectable (the endpoint may not report a modality). Image-capable
@@ -85,8 +85,8 @@ export function ModelMenuList({
 					onPick: fastMode.onToggle,
 					content: <>
 						<span className="flex items-center justify-between gap-2">
-							<span>{fastMode.retry ? "Retry Fast Mode confirmation" : "Fast Mode"}</span>
-							{!fastMode.retry && <span className="text-muted-foreground">{fastMode.checked ? "On" : "Off"}</span>}
+							<span>Fast Mode</span>
+							<span className="text-muted-foreground">{fastMode.checked ? "On" : "Off"}</span>
 						</span>
 						<span className="text-muted-foreground">Fast Mode uses more of your ChatGPT quota.</span>
 					</>,
