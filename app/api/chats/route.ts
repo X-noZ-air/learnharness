@@ -26,8 +26,8 @@ async function handlePost(req: Request) {
 	// record — the practice agent + its tools from turn 1, no extraction.
 	const kind = body.kind === "practice" ? ("practice" as const) : undefined;
 	const chat = createChat(titleFromPrompt(title || "Untitled session"), kind);
-	// PER-SESSION MODELS (owner, 2026-09-28): a session owns its model +
-	// thinking level from birth — stamped verbatim from the STRONG slot,
+	// PER-SESSION MODELS (owner, 2026-09-28): a session owns its model,
+	// thinking level, and Fast preference from birth, stamped from the STRONG slot,
 	// the new-session default. From here the strong slot never reaches
 	// this session again: in-session picks write the session's own record
 	// (PUT /api/chats/:id/settings). No strong slot configured (fresh BYOK
@@ -38,6 +38,7 @@ async function handlePost(req: Request) {
 		stores.chatStore.saveSettings(chat.id, {
 			model: { provider: strong.model.provider, id: strong.model.id },
 			thinkingLevel: strong.thinkingLevel,
+			fastMode: strong.fastMode,
 		});
 	}
 	// The session's map context (owner, 2026-10-04): the picked

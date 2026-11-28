@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test, afterEach } from "node:test";
 import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
-import { useModelCatalog, catalogLimits } from "../components/model-picker.tsx";
+import { ModelControl, useModelCatalog, catalogLimits } from "../components/model-picker.tsx";
 import { useZeroKeys, useStrongKeyless } from "../components/setup-cta.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { SidebarProvider } from "../components/sidebar.tsx";
@@ -13,7 +13,7 @@ import { GraphCostControl } from "../components/graph-view.tsx";
 import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { graphCostSummary as foldGraphCostSummary, type CostSummaryInput } from "../src/core/cost-summary.ts";
 const graphCostSummary = (input: CostSummaryInput) => foldGraphCostSummary(input, () => null);
-import type { ModelCatalogResponse, ChatGPTStatus } from "../src/core/index.ts";
+import type { ModelCatalogResponse, ChatGPTStatus, ModelSlot } from "../src/core/index.ts";
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement, CustomEvent: dom.window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true, localStorage: { getItem: () => null, setItem() {} } });
 const originalFetch = globalThis.fetch;
@@ -47,6 +47,37 @@ test("shared ChatGPT-only readiness admits without API keys; connection invalida
  await act(async () => requests[1]!.resolve(Response.json(body("stale-A"))));
  for (const value of Object.values(snapshots)) { assert.equal(value.catalog?.models.length, 0); assert.equal(value.zero, true); assert.equal(value.strong, true); }
  assert(!document.body.textContent?.includes("chatgpt:A"));
+});
+
+test("the picker offers Fast only for an advertised ChatGPT tier and saves the opt-in", async () => {
+ const model = { provider: "chatgpt", id: "tier-model" };
+ const tier: ModelSlot = { model };
+ const models = { strong: tier };
+ let supportsFast = true;
+ globalThis.fetch = async (input, init) => {
+  if (input === "/api/models") {
+   const catalog = body(model.id);
+   if (supportsFast) catalog.models[0]!.fastServiceTier = "fast";
+   return Response.json(catalog);
+  }
+  if (input === "/api/settings/models" && init?.method === "PUT") {
+   const next = JSON.parse(String(init.body));
+   assert.deepEqual(next.strong.model, model);
+   tier.fastMode = next.strong.fastMode;
+  } else {
+   assert.equal(input, "/api/settings");
+  }
+  return Response.json({ settings: { models } });
+ };
+ const toggle = () => host?.querySelector<HTMLButtonElement>('button[aria-label="Fast Mode"]') ?? null;
+ await mount(<ModelControl />);
+ assert.equal(toggle()?.getAttribute("aria-pressed"), "false");
+ await act(async () => toggle()!.click());
+ assert.equal(tier.fastMode, true);
+ assert.equal(toggle()?.getAttribute("aria-pressed"), "true");
+ supportsFast = false;
+ await act(async () => notifySettingsSaved("keys"));
+ assert.equal(toggle(), null);
 });
 
 test("plan plus unknown graph rows keep the existing unknown suffix without fabricating API dollars", async () => {

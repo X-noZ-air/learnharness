@@ -19,6 +19,8 @@ export interface ModelCatalogEntry {
 	input: ("text" | "image")[];
 	/** Thinking levels accepted by this model, as reported by the host catalog. */
 	supportedLevels: ThinkingLevel[];
+	/** Fast tier ID currently offered by the active ChatGPT account for this model. */
+	fastServiceTier?: "priority" | "fast";
 	/** Null when LearnHarness cannot estimate prices for this connection. */
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
 	/** Null for native CLI aliases whose effective limits are session-specific. */
@@ -32,6 +34,7 @@ export interface ModelCatalogEntry {
 export interface CatalogDefaults {
 	model: { provider: string; id: string };
 	thinkingLevel?: ThinkingLevel;
+	fastMode?: boolean;
 }
 
 /** Resolved model choice per background role: role override, then its assigned
@@ -39,7 +42,7 @@ export interface CatalogDefaults {
  * is unavailable; there is no implicit factory model fallback. */
 export type RolePins = Record<
 	BackgroundModelRole,
-	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null
+	CatalogDefaults | null
 >;
 
 /** Resolved model choice for each slot tier. Null means that tier has no model;

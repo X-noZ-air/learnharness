@@ -67,6 +67,7 @@ export interface RoleModelOverride {
 	model?: { provider: string; id: string };
 	/** The thinking budget swap. */
 	thinkingLevel?: ThinkingLevel;
+	fastMode?: boolean;
 }
 
 // ─── Model slots (model slots wave, 2026-09-20) ──────────────────────────────
@@ -207,6 +208,7 @@ export interface ModelSlot {
 	model?: { provider: string; id: string };
 	/** Optional thinking level used with this slot's configured model. */
 	thinkingLevel?: ThinkingLevel;
+	fastMode?: boolean;
 }
 
 /** The `models` settings section (owner decision 2026-09-20: a dedicated
@@ -652,6 +654,7 @@ function sanitizeRoleOverride(raw: unknown): RoleModelOverride | undefined {
 	if (typeof r.thinkingLevel === "string" && THINKING_LEVELS.includes(r.thinkingLevel as ThinkingLevel)) {
 		out.thinkingLevel = r.thinkingLevel as ThinkingLevel;
 	}
+	if (typeof r.fastMode === "boolean") out.fastMode = r.fastMode;
 	return Object.keys(out).length ? out : undefined;
 }
 

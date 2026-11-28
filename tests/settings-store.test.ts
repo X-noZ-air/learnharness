@@ -24,8 +24,8 @@ fs.mkdirSync(process.env.LH_DATA_DIR, { recursive: true });
 fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
 const { SETTINGS_FILE } = await import("../config.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
-const { resolveSettings } = await import("../src/core/settings-resolution.ts");
-const { parseCompactionSettingsBody, parseAppearanceSettingsBody } = await import("../src/server/settings-body.ts");
+const { resolveSettings, resolveConversationSpec } = await import("../src/core/settings-resolution.ts");
+const { parseCompactionSettingsBody, parseAppearanceSettingsBody, parseModelsSettingsBody } = await import("../src/server/settings-body.ts");
 
 after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
@@ -34,6 +34,20 @@ afterEach(() => {
 });
 
 describe("the settings store", () => {
+	it("stores explicit Fast choices per slot and keeps previously pinned chats opted out", () => {
+		const model = { provider: "chatgpt", id: "scratch" };
+		const parsed = parseModelsSettingsBody({ strong: { model, fastMode: true }, cheap: { model, fastMode: false } });
+		assert.ok(parsed.ok);
+		writeSettings({ version: 1, models: parsed.settings });
+		const stored = readSettings();
+		assert.deepEqual(stored?.models, parsed.settings);
+		const effective = resolveSettings(stored);
+		assert.equal(effective.agent.models.researcher?.fastMode, false);
+		assert.equal(resolveConversationSpec(undefined, effective.models.strong)?.fastMode, true);
+		assert.equal(resolveConversationSpec({ model }, effective.models.strong)?.fastMode, undefined);
+		assert.equal(resolveConversationSpec({ model, fastMode: false }, effective.models.strong)?.fastMode, false);
+		assert.equal(parseModelsSettingsBody({ strong: { model, fastMode: "true" } }).ok, false);
+	});
 	it("persists worker concurrency, drops invalid disk values, and resets to 8 when unset", () => {
 		writeSettings({ version: 1, agent: { workerRequestConcurrency: 29, tools: { research: false } } });
 		assert.deepEqual(readSettings()?.agent, { workerRequestConcurrency: 29, tools: { research: false } });

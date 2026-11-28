@@ -244,6 +244,26 @@ test("account catalog is scoped, visibility filtered, and cleared on disconnect"
 	} finally { f.service.close(); }
 });
 
+test("account model discovery retains only the advertised Fast tier ID", async () => {
+	const f = await loggedIn({ provider: async (target) => {
+		if (!target.endsWith("/models")) return;
+		return Response.json({ models: [
+			{ slug: "priority-model", display_name: "Priority", visibility: "list", service_tiers: [null, { id: "flex" }, { id: "priority", name: "Fast" }] },
+			{ slug: "fast-model", display_name: "Fast", visibility: "list", service_tiers: [{ id: "fast" }] },
+			{ slug: "standard-model", display_name: "Standard", visibility: "list", service_tiers: [{ id: "standard" }] },
+			{ slug: "malformed-model", display_name: "Malformed", visibility: "list", service_tiers: { id: "priority" } },
+		] });
+	} });
+	try {
+		assert.deepEqual((await f.service.models()).models, [
+			{ id: "priority-model", name: "Priority", fastServiceTier: "priority" },
+			{ id: "fast-model", name: "Fast", fastServiceTier: "fast" },
+			{ id: "standard-model", name: "Standard" },
+			{ id: "malformed-model", name: "Malformed" },
+		]);
+	} finally { f.service.close(); }
+});
+
 test("private JSON file round-trips global state; creation and atomic replacement are owner-only", async () => {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lh-chatgpt-storage-"));
 	const file = path.join(dir, "private", "chatgpt-credentials.json");

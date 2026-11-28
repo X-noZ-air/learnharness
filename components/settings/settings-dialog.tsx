@@ -514,7 +514,7 @@ export function SettingsDialogBody({
 										graph={record.graph}
 										compaction={record.compaction}
 										onModelsChange={(next: ModelsSettings) =>
-											void write("models", next)
+										write("models", next)
 										}
 										onSectionChange={(next, confirms) =>
 											write("agent", next, confirms && (stored => confirms(stored.agent ?? {})))

@@ -89,6 +89,7 @@ export function catalogDefaultsFor(
 	return {
 		model,
 		...(level !== undefined ? { thinkingLevel: level } : {}),
+		...(strong?.fastMode !== undefined ? { fastMode: strong.fastMode } : {}),
 	};
 }
 
@@ -112,6 +113,7 @@ export function rolePinsFor(
 			? {
 					model: { provider: spec.provider, id: spec.id },
 					...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
+					...(spec.fastMode !== undefined ? { fastMode: spec.fastMode } : {}),
 				}
 			: null;
 	}
@@ -139,6 +141,7 @@ export function catalogSlots(): SlotPins {
 			? {
 					model: { provider: slot.provider, id: slot.id },
 					...(slot.thinkingLevel !== undefined ? { thinkingLevel: slot.thinkingLevel } : {}),
+					...(slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
 					...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 				}
 			: null;
@@ -176,7 +179,7 @@ function keyedProviderIds(): Set<string> {
 }
 
 /** Project one catalog model to the client DTO. */
-export function toModelDto(model: Model<Api>): ModelDto {
+export function toModelDto(model: Model<Api> & Pick<ModelDto, "fastServiceTier">): ModelDto {
 	return {
 		id: model.id,
 		name: model.name,
@@ -184,6 +187,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
+		...(model.provider === "chatgpt" && model.fastServiceTier ? { fastServiceTier: model.fastServiceTier } : {}),
 		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id ? null : {
 			input: model.cost.input,
 			output: model.cost.output,

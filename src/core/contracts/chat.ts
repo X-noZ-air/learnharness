@@ -56,9 +56,9 @@ export interface ChatRecord {
 /** The chat record format this build writes and understands. */
 export const CURRENT_CHAT_VERSION = 2;
 
-/** Per-session model and thinking choices for native conversation agents.
- * Each absent field falls back independently to the strong model slot; no
- * configured model means conversation work is unavailable. Choices resolve
+/** Per-session model choices for native conversation agents.
+ * Model and thinking fall back independently to the strong slot. A pinned
+ * model owns its Fast preference. Choices resolve
  * when composing a turn, not midway through an active request. Background
  * worker roles use their own model resolution. */
 export interface ChatSettings {
@@ -67,6 +67,8 @@ export interface ChatSettings {
 	/** pi thinking level — must be in the chosen model's supported list
 	 *  (getSupportedThinkingLevels; enforced by the settings route). */
 	thinkingLevel?: ThinkingLevel;
+	/** Opt in to the Fast tier when offered for this ChatGPT model. */
+	fastMode?: boolean;
 }
 
 

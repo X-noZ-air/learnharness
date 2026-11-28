@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
+import { resolveConversationSpec, resolveSlot } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-menu";
@@ -10,6 +11,7 @@ import { MenuShell } from "@/components/menu-shell";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { ModelPickerPill } from "@/components/model-picker-pill";
+import { FastModeButton } from "@/components/fast-mode-button";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -48,6 +50,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
+	const saveInFlight = useRef(false);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const interactions = useInteractionLayers();
 
@@ -92,10 +96,12 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// this session's identity (including to the Send guard). Draft mode is
 	// the strong slot itself.
 	const strong = models?.strong;
+	const conversation = session && resolveConversationSpec(session.settings, resolveSlot(strong));
 	const override: ChatSettings | undefined = chatId
-		? session ? {
-				model: session.settings?.model ?? strong?.model,
-				thinkingLevel: session.settings?.thinkingLevel ?? strong?.thinkingLevel,
+		? conversation ? {
+				model: { provider: conversation.provider, id: conversation.id },
+				thinkingLevel: conversation.thinkingLevel,
+				fastMode: conversation.fastMode,
 			} : undefined
 		: strong;
 	const effectiveId = override?.model?.id;
@@ -107,6 +113,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const entry = catalog?.models.find(
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
 	);
+	const fastAvailable = entry?.provider === "chatgpt" && !!entry.fastServiceTier;
 	const levels = entry?.supportedLevels ?? [];
 	// Legacy display (chunk 2 item 4, owner): a record with a model but no
 	// stored level shows the RESOLVED level — the ordering's first supported
@@ -206,15 +213,25 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// draft mode composes the strong slot (siblings preserved,
 	// replace-whole-section discipline).
 	const apply = useCallback(
-		(provider: string, id: string, level: ThinkingLevel | undefined) => {
-			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
-			} else {
-				// composeSlotModel's empty-string convention: no level = unset.
-				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
+		async (provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
+			if (saveInFlight.current) return;
+			saveInFlight.current = true;
+			setSaving(true);
+			try {
+				if (chatId) {
+					const sameModel = provider === effectiveProvider && id === effectiveId;
+					await saveChat({ model: { provider, id }, thinkingLevel: level, fastMode: fastMode ?? (sameModel ? override?.fastMode : undefined) });
+				} else {
+					const next = composeSlotModel(models, "strong", provider, id, level ?? "");
+					if (fastMode !== undefined && next.strong) next.strong.fastMode = fastMode;
+					await save(next);
+				}
+			} finally {
+				saveInFlight.current = false;
+				setSaving(false);
 			}
 		},
-		[chatId, models, save, saveChat],
+		[chatId, effectiveId, effectiveProvider, models, override?.fastMode, save, saveChat],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -271,7 +288,12 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	};
 
 	return (
-		<div ref={containerRef} className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2" data-testid="model-control">
+		<div
+			ref={containerRef}
+			className={`relative flex min-w-0 items-center gap-1.5 ${fastAvailable ? "narrow:ml-auto narrow:max-w-full" : "narrow:max-w-1/2"}`}
+			data-testid="model-control"
+			data-fast-available={fastAvailable ? "" : undefined}
+		>
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
 				action="open-model-picker"
@@ -279,6 +301,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-model"
+					disabled={saving}
 					className="min-w-0 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate narrow:min-h-11 narrow:min-w-11"
 					onClick={() => openMenu("model")}
 					aria-expanded={open === "model"}
@@ -294,6 +317,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			>
 				<ModelPickerPill
 					data-testid="stats-thinking"
+					disabled={saving}
 					className="shrink-0 narrow:min-h-11 narrow:min-w-11"
 					onClick={() => {
 						if (entry === undefined) return;
@@ -302,6 +326,14 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					aria-expanded={open === "thinking"}
 				>{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}</ModelPickerPill>
 			</Hint>
+
+			{fastAvailable && (
+				<FastModeButton checked={override?.fastMode === true} disabled={saving} onToggle={() => {
+					setOpen(null);
+					void apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
+				}} />
+			)}
+			{open === null && error && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{error}</div>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same

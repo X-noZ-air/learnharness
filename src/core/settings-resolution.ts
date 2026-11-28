@@ -56,6 +56,7 @@ export interface EffectiveSlot {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	fastMode?: boolean;
 }
 
 /** A fully-resolved model pin for one role — same shape/level semantics
@@ -65,6 +66,7 @@ export interface EffectiveModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	fastMode?: boolean;
 }
 
 /** The concrete appearance view — same shape as the factory's. */
@@ -115,10 +117,13 @@ export function resolveConversationSpec(
 ): EffectiveModelSpec | null {
 	const model = chat?.model ?? (strong ? { provider: strong.provider, id: strong.id } : undefined);
 	if (!model) return null;
+	// A pinned session owns its opt-in, including sessions saved before Fast Mode.
+	const fastMode = chat?.fastMode ?? (chat?.model ? undefined : strong?.fastMode);
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
+		...(fastMode !== undefined ? { fastMode } : {}),
 	};
 }
 
@@ -129,7 +134,13 @@ export function resolveSideQuestionSpec(chat: ChatSettings | undefined, record: 
 	const override = record?.agent?.models?.sideQuestion;
 	const model = override?.model ?? (conversation ? { provider: conversation.provider, id: conversation.id } : undefined);
 	if (!model) return null;
-	return { provider: model.provider, id: model.id, thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel };
+	const fastMode = override?.fastMode ?? (override?.model ? undefined : conversation?.fastMode);
+	return {
+		provider: model.provider,
+		id: model.id,
+		thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel,
+		...(fastMode !== undefined ? { fastMode } : {}),
+	};
 }
 
 /** Full-chain resolution for ANY role (BYOK, owner 2026-09-22):
@@ -152,15 +163,16 @@ export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 	if (!slot?.model) return null;
 	return {
 		provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel,
+		...(slot.fastMode !== undefined ? { fastMode: slot.fastMode } : {}),
 		...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 	};
 }
 
 /** Resolve one role's spec — the BYOK chain (owner 2026-09-22): role
- *  override → SLOT → NOTHING, each field independent (an override may
- *  borrow only the slot's model, or only its thinking budget — a level
+ *  override → SLOT → NOTHING. Thinking can inherit even when a role pins
+ *  a model, while Fast stays with an explicit model choice. A level
  *  with no model anywhere stays unset and the engine build resolves it
- *  from DEFAULT_THINKING_ORDER). undefined = no model resolved; the
+ *  from DEFAULT_THINKING_ORDER. undefined = no model resolved; the
  *  per-need refusal gates fire on exactly that. */
 export function resolveModelSpec(
 	role: ModelRole,
@@ -171,10 +183,12 @@ export function resolveModelSpec(
 	const slot = slotName ? slots?.[slotName] : undefined;
 	const model = override?.model ?? slot?.model;
 	if (!model) return undefined;
+	const fastMode = override?.fastMode ?? (override?.model ? undefined : slot?.fastMode);
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: override?.thinkingLevel ?? slot?.thinkingLevel,
+		...(fastMode !== undefined ? { fastMode } : {}),
 	};
 }
 
