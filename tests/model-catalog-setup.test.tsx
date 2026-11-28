@@ -430,6 +430,48 @@ test("a confirmed Fast write survives a delayed session read and keeps inherited
 	assert.deepEqual({ write, pressed: fast.getAttribute("aria-pressed") }, { write: { fastMode: true }, pressed: "true" });
 });
 
+test("overlapping chat writes reread the saved model after a stale Fast response", async () => {
+	installFetch();
+	const body = catalog();
+	const first = { provider: "chatgpt", id: a.id };
+	const second = { provider: "chatgpt", id: b.id };
+	body.models = [{ ...a, ...first, fastServiceTier: "priority" }, { ...b, ...second }];
+	const fastResponse = deferred<Response>();
+	const fallback = globalThis.fetch;
+	let saved = { model: first, thinkingLevel: "off", fastMode: false };
+	let reads = 0;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/chats/fixture") {
+			reads++;
+			return Response.json({ settings: saved });
+		}
+		if (input === "/api/chats/fixture/settings" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body));
+			if (next.fastMode !== undefined) {
+				assert.deepEqual(next, { fastMode: true });
+				saved = { ...saved, fastMode: true };
+				return fastResponse.promise;
+			}
+			assert.deepEqual(next, { model: second, thinkingLevel: "off" });
+			saved = { ...next, fastMode: false };
+			return Response.json({ settings: saved });
+		}
+		return fallback(input, init);
+	};
+	await render(<StatsBar chatId="fixture" turns={[]} />);
+	await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Fast Mode"]')!.click());
+	const stale = saved;
+	await click("stats-model");
+	await click("model-option-claude-opus-5-5");
+	assert.match(element("stats-model").textContent ?? "", /claude-opus-5-5/);
+	assert.equal(reads, 1);
+	await act(async () => fastResponse.resolve(Response.json({ settings: stale })));
+	assert.match(element("stats-model").textContent ?? "", /claude-opus-5-5/);
+	assert.equal(document.querySelector('[aria-label="Fast Mode"]'), null);
+	assert.equal(reads, 2);
+});
+
 test("the model shortcut and arrow navigation can toggle Fast for the active priority model", async () => {
 	installFetch();
 	const body = catalog();

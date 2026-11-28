@@ -63,16 +63,28 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// means no session record is known yet, not permission to inherit Strong.
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
-	const [error, setError] = useState<{ message: string; fast: boolean } | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [fastError, setFastError] = useState<string | null>(null);
 	const [savingFast, setSavingFast] = useState(false);
 	const [savingModel, setSavingModel] = useState(false);
 	const modelSavesInFlight = useRef(0);
+	const chatSavesOverlap = useRef(false);
 	const localModelSettings = useRef<ComposerModelSettings>({});
 	const saveState = modelSettingsRef ?? localModelSettings;
 	const sessionRead = useRef(0);
 	const modelsRead = useRef(0);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const interactions = useInteractionLayers();
+	const readSession = useCallback(() => {
+		if (!chatId) return;
+		const read = ++sessionRead.current;
+		fetch(`/api/chats/${chatId}`)
+			.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
+			.then((body) => { if (read === sessionRead.current) setSession({ settings: body.settings }); })
+			.catch(() => {
+				/* same read-only posture as a models-section failure */
+			});
+	}, [chatId]);
 
 	// The record read — BOTH mount and the cross-surface signal land
 	// here (fix wave: another surface's models write re-reads into the
@@ -82,15 +94,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// unstamped session — exactly what the engine resolves); draft mode
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
-		if (chatId) {
-			const read = ++sessionRead.current;
-			fetch(`/api/chats/${chatId}`)
-				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
-				.then((body) => { if (read === sessionRead.current) setSession({ settings: body.settings }); })
-				.catch(() => {
-					/* same read-only posture as a models-section failure */
-				});
-		}
+		readSession();
 		const read = ++modelsRead.current;
 		fetch("/api/settings")
 			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
@@ -103,7 +107,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				   ("—" triggers, closed menus) — same posture as a
 				   catalog failure */
 			});
-	}, [chatId]);
+	}, [readSession]);
 
 	useEffect(() => {
 		let active = true;
@@ -189,7 +193,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	const save = useCallback(
 		async (next: ModelsSettings, changingFast: boolean) => {
 			const readAtStart = modelsRead.current;
-			setError(null);
+			const setSaveError = changingFast ? setFastError : setError;
+			setSaveError(null);
 			try {
 				const res = await fetch("/api/settings/models", {
 					method: "PUT",
@@ -198,7 +203,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError({ message: body.error ?? `settings rejected (${res.status})`, fast: changingFast });
+					setSaveError(body.error ?? `settings rejected (${res.status})`);
 					return false;
 				}
 				// Server truth, never the request body (fix wave): a pick
@@ -215,7 +220,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				}
 				return true;
 			} catch {
-				setError({ message: "Could not reach the server — try again.", fast: changingFast });
+				setSaveError("Could not reach the server — try again.");
 				return false;
 			}
 		},
@@ -229,7 +234,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
 		async (next: ChatSettings, changingFast: boolean) => {
-			setError(null);
+			const setSaveError = changingFast ? setFastError : setError;
+			setSaveError(null);
 			try {
 				const res = await fetch(`/api/chats/${chatId}/settings`, {
 					method: "PUT",
@@ -238,16 +244,18 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError({ message: body.error ?? `settings rejected (${res.status})`, fast: changingFast });
+					setSaveError(body.error ?? `settings rejected (${res.status})`);
 					return false;
 				}
 				const { settings } = await res.json() as { settings: ChatSettings };
-				++sessionRead.current;
-				setSession({ settings });
+				if (!changingFast || !chatSavesOverlap.current) {
+					++sessionRead.current;
+					setSession({ settings });
+				}
 				if (!changingFast) setOpen(null);
 				return true;
 			} catch {
-				setError({ message: "Could not reach the server — try again.", fast: changingFast });
+				setSaveError("Could not reach the server — try again.");
 				return false;
 			}
 		},
@@ -264,6 +272,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			if (changingFast && (saveState.current.pendingSave || modelSavesInFlight.current > 0)) return;
 			if (changingFast) setSavingFast(true);
 			else {
+				if (chatId && saveState.current.pendingSave) chatSavesOverlap.current = true;
 				modelSavesInFlight.current++;
 				setSavingModel(true);
 			}
@@ -284,10 +293,14 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 				} else if (--modelSavesInFlight.current === 0) {
 					setSavingModel(false);
 				}
+				if (chatSavesOverlap.current && !saveState.current.pendingSave && modelSavesInFlight.current === 0) {
+					chatSavesOverlap.current = false;
+					if (containerRef.current) readSession();
+				}
 			});
 			if (changingFast) saveState.current.pendingSave = settled;
 		},
-		[chatId, models, save, saveChat, saveState],
+		[chatId, models, readSession, save, saveChat, saveState],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -390,7 +403,7 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 			</Hint>
 
 			{fastMode && <FastModeButton {...fastMode} />}
-			{open === null && error?.fast && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{error.message}</div>}
+			{open === null && fastError && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{fastError}</div>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same
@@ -402,7 +415,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 					preferredSide="up"
 					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl narrow:max-w-[calc(100vw-3rem)]"
 				>
-					{error && <div className="mb-1.5 text-destructive">{error.message}</div>}
+					{fastError && <div role="alert" className="mb-1.5 text-destructive">{fastError}</div>}
+					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					<ModelMenuList
 						models={catalog?.models}
 						effectiveId={effectiveId}
@@ -434,7 +448,8 @@ export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
 						empty={catalog ? (effectiveId ? `${prettyModel(effectiveId)} has no thinking levels.` : "Pick a model first.") : "Loading…"}
 						footer="Levels this model actually supports"
 					/>
-					{error && <div className="mt-1 text-destructive">{error.message}</div>}
+					{fastError && <div role="alert" className="mt-1 text-destructive">{fastError}</div>}
+					{error && <div className="mt-1 text-destructive">{error}</div>}
 				</MenuShell>
 			)}
 		</div>

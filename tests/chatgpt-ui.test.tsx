@@ -221,12 +221,12 @@ test("ordinary effort writes can overlap and only Fast writes hold the composer"
  assert.equal(host!.querySelector<HTMLButtonElement>('[data-testid="stats-model"]')?.disabled, false);
  const pendingFast = modelSettingsRef.current.pendingSave;
  assert.ok(pendingFast);
- await act(async () => requests[3]!.resolve(new Response(null, { status: 503 })));
- assert.equal(modelSettingsRef.current.pendingSave, pendingFast);
- assert.equal(Boolean(host!.querySelector('[role="alert"]')), false);
  await act(async () => requests[2]!.resolve(new Response(null, { status: 503 })));
  assert.equal(await pendingFast, false);
  assert.equal(modelSettingsRef.current.pendingSave, undefined);
+ assert.equal(fast.disabled, true);
+ assert.equal(host!.querySelector('[role="alert"]')?.textContent, "settings rejected (503)");
+ await act(async () => requests[3]!.resolve(new Response(null, { status: 400 })));
  assert.equal(fast.disabled, false);
  assert.equal(host!.querySelector('[role="alert"]')?.textContent, "settings rejected (503)");
 });
