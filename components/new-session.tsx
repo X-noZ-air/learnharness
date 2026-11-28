@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
+import { isCurrentPageSurface } from "./plugin-surface-targets";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Composer } from "@/components/composer";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
@@ -13,11 +14,12 @@ import { SidebarToggle } from "@/components/sidebar";
 import { SetupDialog } from "@/components/setup-dialog";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { StatsBar } from "@/components/stats-bar";
+import { strongFastSaveRef, waitForFastSave, type ComposerModelSettings } from "@/components/model-picker";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { SessionMaintenanceError, SessionStarter } from "@/components/start-session";
-import type { ChatSettings, GraphSnapshot } from "@/src/core";
+import type { ChatSettings, GraphSnapshot, PluginSurfaceTarget } from "@/src/core";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -76,6 +78,7 @@ export function DraftShell({
 	text,
 	onChange,
 	onSend,
+	modelSettingsRef,
 	startError,
 	setupCta,
 	mode = "teach",
@@ -87,7 +90,8 @@ export function DraftShell({
 	busy: boolean;
 	text: string;
 	onChange: (v: string) => void;
-	onSend: () => void;
+	onSend: (target: PluginSurfaceTarget | undefined, pendingAtSubmit: Promise<boolean> | undefined) => void;
+	modelSettingsRef?: RefObject<ComposerModelSettings>;
 	startError?: string;
 	/** The practice draft (owner, 2026-10-04): ?mode=practice — the
 	 *  created session carries kind:"practice" and the copy changes
@@ -138,11 +142,12 @@ export function DraftShell({
 	 * which reads its REF mirror, so the post-await timing of React's
 	 * re-render cannot eat the dictated tail. */
 	const handleSend = () => {
+		const pendingAtSubmit = modelSettingsRef?.current.pendingSave;
 		if (dictation.active) {
-			void dictation.finish().then(onSend);
+			void dictation.finish().then(() => onSend(surfaceTarget, pendingAtSubmit));
 			return;
 		}
-		onSend();
+		onSend(surfaceTarget, pendingAtSubmit);
 	};
 	/* Run end focuses the composer (owner, 2026-10-01): the hands are on
 	 * the keyboard from the stop — falling edge of `active` only. */
@@ -219,6 +224,7 @@ export function DraftShell({
 									/>
 								</div>
 								<StatsBar
+									modelSettingsRef={modelSettingsRef}
 									dictationSlot={<DictationBar dictation={dictation} />}
 									turns={[]}
 								/>
@@ -293,9 +299,10 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	const { catalog, configured, zeroKeys } = useModelSetup(initialConfigured);
 	const [setupOpen, setSetupOpen] = useState(false);
 
-	const send = useCallback(() => {
+	const send = useCallback(async (surfaceTarget: PluginSurfaceTarget | undefined, pendingAtSubmit: Promise<boolean> | undefined) => {
 		const draft = textRef.current.trim();
-		if (!draft || startingRef.current) return;
+		const practicePicks = mode === "practice" ? picksRef.current : undefined;
+		if (!draft || startingRef.current || !isCurrentPageSurface(surfaceTarget)) return;
 		if (!configured) {
 			setSetupOpen(true);
 			return;
@@ -318,17 +325,24 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		startingRef.current = true;
 		setBusy(true);
 		setStartError("");
-		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
-			starterRef.current, JSON.stringify(catalog?.slots.strong))
-			.then((target) => {
-				if (target) router.push(target);
-				else { startingRef.current = false; setBusy(false); }
-			})
-			.catch((error) => {
-				startingRef.current = false;
-				setBusy(false);
-				setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
-			});
+		try {
+			const pendingSave = waitForFastSave(strongFastSaveRef.current, pendingAtSubmit);
+			const saved = pendingSave ? await pendingSave : true;
+			const current = isCurrentPageSurface(surfaceTarget);
+			if (current && !saved) setStartError("Could not save Fast Mode. Your message has not been sent.");
+			if (current && saved) {
+				const target = await startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, practicePicks,
+					starterRef.current, JSON.stringify(catalog?.slots.strong));
+				if (target) {
+					router.push(target);
+					return;
+				}
+			}
+		} catch (error) {
+			setStartError(error instanceof SessionMaintenanceError ? error.message : OPENING_PROMPT_FAILURE);
+		}
+		startingRef.current = false;
+		setBusy(false);
 	}, [router, configured, zeroKeys, catalog, mode]);
 
 	return (
@@ -339,6 +353,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				text={text}
 				onChange={applyText}
 				onSend={send}
+				modelSettingsRef={strongFastSaveRef}
 				mode={mode}
 				picks={picks}
 				onOpenPicker={openPicker}

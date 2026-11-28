@@ -112,13 +112,15 @@ export interface EffectiveSettings {
 export function resolveConversationSpec(
 	chat: ChatSettings | undefined,
 	strong: EffectiveSlot | null,
-): EffectiveModelSpec | null {
+): (EffectiveModelSpec & Pick<ChatSettings, "fastMode">) | null {
 	const model = chat?.model ?? (strong ? { provider: strong.provider, id: strong.id } : undefined);
 	if (!model) return null;
+	const fastMode = chat?.fastMode;
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
+		...(fastMode !== undefined ? { fastMode } : {}),
 	};
 }
 

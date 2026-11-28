@@ -41,6 +41,7 @@ export function ModelMenuList({
 	onPick,
 	footer,
 	vision,
+	fastMode,
 }: {
 	/** The full catalog — undefined while it loads. */
 	models: ModelCatalogEntry[] | undefined;
@@ -59,6 +60,7 @@ export function ModelMenuList({
 	 *  custom-endpoint model, whose capability the endpoint may not report.
 	 *  Image-capable ones float to the top. */
 	vision?: boolean;
+	fastMode?: { checked: boolean; disabled: boolean; onToggle: () => void };
 }) {
 	// Vision slot: built-ins must report image input; custom-endpoint models
 	// stay selectable (the endpoint may not report a modality). Image-capable
@@ -76,6 +78,19 @@ export function ModelMenuList({
 				prioritize={vision ? (m) => m.input.includes("image") : undefined}
 				isSelected={(m) => m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider)}
 				onPick={onPick}
+				action={fastMode && {
+					testid: "model-menu-fast",
+					selected: fastMode.checked,
+					disabled: fastMode.disabled,
+					onPick: fastMode.onToggle,
+					content: <>
+						<span className="flex items-center justify-between gap-2">
+							<span>Fast Mode</span>
+							<span className="text-muted-foreground">{fastMode.checked ? "On" : "Off"}</span>
+						</span>
+						<span className="text-muted-foreground">Fast Mode uses more of your ChatGPT quota.</span>
+					</>,
+				}}
 				searchTestid="model-search"
 				listTestid="model-list"
 				optionTestid={(m) => `model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}

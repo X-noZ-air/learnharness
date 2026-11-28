@@ -392,12 +392,13 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		setError(null);
 		const models: ModelsSettings = {};
 		for (const slot of SLOT_ORDER) {
-			const level = levels[slot];
+			const { provider, id } = picked[slot]!;
+			const thinkingLevel = levels[slot];
+			const cacheRetention = catalog?.slots[slot]?.cacheRetention;
 			models[slot] = {
-				// Advanced controls stay out of setup; never erase their saved choice.
-				...(catalog?.slots[slot]?.cacheRetention !== undefined ? { cacheRetention: catalog.slots[slot]!.cacheRetention } : {}),
-				model: { provider: picked[slot]!.provider, id: picked[slot]!.id },
-				...(level ? { thinkingLevel: level } : {}),
+				model: { provider, id },
+				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+				...(cacheRetention !== undefined ? { cacheRetention } : {}),
 			};
 		}
 		const res = await fetch("/api/settings/models", {

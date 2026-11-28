@@ -16,8 +16,34 @@ import {
 	parseGeneralSettingsBody,
 	parseCompactionSettingsBody,
 	parseGraphSettingsBody,
+	parseSessionSettingsBody,
 	SETTINGS_SECTIONS,
 } from "../src/server/settings-body.ts";
+
+describe("legacy chat section", () => {
+	it("drops the session-only Fast setting", () => {
+		assert.deepEqual(SETTINGS_SECTIONS.chat({ fastMode: true, thinkingLevel: "low" }), {
+			ok: true, settings: { thinkingLevel: "low" },
+		});
+	});
+});
+
+describe("session settings", () => {
+	it("accepts explicit Fast choices without a model pin", () => {
+		for (const fastMode of [true, false]) {
+			assert.deepEqual(parseSessionSettingsBody({ fastMode }), { ok: true, settings: { fastMode } });
+		}
+		assert.equal(parseSessionSettingsBody({ fastMode: "true" }).ok, false);
+	});
+
+	it("ignores Fast in model and thinking level writes", () => {
+		const model = { provider: "chatgpt", id: "fixture" };
+		assert.deepEqual(parseSessionSettingsBody({ model, fastMode: "true" }), { ok: true, settings: { model } });
+		assert.deepEqual(parseSessionSettingsBody({ thinkingLevel: "low", fastMode: true }), {
+			ok: true, settings: { thinkingLevel: "low" },
+		});
+	});
+});
 
 describe("parseGeneralSettingsBody", () => {
 	it("parses {} and {autoUpdate} replace-whole", () => {

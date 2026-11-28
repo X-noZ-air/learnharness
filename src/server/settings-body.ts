@@ -72,6 +72,15 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	return { ok: true, settings };
 }
 
+export function parseSessionSettingsBody(body: unknown): SettingsBodyResult<ChatSettings> {
+	const parsed = parseSettingsBody(body);
+	if (!parsed.ok || parsed.settings.model !== undefined || parsed.settings.thinkingLevel !== undefined) return parsed;
+	const fastMode = asRecord(body)?.fastMode;
+	if (fastMode === undefined) return parsed;
+	if (typeof fastMode !== "boolean") return { ok: false, error: "fastMode must be a boolean" };
+	return { ok: true, settings: { ...parsed.settings, fastMode } };
+}
+
 // ─── Section parsers (settings-storage wave, 2026-09-19) ────────────────────
 // One parser per settings.json section; the route maps the URL section to
 // its parser via SETTINGS_SECTIONS below. Same discipline as
@@ -106,8 +115,7 @@ export function parseClaudeCodeSettingsBody(body: unknown): SettingsBodyResult<{
 	return { ok: true, settings: { enabled: raw.enabled } };
 }
 
-/** agent.models: only the six known background roles; each override's
- *  fields mirror ChatSettings (model pair + independent thinkingLevel). */
+/** agent.models: only the six known background roles. */
 function parseRoleOverride(value: unknown, role: string): { ok: true; override: RoleModelOverride } | { ok: false; error: string } {
 	const raw = asRecord(value);
 	if (!raw) return { ok: false, error: `${role} must be an object` };
@@ -391,13 +399,17 @@ export function parseGraphSettingsBody(body: unknown): SettingsBodyResult<GraphS
 }
 
 /** models: { strong?, cheap?, vision? } — the slot tiers (model slots
- *  wave, 2026-09-20). Each slot is the same shape as a role override; a
- *  present-but-empty slot object is rejected (absent slot = unset; say
+ *  wave, 2026-09-20). A present-but-empty slot object is rejected (absent slot = unset; say
  *  what you mean). Catalog validity is checked by the route
  *  (validateChatSettings discipline). */
 export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<ModelsSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const strong = asRecord(raw.strong);
+	if (strong && Object.keys(raw).length === 1 && Object.keys(strong).length === 1 && "fastMode" in strong) {
+		if (typeof strong.fastMode !== "boolean") return { ok: false, error: "strong.fastMode must be a boolean" };
+		return { ok: true, settings: { strong: { fastMode: strong.fastMode } } };
+	}
 	const settings: ModelsSettings = {};
 	for (const key of Object.keys(raw)) {
 		const known = MODEL_SLOTS as readonly string[];
@@ -414,7 +426,7 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 			return { ok: false, error: `slot "${key}" must set a model (thinkingLevel alone cannot run — absent slot = unset)` };
 		}
 		const slot: ModelSlot = parsed.override;
-		const retention = (raw[key] as Record<string, unknown>).cacheRetention;
+		const { cacheRetention: retention } = raw[key] as Record<string, unknown>;
 		if (retention !== undefined) {
 			if (!CACHE_RETENTIONS.some((value) => value === retention)) {
 				return { ok: false, error: `${key}.cacheRetention must be none, short, or long` };

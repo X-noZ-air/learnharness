@@ -291,9 +291,9 @@ version?: number;
 
 Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
 
-Per-session model and thinking choices for native conversation agents.
-Each absent field falls back independently to the strong model slot; no
-configured model means conversation work is unavailable. Choices resolve
+Per-session model choices for native conversation agents.
+Model and thinking fall back independently to the strong slot. Fast uses
+the session preference even when the model is inherited. Choices resolve
 when composing a turn, not midway through an active request. Background
 worker roles use their own model resolution.
 
@@ -304,6 +304,7 @@ export interface ChatSettings {
         id: string;
     };
     thinkingLevel?: ThinkingLevel;
+    fastMode?: boolean;
 }
 ```
 
@@ -313,6 +314,7 @@ export interface ChatSettings {
 - [model.provider](#chatsettings-modelprovider)
 - [model.id](#chatsettings-modelid)
 - [thinkingLevel](#chatsettings-thinkinglevel)
+- [fastMode](#chatsettings-fastmode)
 
 ### ChatSettings model
 
@@ -344,6 +346,14 @@ pi thinking level — must be in the chosen model's supported list
 
 ```ts
 thinkingLevel?: ThinkingLevel;
+```
+
+### ChatSettings fastMode
+
+Opt in to the priority tier for supported foreground ChatGPT replies.
+
+```ts
+fastMode?: boolean;
 ```
 
 ## ChatSummary

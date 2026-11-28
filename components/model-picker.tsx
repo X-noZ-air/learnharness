@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
+import { resolveConversationSpec, resolveSlot } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-menu";
@@ -16,6 +17,16 @@ import { useModelCatalog } from "@/components/model-catalog";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
 
+export interface ComposerModelSettings {
+	pendingSave?: Promise<boolean>;
+}
+
+export const strongFastSaveRef: RefObject<ComposerModelSettings> = { current: {} };
+
+export function waitForFastSave(settings: ComposerModelSettings, pending = settings.pendingSave): Promise<boolean> | undefined {
+	return pending?.then(saved => saved && (settings.pendingSave ?? true));
+}
+
 /** provider:id → known contextWindow over the cached catalog, mirroring
  * the server's catalogContextLimits join. CLI aliases have no global
  * denominator: the stats bar uses that session's actual CLI report instead.
@@ -25,22 +36,15 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
 }
 
 /**
- * THE CONVERSATION MODEL CONTROL — dual-bound (owner, per-session models,
- * 2026-09-28). WITH a chatId (the in-session stats bar): the pills bind
- * THE SESSION'S OWN record — reads GET /api/chats/:id (its settings field;
- * a legacy unstamped record falls back to the strong slot's display,
- * exactly what the engine resolves), writes PUT /api/chats/:id/settings
- * (validated + level-clamped server-side). The session owns its model +
- * thinking level from birth; the strong slot never reaches it again.
- *
- * WITHOUT a chatId (the draft surfaces — home + /chat/new): the pills
- * bind the STRONG SLOT (reads the raw models section, GET /api/settings;
- * writes PUT /api/settings/models via composeSlotModel — the same seam
- * the settings Agent section and the SetupDialog write): picking there IS
- * changing the new-session default. Unpicked reads "—" (the
- * no-factory-fallback language: the UI never presents a default model).
+ * With a chatId, bind the session record and use resolveConversationSpec
+ * so the picker and engine agree about inherited settings. Without a
+ * chatId, bind the raw Strong slot used when creating sessions.
  */
-export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
+export function ModelControl({ chatId, onModelChange, modelSettingsRef }: {
+	chatId?: string;
+	onModelChange?: (model: string | undefined) => void;
+	modelSettingsRef?: RefObject<ComposerModelSettings>;
+}) {
 	const { catalog, refresh } = useModelCatalog();
 	const [models, setModels] = useState<ModelsSettings | undefined>();
 	// A successful read with no settings is a legacy session; undefined
@@ -48,8 +52,61 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [fastError, setFastError] = useState<string | null>(null);
+	const [fastRefreshFailed, setFastRefreshFailed] = useState(false);
+	const [savingFast, setSavingFast] = useState(false);
+	const [savingModel, setSavingModel] = useState(false);
+	const modelSavesInFlight = useRef(0);
+	const fastNeedsRefresh = useRef(false);
+	const localModelSettings = useRef<ComposerModelSettings>({});
+	const saveState = modelSettingsRef ?? localModelSettings;
+	const sessionRead = useRef(0);
+	const modelsRead = useRef(0);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const interactions = useInteractionLayers();
+	const canConfirmFast = useCallback(() => (
+		fastNeedsRefresh.current && !saveState.current.pendingSave && modelSavesInFlight.current === 0
+	), [saveState]);
+	const finishFastRefresh = useCallback((confirmed: boolean) => {
+		if (!canConfirmFast()) return;
+		setFastRefreshFailed(!confirmed);
+		if (confirmed) {
+			fastNeedsRefresh.current = false;
+			setSavingFast(false);
+		}
+	}, [canConfirmFast]);
+	const readSession = useCallback(() => {
+		if (!chatId) return;
+		const read = ++sessionRead.current;
+		const confirmingFast = canConfirmFast();
+		if (confirmingFast) setFastRefreshFailed(false);
+		fetch(`/api/chats/${chatId}`)
+			.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
+			.then((body) => {
+				if (read !== sessionRead.current) return;
+				setSession({ settings: body.settings });
+				if (confirmingFast) finishFastRefresh(true);
+			})
+			.catch(() => {
+				if (confirmingFast && read === sessionRead.current) finishFastRefresh(false);
+			});
+	}, [chatId, canConfirmFast, finishFastRefresh]);
+	const readModels = useCallback(() => {
+		const read = ++modelsRead.current;
+		const confirmingFast = !chatId && canConfirmFast();
+		if (confirmingFast) setFastRefreshFailed(false);
+		fetch("/api/settings")
+			.then((r) => { if (!r.ok) throw new Error(`models read failed: ${r.status}`); return r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>; })
+			.then((body) => {
+				if (read !== modelsRead.current) return;
+				setModels(body.settings?.models);
+				if (confirmingFast) finishFastRefresh(true);
+			})
+			.catch(() => {
+				if (confirmingFast && read === modelsRead.current) finishFastRefresh(false);
+			});
+	}, [chatId, canConfirmFast, finishFastRefresh]);
+	const readFastSettings = chatId ? readSession : readModels;
 
 	// The record read — BOTH mount and the cross-surface signal land
 	// here (fix wave: another surface's models write re-reads into the
@@ -59,27 +116,25 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// unstamped session — exactly what the engine resolves); draft mode
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
-		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
-				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
-				.then((body) => setSession({ settings: body.settings }))
-				.catch(() => {
-					/* same read-only posture as a models-section failure */
-				});
-		}
-		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
-			.then((body) => setModels(body.settings?.models ?? undefined))
-			.catch(() => {
-				/* the record fetch failing leaves the control read-only
-				   ("—" triggers, closed menus) — same posture as a
-				   catalog failure */
-			});
-	}, [chatId]);
+		readSession();
+		readModels();
+	}, [readSession, readModels]);
 
 	useEffect(() => {
+		let active = true;
+		const pendingStrongSave = chatId ? undefined : saveState.current.pendingSave;
+		if (pendingStrongSave) fastNeedsRefresh.current = true;
+		if (!chatId) setSavingFast(fastNeedsRefresh.current);
 		readRecord();
-	}, [readRecord]);
+		if (pendingStrongSave) void pendingStrongSave.then(() => {
+			if (active && canConfirmFast()) readModels();
+		});
+		return () => {
+			active = false;
+			++sessionRead.current;
+			++modelsRead.current;
+		};
+	}, [chatId, canConfirmFast, readModels, readRecord, saveState]);
 
 	useSettingsSaved((section) => {
 		if (section === "models") readRecord();
@@ -92,10 +147,12 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// this session's identity (including to the Send guard). Draft mode is
 	// the strong slot itself.
 	const strong = models?.strong;
+	const conversation = session && resolveConversationSpec(session.settings, resolveSlot(strong));
 	const override: ChatSettings | undefined = chatId
-		? session ? {
-				model: session.settings?.model ?? strong?.model,
-				thinkingLevel: session.settings?.thinkingLevel ?? strong?.thinkingLevel,
+		? conversation ? {
+				model: { provider: conversation.provider, id: conversation.id },
+				thinkingLevel: conversation.thinkingLevel,
+				fastMode: conversation.fastMode,
 			} : undefined
 		: strong;
 	const effectiveId = override?.model?.id;
@@ -107,6 +164,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const entry = catalog?.models.find(
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
 	);
+	const fastAvailable = entry?.provider === "chatgpt" && entry.fastServiceTier === "priority";
 	const levels = entry?.supportedLevels ?? [];
 	// Legacy display (chunk 2 item 4, owner): a record with a model but no
 	// stored level shows the RESOLVED level — the ordering's first supported
@@ -143,8 +201,10 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// (replace-whole-section discipline) and the per-field independence of
 	// model + thinkingLevel within the strong slot.
 	const save = useCallback(
-		async (next: ModelsSettings) => {
-			setError(null);
+		async (next: ModelsSettings, changingFast: boolean) => {
+			const readAtStart = modelsRead.current;
+			const setSaveError = changingFast ? setFastError : setError;
+			setSaveError(null);
 			try {
 				const res = await fetch("/api/settings/models", {
 					method: "PUT",
@@ -153,20 +213,25 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
+					setSaveError(body.error ?? `settings rejected (${res.status})`);
+					return false;
 				}
 				// Server truth, never the request body (fix wave): a pick
 				// that rides an unsupported level lands CLAMPED in the record
 				// — the pill must show the stored value in this interaction.
-				const stored = (
-					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
-				)?.settings?.models;
-				setModels(stored ?? next);
-				setOpen(null);
-				notifySettingsSaved("models");
+				const { settings } = await res.json() as { settings: UserSettings };
+				if (!changingFast || modelsRead.current === readAtStart) {
+					++modelsRead.current;
+					setModels(settings.models);
+				} else fastNeedsRefresh.current = true;
+				if (!changingFast) {
+					setOpen(null);
+					notifySettingsSaved("models");
+				}
+				return true;
 			} catch {
-				setError("Could not reach the server — try again.");
+				setSaveError("Could not reach the server — try again.");
+				return false;
 			}
 		},
 		[],
@@ -178,8 +243,9 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// shows the stored value). No notifySettingsSaved: the write touches
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
-		async (next: ChatSettings) => {
-			setError(null);
+		async (next: ChatSettings, changingFast: boolean) => {
+			const setSaveError = changingFast ? setFastError : setError;
+			setSaveError(null);
 			try {
 				const res = await fetch(`/api/chats/${chatId}/settings`, {
 					method: "PUT",
@@ -188,33 +254,60 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				});
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
+					setSaveError(body.error ?? `settings rejected (${res.status})`);
+					return false;
 				}
-				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
-				setSession({ settings: stored?.settings ?? next });
-				setOpen(null);
+				const { settings } = await res.json() as { settings: ChatSettings };
+				if (!changingFast || !fastNeedsRefresh.current) {
+					++sessionRead.current;
+					setSession({ settings });
+				}
+				if (!changingFast) setOpen(null);
+				return true;
 			} catch {
-				setError("Could not reach the server — try again.");
+				setSaveError("Could not reach the server — try again.");
+				return false;
 			}
 		},
 		[chatId],
 	);
 
 	// One apply seam over both write paths: a pick names provider + id +
-	// level; chat mode writes the session's own record (any pick pins it),
+	// level; chat mode writes the session's own record,
 	// draft mode composes the strong slot (siblings preserved,
 	// replace-whole-section discipline).
 	const apply = useCallback(
-		(provider: string, id: string, level: ThinkingLevel | undefined) => {
-			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
-			} else {
-				// composeSlotModel's empty-string convention: no level = unset.
-				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
+		(provider: string, id: string, level: ThinkingLevel | undefined, fastMode?: boolean) => {
+			const changingFast = fastMode !== undefined;
+			if (changingFast && (saveState.current.pendingSave || modelSavesInFlight.current > 0 || fastNeedsRefresh.current)) return;
+			if (changingFast) setSavingFast(true);
+			else {
+				if (chatId && saveState.current.pendingSave) fastNeedsRefresh.current = true;
+				modelSavesInFlight.current++;
+				setSavingModel(true);
 			}
+			let pendingSave: Promise<boolean>;
+			if (chatId) {
+				pendingSave = saveChat(changingFast
+					? { fastMode }
+					: { model: { provider, id }, thinkingLevel: level }, changingFast);
+			} else {
+				pendingSave = save(changingFast
+					? { strong: { fastMode } }
+					: composeSlotModel(models, "strong", provider, id, level ?? ""), changingFast);
+			}
+			const settled = pendingSave.finally(() => {
+				if (changingFast) {
+					saveState.current.pendingSave = undefined;
+					if (!fastNeedsRefresh.current) setSavingFast(false);
+				} else if (--modelSavesInFlight.current === 0) {
+					setSavingModel(false);
+				}
+				if (containerRef.current && canConfirmFast()) readFastSettings();
+			});
+			if (changingFast) saveState.current.pendingSave = settled;
 		},
-		[chatId, models, save, saveChat],
+		[chatId, models, canConfirmFast, readFastSettings, save, saveChat, saveState],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -269,9 +362,25 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		setError(null);
 		if (kind === "model") refresh();
 	};
+	const fastMode = fastAvailable ? {
+		checked: override?.fastMode === true,
+		disabled: savingFast || savingModel,
+		onToggle: () => {
+			setOpen(null);
+			apply(entry.provider, entry.id, storedLevel, override?.fastMode !== true);
+		},
+	} : undefined;
+	const fastFeedback = (fastError || fastRefreshFailed) && <>
+		{fastError && <div>{fastError}</div>}
+		{fastRefreshFailed && <div>Could not confirm Fast Mode.</div>}
+	</>;
 
 	return (
-		<div ref={containerRef} className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2" data-testid="model-control">
+		<div
+			ref={containerRef}
+			className="relative flex min-w-0 items-center gap-1.5 narrow:max-w-1/2"
+			data-testid="model-control"
+		>
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
 				action="open-model-picker"
@@ -303,6 +412,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				>{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}</ModelPickerPill>
 			</Hint>
 
+			{open === null && fastFeedback && <div role="alert" className="absolute right-0 bottom-full mb-1 w-max max-w-[calc(100vw-3rem)] rounded-md border bg-card p-2 text-xs text-destructive">{fastFeedback}</div>}
+
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same
 			    one. */}
@@ -313,12 +424,14 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					preferredSide="up"
 					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl narrow:max-w-[calc(100vw-3rem)]"
 				>
+					{fastFeedback && <div role="alert" className="mb-1.5 text-destructive">{fastFeedback}</div>}
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					<ModelMenuList
 						models={catalog?.models}
 						effectiveId={effectiveId}
 						effectiveProvider={effectiveProvider}
 						onPick={pickModel}
+						fastMode={fastMode}
 						footer={
 							catalog && catalog.models.length === 0
 								? "No models — add a provider key in Keys"
@@ -344,6 +457,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 						empty={catalog ? (effectiveId ? `${prettyModel(effectiveId)} has no thinking levels.` : "Pick a model first.") : "Loading…"}
 						footer="Levels this model actually supports"
 					/>
+					{fastFeedback && <div role="alert" className="mt-1 text-destructive">{fastFeedback}</div>}
 					{error && <div className="mt-1 text-destructive">{error}</div>}
 				</MenuShell>
 			)}

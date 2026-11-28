@@ -122,6 +122,7 @@ export interface ModelCatalogEntry {
     reasoning: boolean;
     input: ("text" | "image")[];
     supportedLevels: ThinkingLevel[];
+    fastServiceTier?: "priority";
     cost: {
         input: number;
         output: number;
@@ -141,6 +142,7 @@ export interface ModelCatalogEntry {
 - [reasoning](#modelcatalogentry-reasoning)
 - [input](#modelcatalogentry-input)
 - [supportedLevels](#modelcatalogentry-supportedlevels)
+- [fastServiceTier](#modelcatalogentry-fastservicetier)
 - [cost](#modelcatalogentry-cost)
 - [cost.input](#modelcatalogentry-costinput)
 - [cost.output](#modelcatalogentry-costoutput)
@@ -185,6 +187,14 @@ Thinking levels accepted by this model, as reported by the host catalog.
 
 ```ts
 supportedLevels: ThinkingLevel[];
+```
+
+### ModelCatalogEntry fastServiceTier
+
+Responses tier for models with Fast available on the active ChatGPT account.
+
+```ts
+fastServiceTier?: "priority";
 ```
 
 ### ModelCatalogEntry cost

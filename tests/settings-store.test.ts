@@ -24,8 +24,8 @@ fs.mkdirSync(process.env.LH_DATA_DIR, { recursive: true });
 fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
 const { SETTINGS_FILE } = await import("../config.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
-const { resolveSettings } = await import("../src/core/settings-resolution.ts");
-const { parseCompactionSettingsBody, parseAppearanceSettingsBody } = await import("../src/server/settings-body.ts");
+const { resolveSettings, resolveConversationSpec, resolveSideQuestionSpec } = await import("../src/core/settings-resolution.ts");
+const { parseAgentSettingsBody, parseCompactionSettingsBody, parseAppearanceSettingsBody, parseModelsSettingsBody } = await import("../src/server/settings-body.ts");
 
 after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
@@ -34,6 +34,28 @@ afterEach(() => {
 });
 
 describe("the settings store", () => {
+	it("stores Fast for conversation defaults and strips it from background roles and slots", () => {
+		const model = { provider: "chatgpt", id: "scratch" };
+		const input = { strong: { model, fastMode: true }, cheap: { model, fastMode: true }, vision: { model, fastMode: true } };
+		const parsed = parseModelsSettingsBody(input);
+		assert.ok(parsed.ok);
+		assert.deepEqual(parsed.settings, { strong: { model }, cheap: { model }, vision: { model } });
+		const agent = { models: { researcher: { model, fastMode: true } } };
+		assert.deepEqual(parseAgentSettingsBody(agent), { ok: true, settings: { models: { researcher: { model } } } });
+		writeSettings({ version: 1, models: input, agent });
+		const stored = readSettings();
+		assert.deepEqual(stored?.models, { ...parsed.settings, strong: input.strong });
+		assert.deepEqual(stored?.agent, { models: { researcher: { model } } });
+		const effective = resolveSettings(stored);
+		assert.deepEqual(effective.agent.models.extractor, { ...model, thinkingLevel: undefined });
+		assert.deepEqual(resolveSideQuestionSpec({ model, fastMode: true }, stored), { ...model, thinkingLevel: undefined });
+		assert.equal(resolveConversationSpec(undefined, effective.models.strong)?.fastMode, undefined);
+		assert.equal(resolveConversationSpec({ model }, effective.models.strong)?.fastMode, undefined);
+		assert.equal(resolveConversationSpec({ fastMode: true }, effective.models.strong)?.fastMode, true);
+		assert.equal(resolveConversationSpec({ fastMode: false }, effective.models.strong)?.fastMode, false);
+		assert.deepEqual(parseModelsSettingsBody({ strong: { model, fastMode: "true" } }), { ok: true, settings: { strong: { model } } });
+		assert.equal(parseModelsSettingsBody({ strong: { fastMode: "true" } }).ok, false);
+	});
 	it("persists worker concurrency, drops invalid disk values, and resets to 8 when unset", () => {
 		writeSettings({ version: 1, agent: { workerRequestConcurrency: 29, tools: { research: false } } });
 		assert.deepEqual(readSettings()?.agent, { workerRequestConcurrency: 29, tools: { research: false } });

@@ -26,18 +26,15 @@ async function handlePost(req: Request) {
 	// record — the practice agent + its tools from turn 1, no extraction.
 	const kind = body.kind === "practice" ? ("practice" as const) : undefined;
 	const chat = createChat(titleFromPrompt(title || "Untitled session"), kind);
-	// PER-SESSION MODELS (owner, 2026-09-28): a session owns its model +
-	// thinking level from birth — stamped verbatim from the STRONG slot,
-	// the new-session default. From here the strong slot never reaches
-	// this session again: in-session picks write the session's own record
-	// (PUT /api/chats/:id/settings). No strong slot configured (fresh BYOK
-	// boot) → no stamp; the turn gate's 503 models_not_configured envelope
-	// refuses honestly until the setup flow fills the slot.
+	// Snapshot Strong at creation so later default changes cannot overwrite
+	// these saved session choices. Without a configured model, leave model
+	// settings unstamped so the session can resolve them after setup.
 	const strong = readSettingsRecord()?.models?.strong;
 	if (strong?.model) {
 		stores.chatStore.saveSettings(chat.id, {
 			model: { provider: strong.model.provider, id: strong.model.id },
 			thinkingLevel: strong.thinkingLevel,
+			fastMode: strong.fastMode,
 		});
 	}
 	// The session's map context (owner, 2026-10-04): the picked

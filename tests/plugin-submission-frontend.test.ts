@@ -164,6 +164,33 @@ test("refusal never acknowledges; prepared steer-to-send fallback calls hooks an
 	}
 });
 
+test("only a steer fallback waits for Fast and a failed save keeps the draft unaccepted", async () => {
+	for (const steerStatus of [200, 409]) {
+		for (const saved of [true, false]) {
+			const confirmation = deferred<boolean>();
+			const calls: string[] = [];
+			let accepted = 0, settled = 0;
+			const model = new SessionModel({ chatId: "chat", initialMessages: [], fetch: async url => {
+				calls.push(String(url));
+				if (String(url).endsWith("/steer")) return new Response(null, { status: steerStatus });
+				if (String(url) === "/api/chat") return Response.json({ accepted: true });
+				if (String(url).endsWith("/stream")) return new Response("data: [DONE]\n\n");
+				return Response.json({ messages: [] });
+			} });
+			const sending = model.steer("keep my draft", undefined, () => { accepted++; }, () => { settled++; }, () => confirmation.promise);
+			await tick();
+			assert.deepEqual(calls, ["/api/chats/chat/steer"]);
+			if (steerStatus === 200) assert.equal(await sending, true);
+			confirmation.resolve(saved);
+			assert.equal(await sending, steerStatus === 200 || saved);
+			assert.equal(calls.includes("/api/chat"), steerStatus === 409 && saved);
+			assert.equal(accepted, steerStatus === 200 || saved ? 1 : 0);
+			assert.equal(settled, 1);
+			assert.equal(model.getState().steerQueue.length, steerStatus === 200 ? 1 : 0);
+		}
+	}
+});
+
 test("model retry reuses accepted transformed history and never re-intercepts learner content", async () => {
 	let hooks = 0, accepts = 0; const posted: unknown[] = [];
 	const runner = new PluginSubmissionRunner();

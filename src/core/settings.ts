@@ -214,7 +214,7 @@ export interface ModelSlot {
  *  optional: an absent slot means every role of its tier runs whatever the
  *  deeper tiers of the chain resolve to (per-role override → factory pin). */
 export interface ModelsSettings {
-	strong?: ModelSlot;
+	strong?: ModelSlot & { fastMode?: boolean };
 	cheap?: ModelSlot;
 	vision?: ModelSlot;
 }
@@ -664,8 +664,12 @@ function sanitizeModels(raw: Record<string, unknown>): ModelsSettings {
 		const cleaned: ModelSlot = sanitizeRoleOverride(raw[slot]) ?? {};
 		const value = raw[slot];
 		if (value && typeof value === "object" && !Array.isArray(value)) {
-			const retention = (value as Record<string, unknown>).cacheRetention;
+			const { cacheRetention: retention, fastMode } = value as Record<string, unknown>;
 			if (CACHE_RETENTIONS.includes(retention as CacheRetention)) cleaned.cacheRetention = retention as CacheRetention;
+			if (slot === "strong" && cleaned.model && typeof fastMode === "boolean") {
+				out.strong = { ...cleaned, fastMode };
+				continue;
+			}
 		}
 		if (Object.keys(cleaned).length) out[slot] = cleaned;
 	}

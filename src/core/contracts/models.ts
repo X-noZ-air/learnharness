@@ -19,6 +19,8 @@ export interface ModelCatalogEntry {
 	input: ("text" | "image")[];
 	/** Thinking levels accepted by this model, as reported by the host catalog. */
 	supportedLevels: ThinkingLevel[];
+	/** Responses tier for models with Fast available on the active ChatGPT account. */
+	fastServiceTier?: "priority";
 	/** Null when LearnHarness cannot estimate prices for this connection. */
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
 	/** Null for native CLI aliases whose effective limits are session-specific. */

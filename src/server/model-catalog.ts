@@ -126,10 +126,8 @@ export function catalogRolePins(): RolePins {
 	return rolePinsFor(effectiveSettings().agent.models);
 }
 
-/** The three slot tiers' RESOLVED pins — effectiveSettings().models
- *  verbatim: the same resolution the engine wiring uses, so the Models
- *  settings page's captions cannot drift from what actually runs. NULL
- *  per tier that holds no model. */
+/** The three slot tiers' RESOLVED pins from effectiveSettings().models.
+ *  NULL per tier that holds no model. */
 export function catalogSlots(): SlotPins {
 	const slots = effectiveSettings().models;
 	const pins = {} as SlotPins;
@@ -176,7 +174,7 @@ function keyedProviderIds(): Set<string> {
 }
 
 /** Project one catalog model to the client DTO. */
-export function toModelDto(model: Model<Api>): ModelDto {
+export function toModelDto(model: Model<Api> & Pick<ModelDto, "fastServiceTier">): ModelDto {
 	return {
 		id: model.id,
 		name: model.name,
@@ -184,6 +182,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
+		...(model.provider === "chatgpt" && model.fastServiceTier ? { fastServiceTier: model.fastServiceTier } : {}),
 		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id ? null : {
 			input: model.cost.input,
 			output: model.cost.output,
@@ -243,12 +242,8 @@ export type SettingsValidation =
 	| { ok: true }
 	| { ok: false; error: string; supported?: ThinkingLevel[] };
 
-/** Validate a picker write against the catalog (the settings route's gate).
- *  `settings` is replace-whole: absent fields mean "config default".
- *  - model: provider must be configured, id must exist in its catalog.
- *  - thinkingLevel: must be in the resolved model's supported list —
- *    the model the picker writes against (settings.model, else config's
- *    prober/teacher pin; one controller, so the two specs share it). */
+/** Validate explicit model coordinates against the configured providers and
+ * their catalogs. Route handlers clamp thinking levels on write. */
 export function validateChatSettings(settings: ChatSettings): SettingsValidation {
 	const providers = connectionProviderIds();
 	if (settings.model) {

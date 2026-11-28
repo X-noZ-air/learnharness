@@ -48,6 +48,7 @@ function installFetch() {
 	globalThis.fetch = async (input, init) => {
 		const path = String(input);
 		if (path === "/api/models") { const request = deferred<Response>(); requests.push(request); return request.promise; }
+		if (path === "/api/settings") return Response.json({ settings: null });
 		if (path === "/api/settings/models") { writes.push(JSON.parse(String(init?.body))); return Response.json({ settings: { models: writes.at(-1) } }); }
 		if (path === "/api/keys") return Response.json({ providers: [provider], keys: [] });
 		if (path === "/api/settings/prompts") return Response.json({ prober: [], teacher: [], practice: [] });
@@ -62,6 +63,7 @@ async function render(children: React.ReactNode) {
 async function answer(index: number, body: ModelCatalogResponse | null) { await act(async () => requests[index]!.resolve(body ? Response.json(body) : new Response("unavailable", { status: 503 }))); }
 function element(testid: string) { const e = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`); assert.ok(e, testid); return e; }
 async function click(testid: string) { await act(async () => element(testid).click()); }
+const fastRow = () => document.querySelector<HTMLButtonElement>('[data-testid="model-menu-fast"]');
 function levels() { return [...document.querySelectorAll('[data-testid^="thinking-option-"]')].map((e) => e.textContent); }
 async function warm(body = catalog()) { await render(<Reader />); await answer(0, body); }
 
@@ -352,11 +354,11 @@ test("cache retention is hidden by default, slot-specific, resettable, and prese
 });
 
 test("initial setup exposes no advanced controls and preserves all saved retention preferences on Save", async () => {
-	installFetch();
 	const body = catalog();
 	body.slots.strong!.cacheRetention = "long";
 	body.slots.cheap!.cacheRetention = "short";
 	body.slots.vision!.cacheRetention = "none";
+	installFetch();
 	await warm(body); await render(<><Reader />{setup()}</>); await answer(1, body);
 	assert.equal(document.querySelector('[data-testid="models-advanced"]'), null);
 	assert.equal(document.querySelector('[data-testid^="slot-cache-"]'), null);
@@ -366,6 +368,219 @@ test("initial setup exposes no advanced controls and preserves all saved retenti
 	assert.equal(writes[0]?.cheap?.cacheRetention, "short");
 	assert.equal(writes[0]?.vision?.cacheRetention, "none");
 	assert.equal(writes[0]?.strong?.model?.id, b.id);
+});
+
+test("finishing setup saves the missing slot with one PUT", async () => {
+	const body = catalog();
+	body.slots.strong!.model.provider = "chatgpt";
+	body.slots.vision = null;
+	installFetch();
+	const fallback = globalThis.fetch;
+	const writesAndReads: string[] = [];
+	globalThis.fetch = async (input, init) => {
+		const path = String(input);
+		if (path === "/api/settings") {
+			writesAndReads.push("GET settings");
+			return new Response(null, { status: 503 });
+		}
+		const response = await fallback(input, init);
+		if (path === "/api/settings/models") {
+			writesAndReads.push("PUT models");
+			response.json = async () => { writesAndReads.push("read PUT body"); };
+		}
+		return response;
+	};
+	await warm(body);
+	await render(<><Reader />{setup()}</>);
+	await answer(1, body);
+	await click("setup-trigger-vision"); await click("model-option-vendor_model_free");
+	await click("setup-save");
+	assert.deepEqual(writesAndReads, ["PUT models"]);
+	assert.deepEqual(writes[0]?.strong, body.slots.strong);
+});
+
+test("a confirmed Fast write survives a delayed session read and keeps inherited settings", async () => {
+	installFetch();
+	const body = catalog();
+	const model = { ...a, provider: "chatgpt", fastServiceTier: "priority" as const };
+	const strong = { model: { provider: model.provider, id: model.id }, thinkingLevel: "low" as const };
+	body.models = [model];
+	body.slots.strong = strong;
+	const delayed = deferred<Response>();
+	const fallback = globalThis.fetch;
+	let readCount = 0;
+	let write: unknown;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/settings") return Response.json({ settings: { models: { strong } } });
+		if (input === "/api/chats/fixture") return ++readCount === 1 ? Response.json({}) : delayed.promise;
+		if (input === "/api/chats/fixture/settings") {
+			write = JSON.parse(String(init?.body));
+			return Response.json({ settings: write });
+		}
+		return fallback(input, init);
+	};
+	await warm(body);
+	await render(<><Reader /><StatsBar turns={[]} chatId="fixture" /></>);
+	await act(async () => notifySettingsSaved("models"));
+	assert.equal(readCount, 2);
+	await click("stats-model");
+	await click("model-menu-fast");
+	await click("stats-model");
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+	await act(async () => delayed.resolve(Response.json({})));
+	assert.deepEqual(write, { fastMode: true });
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+});
+
+test("overlapping chat writes reread the saved model after a stale Fast response", async () => {
+	installFetch();
+	const body = catalog();
+	const first = { provider: "chatgpt", id: a.id };
+	const second = { provider: "chatgpt", id: b.id };
+	body.models = [{ ...a, ...first, fastServiceTier: "priority" }, { ...b, ...second }];
+	const fastResponse = deferred<Response>();
+	const fallback = globalThis.fetch;
+	let saved = { model: first, thinkingLevel: "off", fastMode: false };
+	let reads = 0;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/chats/fixture") {
+			reads++;
+			return Response.json({ settings: saved });
+		}
+		if (input === "/api/chats/fixture/settings" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body));
+			if (next.fastMode !== undefined) {
+				assert.deepEqual(next, { fastMode: true });
+				saved = { ...saved, fastMode: true };
+				return fastResponse.promise;
+			}
+			assert.deepEqual(next, { model: second, thinkingLevel: "off" });
+			saved = { ...next, fastMode: false };
+			return Response.json({ settings: saved });
+		}
+		return fallback(input, init);
+	};
+	await render(<StatsBar chatId="fixture" turns={[]} />);
+	await click("stats-model");
+	await click("model-menu-fast");
+	const stale = saved;
+	await click("stats-model");
+	await click("model-option-claude-opus-5-5");
+	assert.match(element("stats-model").textContent ?? "", /claude-opus-5-5/);
+	assert.equal(reads, 1);
+	await act(async () => fastResponse.resolve(Response.json({ settings: stale })));
+	assert.match(element("stats-model").textContent ?? "", /claude-opus-5-5/);
+	await click("stats-model");
+	assert.equal(fastRow() !== null, false);
+	assert.equal(reads, 2);
+});
+
+test("the Fast toggle stays disabled after a failed chat settings refresh", async () => {
+	installFetch();
+	const body = catalog();
+	const model = { provider: "chatgpt", id: a.id };
+	body.models = [{ ...a, ...model, fastServiceTier: "priority" }];
+	const fallback = globalThis.fetch;
+	const fastWrite = deferred<Response>();
+	const refreshes: ReturnType<typeof deferred<Response>>[] = [];
+	const fastWrites: boolean[] = [];
+	let saved = { model, thinkingLevel: "off", fastMode: false };
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/chats/fixture") {
+			if (fastWrites.length === 0) return Response.json({ settings: saved });
+			const refresh = deferred<Response>();
+			refreshes.push(refresh);
+			return refresh.promise;
+		}
+		if (input === "/api/chats/fixture/settings" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body));
+			if (next.fastMode !== undefined) {
+				fastWrites.push(next.fastMode);
+				if (fastWrites.length === 1) return fastWrite.promise;
+				saved = { ...saved, fastMode: next.fastMode };
+			} else saved = { ...saved, thinkingLevel: next.thinkingLevel };
+			return Response.json({ settings: saved });
+		}
+		return fallback(input, init);
+	};
+	await render(<StatsBar chatId="fixture" turns={[]} />);
+	await click("stats-model");
+	await click("model-menu-fast");
+	await act(async () => window.dispatchEvent(new CustomEvent("lh:kbd-cycle-thinking")));
+	assert.equal(saved.thinkingLevel, "low");
+	saved = { ...saved, fastMode: true };
+	await act(async () => fastWrite.resolve(Response.json({ settings: saved })));
+	assert.equal(refreshes.length, 1);
+	await click("stats-model");
+	assert.equal(fastRow()?.disabled, true);
+	assert.equal(element("stats-thinking").hasAttribute("disabled"), false);
+	await click("model-menu-fast");
+	assert.deepEqual(fastWrites, [true]);
+	await act(async () => refreshes[0]!.resolve(new Response(null, { status: 503 })));
+	const alert = document.querySelector('[role="alert"]');
+	assert.match(alert?.textContent ?? "", /Could not confirm Fast Mode/);
+	assert.equal(Boolean(alert?.querySelector("button")), false);
+	assert.equal(fastRow()?.disabled, true);
+	const search = element("model-search");
+	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
+	for (const key of ["ArrowUp", "Enter"]) await act(async () => {
+		search.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key }));
+	});
+	assert.equal(refreshes.length, 1);
+	assert.deepEqual(fastWrites, [true]);
+	await act(async () => notifySettingsSaved("models"));
+	assert.equal(refreshes.length, 2);
+	assert.equal(fastRow()?.disabled, true);
+	await act(async () => refreshes[1]!.resolve(Response.json({ settings: saved })));
+	assert.equal(fastRow()?.disabled, false);
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+	assert.equal(Boolean(document.querySelector('[role="alert"]')), false);
+	await click("model-menu-fast");
+	assert.deepEqual(fastWrites, [true, false]);
+});
+
+test("the model shortcut and arrow navigation can toggle Fast for the active priority model", async () => {
+	installFetch();
+	const body = catalog();
+	const priority = { ...a, provider: "chatgpt", fastServiceTier: "priority" as const };
+	body.models = [priority, { ...b, provider: "chatgpt" }];
+	let strong: ModelsSettings["strong"] = { model: { provider: priority.provider, id: priority.id }, thinkingLevel: "low" };
+	const fallback = globalThis.fetch;
+	globalThis.fetch = async (input, init) => {
+		if (input === "/api/models") return Response.json(body);
+		if (input === "/api/settings/models" && init?.method === "PUT") {
+			const next = JSON.parse(String(init.body)) as ModelsSettings;
+			writes.push(next);
+			strong = { ...strong, ...next.strong };
+		}
+		if (input === "/api/settings" || input === "/api/settings/models") return Response.json({ settings: { models: { strong } } });
+		return fallback(input, init);
+	};
+	await render(<StatsBar turns={[]} />);
+	assert.equal(Boolean(document.querySelector('[aria-label="Fast Mode"]')), false, "Fast is offered through the existing model menu only");
+	const openModelMenu = () => act(async () => { window.dispatchEvent(new CustomEvent("lh:kbd-open-model-picker")); });
+	await openModelMenu();
+	const search = element("model-search");
+	Object.assign(search, { selectionStart: 0, selectionEnd: 0 });
+	assert.equal(document.activeElement, search);
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*Off/);
+	assert.match(fastRow()?.textContent ?? "", /uses more of your ChatGPT quota/);
+	const press = (key: string) => act(async () => {
+		const event = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
+		search.dispatchEvent(Object.assign(event, { key }));
+		assert.equal(event.defaultPrevented, true);
+	});
+	await press("ArrowUp");
+	assert.deepEqual(writes, []);
+	await press("Enter");
+	assert.deepEqual(writes, [{ strong: { fastMode: true } }]);
+	await openModelMenu();
+	assert.match(fastRow()?.textContent ?? "", /Fast Mode.*On/);
+	strong = { model: { provider: "chatgpt", id: b.id } };
+	await act(async () => notifySettingsSaved("models"));
+	assert.equal(fastRow() !== null, false);
 });
 
 test("OpenCode's saved shared credential names both Pi providers without changing addable-provider semantics", () => {

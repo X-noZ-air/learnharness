@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, subscriptionLabel, type cliContextWindowOf, type SessionPricing, type TurnUsage } from "@/src/core";
 import { formatTokens, formatUsd, planCostLabel, prettyModel } from "@/components/usage-format";
-import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
+import { ModelControl, catalogLimits, useModelCatalog, type ComposerModelSettings } from "@/components/model-picker";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 
@@ -48,6 +48,7 @@ export function StatsBar({
 	chatId,
 	leadingSlot,
 	onModelChange,
+	modelSettingsRef,
 }: {
 	turns: TurnUsage[];
 	contextTokens?: number | null;
@@ -60,6 +61,7 @@ export function StatsBar({
 	chatId?: string;
 	/** The same effective identity the visible model control owns. */
 	onModelChange?: (model: string | undefined) => void;
+	modelSettingsRef?: RefObject<ComposerModelSettings>;
 	/** The dictation strip (STT wave, 2026-09-17): the row's middle is dead
 	 *  space between the session data and the model control — the mic
 	 *  button lives there, and while recording the meter unfurls to fill
@@ -207,7 +209,7 @@ export function StatsBar({
 			{/* The model + thinking control — one controller for the conversation
 			    agents (prober/teacher); the record's `turns` above still folds
 			    the ACTUAL models billed, regardless of what the picker says. */}
-			<ModelControl chatId={chatId} onModelChange={modelChanged} />
+			<ModelControl chatId={chatId} onModelChange={modelChanged} modelSettingsRef={modelSettingsRef} />
 		</div>
 	);
 }

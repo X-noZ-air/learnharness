@@ -1074,7 +1074,7 @@ export class SessionModel {
 	 *  settled mid-send (the race): fall back to the plain text send —
 	 *  the entry is dropped and send() pushes its own optimistic card.
 	 */
-	async steer(text: string, images?: import("../src/core/plugin-submissions.ts").PluginSubmissionContent["images"], onAccepted?: () => void, onDeliverySettled?: () => void): Promise<boolean> {
+	async steer(text: string, images?: import("../src/core/plugin-submissions.ts").PluginSubmissionContent["images"], onAccepted?: () => void, onDeliverySettled?: () => void, beforeFallback?: () => Promise<boolean> | undefined): Promise<boolean> {
 		let deliverySettled = false;
 		const settleDelivery = () => { if (!deliverySettled) { deliverySettled = true; onDeliverySettled?.(); } };
 		const t = text.trim();
@@ -1096,6 +1096,8 @@ export class SessionModel {
 			if (res.ok) { this.invalidateCanonicalReads(); onAccepted?.(); settleDelivery(); await res.text().catch(() => {}); return true; } // parked or delivered — the stream lands the card
 			if (res.status === 409) {
 				dropSteer();
+				const pendingFallback = beforeFallback?.();
+				if (pendingFallback && !await pendingFallback) { settleDelivery(); return false; }
 				return await this.send({ type: "text", text: t, ...(images?.length ? { images: images.map(image => ({ ...image })) } : {}) }, onAccepted, undefined, settleDelivery); // reuse the prepared payload
 			}
 			dropSteer();

@@ -115,9 +115,9 @@ describe("the model catalog projection", () => {
 		}
 	});
 
-	it("defaults: the strong slot verbatim; null when unset (BYOK, per-session models 2026-09-28)", () => {
+	it("defaults: the strong model and thinking level; null when unset", () => {
 		assert.equal(catalogDefaultsFor(null), null);
-		const strong = { provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "low" as const };
+		const strong = { provider: "openrouter", id: "z-ai/glm-5.3-flash", thinkingLevel: "low" as const, fastMode: true };
 		const d = catalogDefaultsFor(strong);
 		assert.deepEqual(d, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" }, thinkingLevel: "low" });
 		// No level stored → the model alone reports (the level resolves at
@@ -168,6 +168,17 @@ describe("the background roles' resolved pins (rolePins)", () => {
 });
 
 describe("the model slots surface (model slots wave, 2026-09-20)", () => {
+	it("projects the strong model's preferences without its Fast opt-in", (t) => {
+		const saved = readSettings();
+		t.after(() => {
+			if (saved) writeSettings(saved);
+			else fs.rmSync(SETTINGS_FILE, { force: true });
+		});
+		const strong = { model: { provider: "chatgpt", id: "scratch" }, thinkingLevel: "low", cacheRetention: "short" } as const;
+		writeSettings({ version: 1, models: { strong: { ...strong, fastMode: true } } });
+		assert.deepEqual(catalogSlots(), { strong, cheap: null, vision: null });
+	});
+
 	it("catalogSlots projects the record's tiers — NULL only where a tier holds no model", () => {
 		// machine-aware (one-fs-owner: READ the record, never pin it)
 		const record = readSettings();

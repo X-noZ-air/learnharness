@@ -1,12 +1,12 @@
 /**
  * PUT /api/settings/[section] — section-scoped record writes
- * (settings-storage wave, 2026-09-19). One PUT replaces ONE section
- * replace-whole (absent fields = absent overrides — the house settings
- * discipline, same as the per-chat and defaults routes); sections are
- * independent, so partial writes can never clobber each other.
+ * An ordinary PUT replaces one section, with absent fields clearing their
+ * overrides. Models retain Strong's Fast preference while its model stays
+ * the same. A Fast-only models PUT merges into the saved Strong slot.
  *
  *   section ∈ general | chat | agent | appearance | graph | compaction | models | dictation
- *   Body: the complete desired section object. Parse + validate strictly
+ *   Body: the desired section object or { strong: { fastMode: boolean } }
+ *   for a Fast-only models write. Parse + validate strictly
  *   (server/settings-body.ts): a bad shape/type is a 400 carrying the
  *   supported list where one exists. The chat and models sections
  *   additionally pass the catalog gate (validateChatSettings /
@@ -71,6 +71,7 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	// Compare against the same record that this whole-section write replaces.
 	const record = readSettingsRecord() ?? { version: 1 };
 	let agentHealed: AgentSettings | undefined;
+	let modelsOut: ModelsSettings | undefined;
 
 	// Section-specific cross-validation (against the catalog / the prompt
 	// store) — the parsers only see shapes.
@@ -84,9 +85,23 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	// references may survive disconnect, including thinking-preference edits,
 	// so each unavailable slot can be repaired independently of the others.
 	if (section === "models") {
-		const verdict = validateModelsSettings(parsed.settings as ModelsSettings, record.models);
-		if (!verdict.ok) {
-			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
+		const submitted = parsed.settings as ModelsSettings;
+		const current = record.models?.strong;
+		const fastMode = submitted.strong?.fastMode;
+		if (fastMode !== undefined) {
+			if (!current?.model) return Response.json({ error: "Strong must have a model before setting Fast Mode" }, { status: 400 });
+			modelsOut = { ...record.models, strong: { ...current, fastMode } };
+		} else {
+			const verdict = validateModelsSettings(submitted, record.models);
+			if (!verdict.ok) {
+				return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
+			}
+			modelsOut = clampModelsLevels(submitted);
+			const strong = modelsOut.strong;
+			if (strong?.model && current?.fastMode !== undefined &&
+				strong.model.provider === current.model?.provider && strong.model.id === current.model?.id) {
+				strong.fastMode = current.fastMode;
+			}
 		}
 	}
 	// A newly selected theme must exist. A saved theme whose file vanished
@@ -136,8 +151,8 @@ async function handlePut(request: Request, ctx: { params: Promise<{ section: str
 	const sectionOut =
 		section === "chat"
 			? clampChatLevel(parsed.settings as ChatSettings, effectiveSettings().models.strong)
-			: section === "models"
-				? clampModelsLevels(parsed.settings as ModelsSettings)
+			: modelsOut
+				? modelsOut
 				: section === "agent" && agentHealed
 					? agentHealed
 					: parsed.settings;

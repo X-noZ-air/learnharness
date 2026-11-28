@@ -25,6 +25,7 @@ process.env.LH_DATA_DIR = TMP_DATA;
 const { POST } = await import("../app/api/chats/route.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
 const { chatStore } = await import("../src/store/chats.ts");
+const { resolveConversationSpec, resolveSettings } = await import("../src/core/settings-resolution.ts");
 
 after(() => {
 	fs.rmSync(TMP_DATA, { recursive: true, force: true });
@@ -58,6 +59,23 @@ describe("POST /api/chats — the birth stamp", () => {
 			model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
 			thinkingLevel: "low",
 		});
+	});
+
+	it("applies the Fast default only to sessions born with it", async () => {
+		const old = chatStore.createChat("Legacy session");
+		const model = { provider: "chatgpt", id: "scratch" };
+		writeSettings({ version: 1, models: { strong: { model, fastMode: true } } });
+		const res = await post();
+		assert.equal(res.status, 200);
+		const { id } = (await res.json()) as { id: string };
+		const current = chatStore.getChat(id);
+		assert.ok(current);
+		assert.deepEqual(current.settings, { model, fastMode: true });
+		const strong = resolveSettings(readSettings()).models.strong;
+		assert.deepEqual(resolveConversationSpec(chatStore.getChat(old.id)?.settings, strong), {
+			...model, thinkingLevel: undefined,
+		});
+		assert.equal(resolveConversationSpec(current.settings, strong)?.fastMode, true);
 	});
 
 	it("no strong slot configured (fresh BYOK boot) → NO stamp; the turn gate refuses downstream", async () => {
